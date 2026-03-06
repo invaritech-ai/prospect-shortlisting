@@ -105,3 +105,11 @@ class ScrapePageContentRead(BaseModel):
 class JobActionResult(BaseModel):
     job: ScrapeJobRead
     message: str
+
+
+class JobEnqueueResult(BaseModel):
+    job_id: UUID
+    task_id: str
+    task_type: str
+    queue_key: str
+    message: str

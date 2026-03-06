@@ -57,6 +57,10 @@ class Upload(SQLModel, table=True):
     row_count: int = Field(default=0, ge=0)
     valid_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
+    validation_errors_json: list[dict[str, Any]] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

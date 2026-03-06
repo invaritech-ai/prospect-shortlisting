@@ -9,6 +9,7 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.scrape import (
     JobActionResult,
+    JobEnqueueResult,
     ScrapeJobCreate,
     ScrapeJobRead,
     ScrapePageContentRead,
@@ -16,11 +17,13 @@ from app.api.schemas.scrape import (
 )
 from app.db.session import get_session
 from app.models import ScrapeJob, ScrapePage
+from app.services.queue_service import QueueService
 from app.services.scrape_service import ScrapeService
 
 
 router = APIRouter(prefix="/v1", tags=["scrape-jobs"])
 scrape_service = ScrapeService()
+queue_service = QueueService()
 
 
 def _as_job_read(job: ScrapeJob) -> ScrapeJobRead:
@@ -177,3 +180,57 @@ def run_all(job_id: UUID, session: Session = Depends(get_session)) -> JobActionR
         return JobActionResult(job=_as_job_read(job), message="Step 1 failed. Step 2 skipped.")
     job = scrape_service.run_step2(session=session, job=job)
     return JobActionResult(job=_as_job_read(job), message="Step 1 + Step 2 completed.")
+
+
+@router.post("/scrape-jobs/{job_id}/enqueue-step1", response_model=JobEnqueueResult)
+def enqueue_step1(job_id: UUID, session: Session = Depends(get_session)) -> JobEnqueueResult:
+    job = session.get(ScrapeJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    try:
+        task = queue_service.enqueue(task_type="scrape_step1", payload={"job_id": str(job_id)})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
+    return JobEnqueueResult(
+        job_id=job_id,
+        task_id=task.task_id,
+        task_type=task.task_type,
+        queue_key=queue_service.queue_key,
+        message="Step 1 queued.",
+    )
+
+
+@router.post("/scrape-jobs/{job_id}/enqueue-step2", response_model=JobEnqueueResult)
+def enqueue_step2(job_id: UUID, session: Session = Depends(get_session)) -> JobEnqueueResult:
+    job = session.get(ScrapeJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    try:
+        task = queue_service.enqueue(task_type="scrape_step2", payload={"job_id": str(job_id)})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
+    return JobEnqueueResult(
+        job_id=job_id,
+        task_id=task.task_id,
+        task_type=task.task_type,
+        queue_key=queue_service.queue_key,
+        message="Step 2 queued.",
+    )
+
+
+@router.post("/scrape-jobs/{job_id}/enqueue-run-all", response_model=JobEnqueueResult)
+def enqueue_run_all(job_id: UUID, session: Session = Depends(get_session)) -> JobEnqueueResult:
+    job = session.get(ScrapeJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    try:
+        task = queue_service.enqueue(task_type="scrape_run_all", payload={"job_id": str(job_id)})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
+    return JobEnqueueResult(
+        job_id=job_id,
+        task_id=task.task_id,
+        task_type=task.task_type,
+        queue_key=queue_service.queue_key,
+        message="Run-all queued.",
+    )

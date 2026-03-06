@@ -5,7 +5,19 @@ from collections.abc import Iterator
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
-from app.models import ScrapeJob, ScrapePage  # noqa: F401
+from app.models import (  # noqa: F401
+    AnalysisJob,
+    ClassificationResult,
+    Company,
+    CrawlArtifact,
+    CrawlJob,
+    JobEvent,
+    Prompt,
+    Run,
+    ScrapeJob,
+    ScrapePage,
+    Upload,
+)
 
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}

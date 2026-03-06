@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+data/
+alembic/__pycache__/
+alembic/versions/__pycache__/
+app/__pycache__/
+scripts/__pycache__/

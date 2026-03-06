@@ -1,0 +1,53 @@
+:root {
+  --oc-bg: #ecf0ef;
+  --oc-surface: #f9fbfa;
+  --oc-surface-strong: #ffffff;
+  --oc-border: #c9d4d0;
+  --oc-text: #122019;
+  --oc-muted: #5d6f67;
+  --oc-accent: #0f766e;
+  --oc-accent-ink: #0a3f3a;
+  --oc-danger-bg: #fee2e2;
+  --oc-danger-text: #7f1d1d;
+  --oc-shadow: 0 10px 30px rgba(10, 31, 24, 0.08);
+  --oc-radius: 14px;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    min-width: 320px;
+    background:
+      radial-gradient(900px 360px at 8% -10%, rgba(15, 118, 110, 0.16), transparent 58%),
+      radial-gradient(760px 300px at 92% -16%, rgba(20, 68, 58, 0.1), transparent 60%),
+      var(--oc-bg);
+    color: var(--oc-text);
+    font-family: 'Manrope', sans-serif;
+  }
+}
+
+@layer components {
+  .oc-shell {
+    @apply min-h-screen px-4 py-8 md:px-8;
+  }
+
+  .oc-main {
+    @apply mx-auto max-w-6xl;
+  }
+
+  .oc-panel {
+    @apply border backdrop-blur-sm;
+    border-color: var(--oc-border);
+    border-radius: var(--oc-radius);
+    background: color-mix(in srgb, var(--oc-surface-strong) 88%, transparent);
+    box-shadow: var(--oc-shadow);
+  }
+
+  .oc-kbd {
+    @apply inline-flex items-center rounded-md border px-2 py-1 text-[11px] font-semibold uppercase tracking-widest;
+    border-color: var(--oc-border);
+    color: var(--oc-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--oc-surface);
+  }
+}
