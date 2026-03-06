@@ -1,0 +1,2 @@
+"""Prospect shortlisting application package."""
+
