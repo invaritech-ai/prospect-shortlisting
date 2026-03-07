@@ -1,0 +1,12 @@
+[phases.setup]
+# Use Node 22.x (nixpacks will pull the latest 22 release).
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[staticAssets]
+directory = "dist"
