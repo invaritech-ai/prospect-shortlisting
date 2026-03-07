@@ -1,5 +1,10 @@
+[variables]
+# Ensure Coolify/Nixpacks selects a Node version compatible with Vite 8 beta.
+NIXPACKS_NODE_VERSION = "22.12.1"
+NODE_VERSION = "22.12.1"
+
 [phases.setup]
-# Use Node 22.x (nixpacks will pull the latest 22 release).
+# Use Node 22.x (nixpacks will pull the latest 22 release in the pinned nixpkgs).
 nixPkgs = ["nodejs_22"]
 
 [phases.install]
