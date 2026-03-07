@@ -53,6 +53,13 @@ class FetchResult:
     error_message: str
 
 
+class ScrapeJobAlreadyRunningError(ValueError):
+    def __init__(self, *, normalized_url: str, existing_job_id: Any) -> None:
+        self.normalized_url = normalized_url
+        self.existing_job_id = existing_job_id
+        super().__init__(f"Scrape already in progress for {normalized_url}.")
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -389,6 +396,21 @@ class ScrapeService:
         domain = domain_from_url(normalized)
         if not domain:
             raise ValueError("Could not derive domain from URL.")
+
+        active_job = session.exec(
+            select(ScrapeJob)
+            .where(
+                (col(ScrapeJob.normalized_url) == normalized)
+                & (col(ScrapeJob.terminal_state).is_(False))
+            )
+            .order_by(col(ScrapeJob.created_at).desc())
+            .limit(1)
+        ).first()
+        if active_job:
+            raise ScrapeJobAlreadyRunningError(
+                normalized_url=normalized,
+                existing_job_id=active_job.id,
+            )
 
         job = ScrapeJob(
             website_url=website_url,

@@ -15,6 +15,8 @@ from app.api.schemas.upload import (
     CompanyList,
     CompanyListItem,
     CompanyRead,
+    CompanyScrapeRequest,
+    CompanyScrapeResult,
     UploadCompanyList,
     UploadCreateResult,
     UploadDetail,
@@ -30,13 +32,29 @@ from app.models import (
     CrawlArtifact,
     CrawlJob,
     JobEvent,
+    ScrapeJob,
     Upload,
 )
+from app.services.queue_service import QueueService
+from app.services.scrape_service import ScrapeService
 from app.services.upload_service import UploadIssue, UploadService
 
 
 router = APIRouter(prefix="/v1", tags=["uploads"])
 upload_service = UploadService()
+scrape_service = ScrapeService()
+queue_service = QueueService()
+SCRAPE_DEFAULTS = {
+    "max_pages": 60,
+    "max_depth": 3,
+    "js_fallback": True,
+    "include_sitemap": True,
+    "general_model": "openai/gpt-5-nano",
+    "classify_model": "inception/mercury-2",
+    "ocr_model": "google/gemini-3.1-flash-lite-preview",
+    "enable_ocr": True,
+    "max_images_per_page": 8,
+}
 
 
 def _latest_classification_subquery():
@@ -50,6 +68,52 @@ def _latest_classification_subquery():
         .distinct(AnalysisJob.company_id)
         .order_by(AnalysisJob.company_id, ClassificationResult.created_at.desc())
         .subquery()
+    )
+
+
+def _latest_scrape_subquery():
+    return (
+        select(
+            ScrapeJob.normalized_url.label("normalized_url"),
+            ScrapeJob.id.label("job_id"),
+            ScrapeJob.status.label("status"),
+            ScrapeJob.terminal_state.label("terminal_state"),
+            ScrapeJob.stage1_status.label("stage1_status"),
+            ScrapeJob.stage2_status.label("stage2_status"),
+        )
+        .distinct(ScrapeJob.normalized_url)
+        .order_by(ScrapeJob.normalized_url, ScrapeJob.created_at.desc())
+        .subquery()
+    )
+
+
+def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]) -> CompanyScrapeResult:
+    queued_job_ids: list[UUID] = []
+    failed_company_ids: list[UUID] = []
+    for company in companies:
+        try:
+            job = scrape_service.create_job(
+                session=session,
+                website_url=company.normalized_url,
+                max_pages=SCRAPE_DEFAULTS["max_pages"],
+                max_depth=SCRAPE_DEFAULTS["max_depth"],
+                js_fallback=SCRAPE_DEFAULTS["js_fallback"],
+                include_sitemap=SCRAPE_DEFAULTS["include_sitemap"],
+                general_model=SCRAPE_DEFAULTS["general_model"],
+                classify_model=SCRAPE_DEFAULTS["classify_model"],
+                ocr_model=SCRAPE_DEFAULTS["ocr_model"],
+                enable_ocr=SCRAPE_DEFAULTS["enable_ocr"],
+                max_images_per_page=SCRAPE_DEFAULTS["max_images_per_page"],
+            )
+            queue_service.enqueue(task_type="scrape_run_all", payload={"job_id": str(job.id)})
+            queued_job_ids.append(job.id)
+        except Exception:  # noqa: BLE001
+            failed_company_ids.append(company.id)
+    return CompanyScrapeResult(
+        requested_count=len(companies),
+        queued_count=len(queued_job_ids),
+        queued_job_ids=queued_job_ids,
+        failed_company_ids=failed_company_ids,
     )
 
 
@@ -181,6 +245,7 @@ def list_companies(
     include_total: bool = Query(default=False),
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
+    latest_scrape = _latest_scrape_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     latest_confidence = latest_classification.c.confidence
     decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
@@ -206,9 +271,15 @@ def list_companies(
             Company.created_at,
             latest_decision_text,
             latest_confidence,
+            latest_scrape.c.job_id,
+            latest_scrape.c.status,
+            latest_scrape.c.terminal_state,
+            latest_scrape.c.stage1_status,
+            latest_scrape.c.stage2_status,
         )
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
     )
     if normalized_filter == "unlabeled":
         statement = statement.where(decision_lower == "")
@@ -251,6 +322,11 @@ def list_companies(
             created_at=row[6],
             latest_decision=str(row[7]) if row[7] is not None else None,
             latest_confidence=row[8],
+            latest_scrape_job_id=row[9],
+            latest_scrape_status=str(row[10]) if row[10] is not None else None,
+            latest_scrape_terminal=row[11],
+            latest_scrape_stage1_status=str(row[12]) if row[12] is not None else None,
+            latest_scrape_stage2_status=str(row[13]) if row[13] is not None else None,
         )
         for row in page_rows
     ]
@@ -290,6 +366,36 @@ def export_companies_csv(session: Session = Depends(get_session)) -> Response:
             "Content-Disposition": f'attachment; filename="prospects-{timestamp}.csv"',
         },
     )
+
+
+@router.post("/companies/scrape-selected", response_model=CompanyScrapeResult)
+def scrape_selected_companies(
+    payload: CompanyScrapeRequest,
+    session: Session = Depends(get_session),
+) -> CompanyScrapeResult:
+    requested_ids = list(dict.fromkeys(payload.company_ids))
+    companies = list(session.exec(select(Company).where(col(Company.id).in_(requested_ids))))
+    if not companies:
+        return CompanyScrapeResult(
+            requested_count=0,
+            queued_count=0,
+            queued_job_ids=[],
+            failed_company_ids=requested_ids,
+        )
+    return _enqueue_scrapes_for_companies(session=session, companies=companies)
+
+
+@router.post("/companies/scrape-all", response_model=CompanyScrapeResult)
+def scrape_all_companies(session: Session = Depends(get_session)) -> CompanyScrapeResult:
+    companies = list(session.exec(select(Company).order_by(col(Company.created_at).asc())))
+    if not companies:
+        return CompanyScrapeResult(
+            requested_count=0,
+            queued_count=0,
+            queued_job_ids=[],
+            failed_company_ids=[],
+        )
+    return _enqueue_scrapes_for_companies(session=session, companies=companies)
 
 
 @router.post("/companies/delete", response_model=CompanyDeleteResult)

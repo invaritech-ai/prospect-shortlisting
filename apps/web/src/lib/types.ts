@@ -48,6 +48,11 @@ export type CompanyListItem = {
   created_at: string
   latest_decision: string | null
   latest_confidence: number | null
+  latest_scrape_job_id: string | null
+  latest_scrape_status: string | null
+  latest_scrape_terminal: boolean | null
+  latest_scrape_stage1_status: string | null
+  latest_scrape_stage2_status: string | null
 }
 
 export type CompanyList = {
@@ -65,6 +70,13 @@ export type CompanyDeleteResult = {
   deleted_count: number
   deleted_ids: string[]
   missing_ids: string[]
+}
+
+export type CompanyScrapeResult = {
+  requested_count: number
+  queued_count: number
+  queued_job_ids: string[]
+  failed_company_ids: string[]
 }
 
 export type UploadCompanyList = {
@@ -123,10 +135,45 @@ export type ScrapeJobCreate = {
   max_images_per_page?: number
 }
 
+export type ScrapePageContentRead = {
+  id: number
+  job_id: string
+  url: string
+  page_kind: string
+  status_code: number
+  screenshot_path: string
+  screenshot_exists: boolean
+  markdown_content: string
+  ocr_text: string
+  fetch_error_code: string
+  fetch_error_message: string
+  updated_at: string
+}
+
 export type JobEnqueueResult = {
   job_id: string
   task_id: string
   task_type: string
   queue_key: string
   message: string
+}
+
+export type PromptRead = {
+  id: string
+  name: string
+  enabled: boolean
+  prompt_text: string
+  created_at: string
+}
+
+export type PromptCreate = {
+  name: string
+  prompt_text: string
+  enabled?: boolean
+}
+
+export type PromptUpdate = {
+  name?: string
+  prompt_text?: string
+  enabled?: boolean
 }

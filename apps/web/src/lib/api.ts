@@ -1,10 +1,15 @@
 import type {
   CompanyDeleteResult,
   CompanyList,
+  CompanyScrapeResult,
   DecisionFilter,
   JobEnqueueResult,
+  PromptCreate,
+  PromptRead,
+  PromptUpdate,
   ScrapeJobCreate,
   ScrapeJobRead,
+  ScrapePageContentRead,
   UploadCompanyList,
   UploadCreateResult,
   UploadDetail,
@@ -74,6 +79,20 @@ export async function deleteCompanies(companyIds: string[]): Promise<CompanyDele
   })
 }
 
+export async function scrapeSelectedCompanies(companyIds: string[]): Promise<CompanyScrapeResult> {
+  return request<CompanyScrapeResult>('/v1/companies/scrape-selected', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_ids: companyIds }),
+  })
+}
+
+export async function scrapeAllCompanies(): Promise<CompanyScrapeResult> {
+  return request<CompanyScrapeResult>('/v1/companies/scrape-all', {
+    method: 'POST',
+  })
+}
+
 export async function getUploadCompanies(uploadId: string, limit = 25, offset = 0): Promise<UploadCompanyList> {
   return request<UploadCompanyList>(`/v1/uploads/${uploadId}/companies?limit=${limit}&offset=${offset}`)
 }
@@ -94,6 +113,34 @@ export async function enqueueRunAll(jobId: string): Promise<JobEnqueueResult> {
 
 export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
+}
+
+export async function listScrapeJobs(limit = 50, offset = 0): Promise<ScrapeJobRead[]> {
+  return request<ScrapeJobRead[]>(`/v1/scrape-jobs?limit=${limit}&offset=${offset}`)
+}
+
+export async function listScrapeJobPageContents(jobId: string, limit = 200, offset = 0): Promise<ScrapePageContentRead[]> {
+  return request<ScrapePageContentRead[]>(`/v1/scrape-jobs/${jobId}/pages-content?limit=${limit}&offset=${offset}`)
+}
+
+export async function listPrompts(enabledOnly = false): Promise<PromptRead[]> {
+  return request<PromptRead[]>(`/v1/prompts?enabled_only=${enabledOnly ? 'true' : 'false'}`)
+}
+
+export async function createPrompt(payload: PromptCreate): Promise<PromptRead> {
+  return request<PromptRead>('/v1/prompts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updatePrompt(promptId: string, payload: PromptUpdate): Promise<PromptRead> {
+  return request<PromptRead>(`/v1/prompts/${promptId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export function getCompaniesExportUrl(): string {

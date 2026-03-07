@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.prompts import router as prompts_router
 from app.api.routes.scrape_jobs import router as scrape_jobs_router
 from app.api.routes.uploads import router as uploads_router
 from app.core.config import settings
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     def ready() -> dict[str, str]:
         return {"status": "ready"}
 
+    app.include_router(prompts_router)
     app.include_router(scrape_jobs_router)
     app.include_router(uploads_router)
     return app

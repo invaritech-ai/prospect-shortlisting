@@ -18,7 +18,7 @@ from app.api.schemas.scrape import (
 from app.db.session import get_session
 from app.models import ScrapeJob, ScrapePage
 from app.services.queue_service import QueueService
-from app.services.scrape_service import ScrapeService
+from app.services.scrape_service import ScrapeJobAlreadyRunningError, ScrapeService
 
 
 router = APIRouter(prefix="/v1", tags=["scrape-jobs"])
@@ -54,6 +54,14 @@ def create_scrape_job(payload: ScrapeJobCreate, session: Session = Depends(get_s
             enable_ocr=payload.enable_ocr,
             max_images_per_page=payload.max_images_per_page,
         )
+    except ScrapeJobAlreadyRunningError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "existing_job_id": str(exc.existing_job_id),
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _as_job_read(job)

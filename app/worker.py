@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.logging import configure_logging, log_event
 from app.db.session import engine
 from app.models import ScrapeJob
+from app.services.artifact_cleanup_service import ArtifactCleanupService
 from app.services.queue_service import QueueService, QueueTask
 from app.services.scrape_service import ScrapeService
 
@@ -24,6 +25,8 @@ class Worker:
         self._running = True
         self._queue = QueueService()
         self._scrape_service = ScrapeService()
+        self._cleanup_service = ArtifactCleanupService()
+        self._last_cleanup_at = 0.0
 
     def stop(self, *_: object) -> None:
         self._running = False
@@ -39,6 +42,7 @@ class Worker:
             redis_url=settings.redis_url,
         )
         while self._running:
+            self._maybe_cleanup()
             try:
                 task = self._queue.pop(timeout_sec=settings.worker_block_timeout_sec)
             except Exception as exc:  # noqa: BLE001
@@ -50,6 +54,29 @@ class Worker:
             self._handle_task(task)
         log_event(logger, "worker_stopped")
         return 0
+
+    def _maybe_cleanup(self) -> None:
+        now = time.monotonic()
+        if now - self._last_cleanup_at < settings.worker_cleanup_interval_sec:
+            return
+        self._last_cleanup_at = now
+        try:
+            with Session(engine) as session:
+                stats = self._cleanup_service.cleanup_expired_artifacts(
+                    session=session,
+                    ttl_hours=settings.upload_file_ttl_hours,
+                )
+            log_event(
+                logger,
+                "worker_artifact_cleanup_done",
+                pages_scanned=stats.pages_scanned,
+                html_snapshots_cleared=stats.html_snapshots_cleared,
+                screenshot_files_deleted=stats.screenshot_files_deleted,
+                delete_failures=stats.delete_failures,
+                ttl_hours=settings.upload_file_ttl_hours,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "worker_artifact_cleanup_failed", error=str(exc))
 
     def _handle_task(self, task: QueueTask) -> None:
         try:

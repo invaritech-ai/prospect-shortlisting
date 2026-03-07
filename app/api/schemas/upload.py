@@ -68,6 +68,11 @@ class CompanyListItem(BaseModel):
     created_at: datetime
     latest_decision: str | None = None
     latest_confidence: Decimal | None = None
+    latest_scrape_job_id: UUID | None = None
+    latest_scrape_status: str | None = None
+    latest_scrape_terminal: bool | None = None
+    latest_scrape_stage1_status: str | None = None
+    latest_scrape_stage2_status: str | None = None
 
 
 class CompanyList(BaseModel):
@@ -87,3 +92,14 @@ class CompanyDeleteResult(BaseModel):
     deleted_count: int
     deleted_ids: list[UUID]
     missing_ids: list[UUID]
+
+
+class CompanyScrapeRequest(BaseModel):
+    company_ids: list[UUID] = Field(min_length=1)
+
+
+class CompanyScrapeResult(BaseModel):
+    requested_count: int
+    queued_count: int
+    queued_job_ids: list[UUID]
+    failed_company_ids: list[UUID]

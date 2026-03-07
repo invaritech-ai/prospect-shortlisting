@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_queue_key: str = "prospect:jobs"
     worker_block_timeout_sec: int = 5
+    worker_cleanup_interval_sec: int = 900
     upload_file_ttl_hours: int = 24
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

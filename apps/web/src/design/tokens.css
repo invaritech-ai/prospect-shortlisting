@@ -7,6 +7,15 @@
   --oc-muted: #5d6f67;
   --oc-accent: #0f766e;
   --oc-accent-ink: #0a3f3a;
+  --oc-accent-soft: #d8ece9;
+  --oc-info-bg: #e0f2fe;
+  --oc-info-text: #075985;
+  --oc-success-bg: #dcfce7;
+  --oc-success-text: #166534;
+  --oc-warn-bg: #f1f5f9;
+  --oc-warn-text: #475569;
+  --oc-fail-bg: #ffe4e6;
+  --oc-fail-text: #9f1239;
   --oc-danger-bg: #fee2e2;
   --oc-danger-text: #7f1d1d;
   --oc-shadow: 0 10px 30px rgba(10, 31, 24, 0.08);
@@ -49,5 +58,185 @@
     color: var(--oc-muted);
     font-family: 'IBM Plex Mono', monospace;
     background: var(--oc-surface);
+  }
+
+  .oc-folder-rail {
+    @apply flex items-end gap-0 overflow-x-auto pb-1;
+  }
+
+  .oc-folder-tab {
+    @apply relative min-w-[184px] rounded-t-[28px] px-5 py-3 text-left text-sm font-extrabold transition;
+    margin-right: -10px;
+    border: 1px solid color-mix(in srgb, var(--oc-border) 88%, white);
+    border-bottom: none;
+    color: var(--oc-accent-ink);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--oc-accent-soft) 94%, white), color-mix(in srgb, var(--oc-surface) 97%, white));
+    box-shadow: 0 -5px 18px rgba(10, 31, 24, 0.06);
+  }
+
+  .oc-folder-tab[data-active='false'] {
+    color: var(--oc-muted);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--oc-surface) 84%, #d9e5e2), color-mix(in srgb, var(--oc-bg) 96%, white));
+    transform: translateY(9px);
+    opacity: 0.94;
+    z-index: 1;
+  }
+
+  .oc-folder-tab[data-active='true'] {
+    z-index: 2;
+    box-shadow: 0 -8px 22px rgba(10, 31, 24, 0.08);
+  }
+
+  .oc-folder-title {
+    @apply block;
+    font-family: 'IBM Plex Sans', 'Manrope', sans-serif;
+    letter-spacing: 0.01em;
+  }
+
+  .oc-folder-meta {
+    @apply mt-1 block text-[11px] font-semibold uppercase tracking-[0.16em];
+    color: var(--oc-muted);
+  }
+
+  .oc-badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap;
+  }
+
+  .oc-badge-neutral {
+    background: var(--oc-warn-bg);
+    color: var(--oc-warn-text);
+  }
+
+  .oc-badge-info {
+    background: var(--oc-info-bg);
+    color: var(--oc-info-text);
+  }
+
+  .oc-badge-success {
+    background: var(--oc-success-bg);
+    color: var(--oc-success-text);
+  }
+
+  .oc-badge-fail {
+    background: var(--oc-fail-bg);
+    color: var(--oc-fail-text);
+  }
+
+  .oc-compact-table {
+    @apply w-full border-collapse;
+  }
+
+  .oc-compact-table thead tr {
+    @apply bg-white/70 text-left text-[11px] uppercase tracking-[0.18em];
+    color: var(--oc-muted);
+  }
+
+  .oc-compact-table th {
+    @apply px-3 py-2;
+  }
+
+  .oc-compact-table td {
+    @apply px-3 py-2 align-middle text-sm;
+    border-top: 1px solid color-mix(in srgb, var(--oc-border) 82%, white);
+  }
+
+  .oc-compact-table tbody tr {
+    transition: background 160ms ease;
+  }
+
+  .oc-compact-table tbody tr:hover {
+    background: color-mix(in srgb, var(--oc-accent-soft) 26%, white);
+  }
+
+  .oc-toolbar {
+    @apply sticky top-4 z-10 rounded-2xl border p-3 backdrop-blur-sm;
+    border-color: color-mix(in srgb, var(--oc-border) 88%, white);
+    background: color-mix(in srgb, var(--oc-surface-strong) 90%, transparent);
+  }
+
+  .oc-markdown {
+    color: var(--oc-text);
+  }
+
+  .oc-markdown h1,
+  .oc-markdown h2,
+  .oc-markdown h3,
+  .oc-markdown h4 {
+    @apply mb-3 font-extrabold tracking-tight;
+    color: var(--oc-accent-ink);
+  }
+
+  .oc-markdown h1 {
+    @apply text-2xl;
+  }
+
+  .oc-markdown h2 {
+    @apply mt-6 text-xl;
+  }
+
+  .oc-markdown h3 {
+    @apply mt-5 text-lg;
+  }
+
+  .oc-markdown p,
+  .oc-markdown li {
+    @apply text-sm leading-7;
+  }
+
+  .oc-markdown p,
+  .oc-markdown ul,
+  .oc-markdown ol,
+  .oc-markdown pre,
+  .oc-markdown table,
+  .oc-markdown blockquote {
+    @apply my-3;
+  }
+
+  .oc-markdown ul,
+  .oc-markdown ol {
+    @apply pl-5;
+  }
+
+  .oc-markdown a {
+    color: var(--oc-accent);
+    text-decoration: underline;
+  }
+
+  .oc-markdown blockquote {
+    @apply rounded-r-xl border-l-4 px-4 py-2;
+    border-color: color-mix(in srgb, var(--oc-accent) 48%, white);
+    background: color-mix(in srgb, var(--oc-accent-soft) 45%, white);
+  }
+
+  .oc-markdown code {
+    @apply rounded-md px-1.5 py-0.5 text-[12px];
+    background: color-mix(in srgb, var(--oc-surface) 82%, #e5ece9);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .oc-markdown pre {
+    @apply overflow-x-auto rounded-2xl p-4;
+    background: #f4f7f6;
+  }
+
+  .oc-markdown pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .oc-markdown table {
+    @apply block overflow-x-auto rounded-xl border;
+    border-color: var(--oc-border);
+  }
+
+  .oc-markdown thead {
+    background: color-mix(in srgb, var(--oc-accent-soft) 42%, white);
+  }
+
+  .oc-markdown th,
+  .oc-markdown td {
+    @apply border-b px-3 py-2 text-sm text-left align-top;
+    border-color: color-mix(in srgb, var(--oc-border) 78%, white);
   }
 }
