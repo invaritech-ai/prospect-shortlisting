@@ -213,3 +213,39 @@ export type RunCreateResult = {
   skipped_company_ids: string[]
   runs: RunRead[]
 }
+
+export type AnalysisRunJobRead = {
+  analysis_job_id: string
+  run_id: string
+  company_id: string
+  domain: string
+  state: string
+  terminal_state: boolean
+  last_error_code: string | null
+  last_error_message: string | null
+  predicted_label: string | null
+  confidence: number | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export type AnalysisJobDetailRead = {
+  analysis_job_id: string
+  run_id: string
+  company_id: string
+  domain: string
+  state: string
+  terminal_state: boolean
+  last_error_code: string | null
+  last_error_message: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  prompt_name: string
+  run_status: string
+  predicted_label: string | null
+  confidence: number | null
+  reasoning_json: Record<string, unknown> | null
+  evidence_json: Record<string, unknown> | null
+}

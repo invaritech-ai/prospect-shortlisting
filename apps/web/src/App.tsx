@@ -9,9 +9,11 @@ import {
   createScrapeJob,
   deleteCompanies,
   enqueueRunAll,
+  getAnalysisJobDetail,
   getCompaniesExportUrl,
   listCompanies,
   listPrompts,
+  listRunJobs,
   listRuns,
   listScrapeJobPageContents,
   listScrapeJobs,
@@ -21,6 +23,8 @@ import {
   uploadFile,
 } from './lib/api'
 import type {
+  AnalysisJobDetailRead,
+  AnalysisRunJobRead,
   CompanyList,
   CompanyListItem,
   DecisionFilter,
@@ -100,6 +104,13 @@ function App() {
   const [runsPageSize, setRunsPageSize] = useState(DEFAULT_RUNS_PAGE_SIZE)
   const [isRunsLoading, setIsRunsLoading] = useState(false)
   const [runsHasMore, setRunsHasMore] = useState(false)
+  const [inspectedRun, setInspectedRun] = useState<RunRead | null>(null)
+  const [runJobs, setRunJobs] = useState<AnalysisRunJobRead[]>([])
+  const [isRunJobsLoading, setIsRunJobsLoading] = useState(false)
+  const [runJobsError, setRunJobsError] = useState('')
+  const [analysisDetail, setAnalysisDetail] = useState<AnalysisJobDetailRead | null>(null)
+  const [isAnalysisDetailLoading, setIsAnalysisDetailLoading] = useState(false)
+  const [analysisDetailError, setAnalysisDetailError] = useState('')
   const [markdownJob, setMarkdownJob] = useState<ScrapeJobRead | null>(null)
   const [markdownPages, setMarkdownPages] = useState<ScrapePageContentRead[]>([])
   const [activeMarkdownPageKind, setActiveMarkdownPageKind] = useState<string>('')
@@ -221,6 +232,23 @@ function App() {
     },
     [runsPageSize],
   )
+
+  const loadRunJobs = useCallback(async (run: RunRead) => {
+    setInspectedRun(run)
+    setRunJobs([])
+    setAnalysisDetail(null)
+    setRunJobsError('')
+    setAnalysisDetailError('')
+    setIsRunJobsLoading(true)
+    try {
+      const rows = await listRunJobs(run.id)
+      setRunJobs(rows)
+    } catch (err) {
+      setRunJobsError(parseError(err))
+    } finally {
+      setIsRunJobsLoading(false)
+    }
+  }, [])
 
   const loadPrompts = useCallback(
     async (preferredPromptId?: string, preserveEditor = false) => {
@@ -579,6 +607,28 @@ function App() {
     setMarkdownCopyState('')
   }
 
+  const closeRunDrawer = () => {
+    setInspectedRun(null)
+    setRunJobs([])
+    setAnalysisDetail(null)
+    setRunJobsError('')
+    setAnalysisDetailError('')
+  }
+
+  const openAnalysisDetail = async (job: AnalysisRunJobRead) => {
+    setAnalysisDetail(null)
+    setAnalysisDetailError('')
+    setIsAnalysisDetailLoading(true)
+    try {
+      const detail = await getAnalysisJobDetail(job.analysis_job_id)
+      setAnalysisDetail(detail)
+    } catch (err) {
+      setAnalysisDetailError(parseError(err))
+    } finally {
+      setIsAnalysisDetailLoading(false)
+    }
+  }
+
   const openMarkdownDrawer = async (job: ScrapeJobRead) => {
     setMarkdownJob(job)
     setMarkdownPages([])
@@ -816,6 +866,53 @@ function App() {
     }
     return { className: 'oc-badge oc-badge-success', label: 'Done' }
   }
+
+  const analysisStateBadge = (state: string, terminalState: boolean): { className: string; label: string } => {
+    const normalized = state.toLowerCase()
+    if (!terminalState && (normalized === 'running' || normalized === 'queued')) {
+      return { className: 'oc-badge oc-badge-info', label: normalized === 'queued' ? 'Queued' : 'Running' }
+    }
+    if (normalized === 'failed' || normalized === 'dead') {
+      return { className: 'oc-badge oc-badge-fail', label: 'Failed' }
+    }
+    if (normalized === 'succeeded') {
+      return { className: 'oc-badge oc-badge-success', label: 'Done' }
+    }
+    return { className: 'oc-badge oc-badge-neutral', label: state }
+  }
+
+  const decisionBadgeForLabel = (label: string | null): string => {
+    if (!label) {
+      return 'oc-badge oc-badge-neutral'
+    }
+    const normalized = label.toLowerCase()
+    if (normalized === 'possible') {
+      return 'oc-badge oc-badge-success'
+    }
+    if (normalized === 'unknown') {
+      return 'oc-badge oc-badge-neutral'
+    }
+    return 'oc-badge oc-badge-fail'
+  }
+
+  const evidencePayload = analysisDetail?.evidence_json ?? null
+  const reasoningPayload = analysisDetail?.reasoning_json ?? null
+  const evidenceItems =
+    evidencePayload && Array.isArray(evidencePayload['evidence'])
+      ? (evidencePayload['evidence'] as unknown[]).map((item) => String(item))
+      : []
+  const reasoningSignals =
+    reasoningPayload && typeof reasoningPayload['signals'] === 'object' && reasoningPayload['signals']
+      ? (reasoningPayload['signals'] as Record<string, unknown>)
+      : {}
+  const reasoningOtherFields =
+    reasoningPayload && typeof reasoningPayload['other_fields'] === 'object' && reasoningPayload['other_fields']
+      ? (reasoningPayload['other_fields'] as Record<string, unknown>)
+      : {}
+  const rawModelOutput =
+    reasoningPayload && typeof reasoningPayload['raw_response'] === 'string'
+      ? String(reasoningPayload['raw_response'])
+      : ''
 
   const renderPager = () => (
     <div className="flex flex-wrap items-center gap-2">
@@ -1334,6 +1431,7 @@ function App() {
                           <th>Progress</th>
                           <th>Failed</th>
                           <th>Created</th>
+                          <th>Inspect</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1357,6 +1455,15 @@ function App() {
                               </td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{run.failed_jobs}</td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{new Date(run.created_at).toLocaleString()}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  onClick={() => void loadRunJobs(run)}
+                                  className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
+                                >
+                                  Inspect
+                                </button>
+                              </td>
                             </tr>
                           )
                         })}
@@ -1656,6 +1763,238 @@ function App() {
                       </button>
                     </div>
                   </section>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {inspectedRun && (
+          <div className="fixed inset-0 z-40 bg-slate-950/18 backdrop-blur-[1px]">
+            <div className="absolute inset-y-0 right-0 w-full max-w-[860px] border-l border-[var(--oc-border)] bg-[var(--oc-surface-strong)] shadow-[0_18px_60px_rgba(10,31,24,0.18)] xl:w-[56vw]">
+              <div className="flex h-full flex-col">
+                <div className="border-b border-[var(--oc-border)] px-5 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
+                        {analysisDetail ? 'Classification Evidence' : 'Run Inspection'}
+                      </p>
+                      <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-[var(--oc-text)]">
+                        {analysisDetail ? analysisDetail.domain : inspectedRun.prompt_name}
+                      </h2>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {analysisDetail ? (
+                          <>
+                            <span className={decisionBadgeForLabel(analysisDetail.predicted_label)}>
+                              {analysisDetail.predicted_label ?? 'No result'}
+                            </span>
+                            <span className={analysisStateBadge(analysisDetail.state, analysisDetail.terminal_state).className}>
+                              {analysisStateBadge(analysisDetail.state, analysisDetail.terminal_state).label}
+                            </span>
+                            <span className="text-xs text-[var(--oc-muted)]">
+                              Confidence {analysisDetail.confidence !== null ? analysisDetail.confidence.toFixed(2) : '-'}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={runBadge(inspectedRun).className}>{runBadge(inspectedRun).label}</span>
+                            <span className="text-xs text-[var(--oc-muted)]">
+                              {inspectedRun.completed_jobs + inspectedRun.failed_jobs}/{inspectedRun.total_jobs}
+                            </span>
+                            <span className="text-xs text-[var(--oc-muted)]">
+                              {new Date(inspectedRun.created_at).toLocaleString()}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {analysisDetail ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAnalysisDetail(null)
+                            setAnalysisDetailError('')
+                          }}
+                          className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
+                        >
+                          Back
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={closeRunDrawer}
+                        className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                  {isAnalysisDetailLoading ? (
+                    <p className="text-sm text-[var(--oc-muted)]">Loading evidence...</p>
+                  ) : analysisDetailError ? (
+                    <div className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
+                      <p className="text-sm text-[var(--oc-muted)]">{analysisDetailError}</p>
+                    </div>
+                  ) : !analysisDetail ? (
+                    <>
+                      <div className="mb-4 rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Prompt</p>
+                            <p className="mt-2 text-sm font-semibold text-[var(--oc-accent-ink)]">{inspectedRun.prompt_name}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Progress</p>
+                            <p className="mt-2 text-sm font-semibold text-[var(--oc-accent-ink)]">
+                              {inspectedRun.completed_jobs + inspectedRun.failed_jobs}/{inspectedRun.total_jobs}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Failures</p>
+                            <p className="mt-2 text-sm font-semibold text-[var(--oc-accent-ink)]">{inspectedRun.failed_jobs}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {isRunJobsLoading ? (
+                        <p className="text-sm text-[var(--oc-muted)]">Loading run jobs...</p>
+                      ) : runJobsError ? (
+                        <div className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
+                          <p className="text-sm text-[var(--oc-muted)]">{runJobsError}</p>
+                        </div>
+                      ) : runJobs.length === 0 ? (
+                        <div className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
+                          <p className="text-sm text-[var(--oc-muted)]">No jobs found for this run.</p>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="oc-compact-table min-w-[760px]">
+                            <thead>
+                              <tr>
+                                <th>Domain</th>
+                                <th>Result</th>
+                                <th>State</th>
+                                <th>Confidence</th>
+                                <th>Inspect</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {runJobs.map((job) => {
+                                const badge = analysisStateBadge(job.state, job.terminal_state)
+                                return (
+                                  <tr key={job.analysis_job_id}>
+                                    <td>
+                                      <span className="block max-w-[260px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)]">
+                                        {job.domain}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <span className={decisionBadgeForLabel(job.predicted_label)}>
+                                        {job.predicted_label ?? 'No result'}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <span className={badge.className}>{badge.label}</span>
+                                    </td>
+                                    <td className="text-[12px] text-[var(--oc-muted)]">
+                                      {job.confidence !== null ? job.confidence.toFixed(2) : '-'}
+                                    </td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        onClick={() => void openAnalysisDetail(job)}
+                                        className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
+                                      >
+                                        Inspect
+                                      </button>
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="space-y-4">
+                      <section className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={decisionBadgeForLabel(analysisDetail.predicted_label)}>
+                            {analysisDetail.predicted_label ?? 'No result'}
+                          </span>
+                          <span className={analysisStateBadge(analysisDetail.state, analysisDetail.terminal_state).className}>
+                            {analysisStateBadge(analysisDetail.state, analysisDetail.terminal_state).label}
+                          </span>
+                          <span className="text-xs text-[var(--oc-muted)]">Prompt {analysisDetail.prompt_name}</span>
+                        </div>
+                        {analysisDetail.last_error_code ? (
+                          <p className="mt-3 text-sm text-[var(--oc-fail-text)]">
+                            {analysisDetail.last_error_code}: {analysisDetail.last_error_message || 'No detail'}
+                          </p>
+                        ) : null}
+                      </section>
+
+                      <section className="rounded-2xl border border-[var(--oc-border)] bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Evidence</p>
+                        <div className="mt-3 space-y-3">
+                          {evidenceItems.length > 0 ? (
+                            evidenceItems.map((item, index) => (
+                              <blockquote key={`${index}:${item.slice(0, 24)}`} className="rounded-r-xl border-l-4 border-[var(--oc-accent)] bg-[var(--oc-accent-soft)]/35 px-4 py-3 text-sm leading-7 text-[var(--oc-text)]">
+                                {item}
+                              </blockquote>
+                            ))
+                          ) : (
+                            <p className="text-sm text-[var(--oc-muted)]">No evidence captured for this job.</p>
+                          )}
+                        </div>
+                      </section>
+
+                      <section className="rounded-2xl border border-[var(--oc-border)] bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Signals</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {Object.keys(reasoningSignals).length > 0 ? (
+                            Object.entries(reasoningSignals).map(([key, value]) => (
+                              <span key={key} className="rounded-full border border-[var(--oc-border)] bg-[var(--oc-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--oc-text)]">
+                                {key}: {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                              </span>
+                            ))
+                          ) : (
+                            <p className="text-sm text-[var(--oc-muted)]">No signals recorded.</p>
+                          )}
+                        </div>
+                      </section>
+
+                      <section className="rounded-2xl border border-[var(--oc-border)] bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Other Fields</p>
+                        <div className="mt-3 space-y-3">
+                          {Object.keys(reasoningOtherFields).length > 0 ? (
+                            Object.entries(reasoningOtherFields).map(([key, value]) => (
+                              <div key={key} className="grid gap-1 border-b border-[var(--oc-border)] pb-3 last:border-b-0 last:pb-0">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--oc-muted)]">{key}</p>
+                                <p className="text-sm leading-7 text-[var(--oc-text)]">{String(value)}</p>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-sm text-[var(--oc-muted)]">No additional fields recorded.</p>
+                          )}
+                        </div>
+                      </section>
+
+                      <details className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
+                        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
+                          Raw Model Output
+                        </summary>
+                        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-2xl bg-white p-4 text-xs leading-6 text-[var(--oc-text)]">
+                          {rawModelOutput || 'No raw model output stored.'}
+                        </pre>
+                      </details>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -1,4 +1,6 @@
 import type {
+  AnalysisJobDetailRead,
+  AnalysisRunJobRead,
   CompanyDeleteResult,
   CompanyList,
   CompanyScrapeResult,
@@ -156,6 +158,14 @@ export async function createRuns(payload: RunCreateRequest): Promise<RunCreateRe
 
 export async function listRuns(limit = 25, offset = 0): Promise<RunRead[]> {
   return request<RunRead[]>(`/v1/runs?limit=${limit}&offset=${offset}`)
+}
+
+export async function listRunJobs(runId: string, limit = 500, offset = 0): Promise<AnalysisRunJobRead[]> {
+  return request<AnalysisRunJobRead[]>(`/v1/runs/${runId}/jobs?limit=${limit}&offset=${offset}`)
+}
+
+export async function getAnalysisJobDetail(analysisJobId: string): Promise<AnalysisJobDetailRead> {
+  return request<AnalysisJobDetailRead>(`/v1/analysis-jobs/${analysisJobId}`)
 }
 
 export function getCompaniesExportUrl(): string {
