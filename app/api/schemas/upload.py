@@ -71,7 +71,8 @@ class CompanyListItem(BaseModel):
 
 
 class CompanyList(BaseModel):
-    total: int
+    total: int | None = None
+    has_more: bool
     limit: int
     offset: int
     items: list[CompanyListItem]

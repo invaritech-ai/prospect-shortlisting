@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent } from 'react'
 import {
   ApiError,
   createScrapeJob,
   deleteCompanies,
   enqueueRunAll,
+  getCompaniesExportUrl,
   listCompanies,
   uploadFile,
 } from './lib/api'
@@ -21,6 +22,7 @@ const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
 ]
 
 function App() {
+  const companyCacheRef = useRef<Record<string, CompanyList>>({})
   const [file, setFile] = useState<File | null>(null)
   const [companies, setCompanies] = useState<CompanyList | null>(null)
   const [companyOffset, setCompanyOffset] = useState(0)
@@ -50,25 +52,61 @@ function App() {
     return 'Unknown error'
   }
 
+  const cacheKeyFor = useCallback(
+    (offset: number, limit: number, nextDecisionFilter: DecisionFilter): string =>
+      `${nextDecisionFilter}:${limit}:${offset}`,
+    [],
+  )
+
+  const prefetchCompanies = useCallback(
+    async (offset: number, limit: number, nextDecisionFilter: DecisionFilter) => {
+      const key = cacheKeyFor(offset, limit, nextDecisionFilter)
+      if (companyCacheRef.current[key]) {
+        return
+      }
+      try {
+        const response = await listCompanies(limit, offset, nextDecisionFilter)
+        companyCacheRef.current[key] = response
+      } catch {
+        // Prefetch should never interrupt operator flow.
+      }
+    },
+    [cacheKeyFor],
+  )
+
   const loadCompanies = useCallback(
     async (
       offset = 0,
       nextLimit = pageSize,
       nextDecisionFilter: DecisionFilter = decisionFilter,
     ) => {
+      const key = cacheKeyFor(offset, nextLimit, nextDecisionFilter)
+      const cached = companyCacheRef.current[key]
+      if (cached) {
+        setCompanies(cached)
+        setCompanyOffset(offset)
+        setSelectedCompanyIds([])
+        void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter)
+        return
+      }
+
       setIsCompaniesLoading(true)
       try {
         const response = await listCompanies(nextLimit, offset, nextDecisionFilter)
+        companyCacheRef.current[key] = response
         setCompanies(response)
         setCompanyOffset(offset)
         setSelectedCompanyIds([])
+        if (response.has_more) {
+          void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter)
+        }
       } catch (err) {
         setError(parseError(err))
       } finally {
         setIsCompaniesLoading(false)
       }
     },
-    [decisionFilter, pageSize],
+    [cacheKeyFor, decisionFilter, pageSize, prefetchCompanies],
   )
 
   useEffect(() => {
@@ -85,6 +123,7 @@ function App() {
     setIsUploading(true)
     try {
       await uploadFile(file)
+      companyCacheRef.current = {}
       setFile(null)
       await loadCompanies(0, pageSize, decisionFilter)
     } catch (err) {
@@ -163,6 +202,7 @@ function App() {
     setIsDeleting(true)
     try {
       await deleteCompanies(selectedCompanyIds)
+      companyCacheRef.current = {}
       const currentLimit = companies?.limit ?? pageSize
       const nextOffset =
         companies && companies.items.length === selectedCompanyIds.length && companyOffset > 0
@@ -177,13 +217,15 @@ function App() {
   }
 
   const rangeLabel =
-    companies && companies.total > 0
+    companies && companies.total !== null && companies.total > 0
       ? `${Math.min(companies.offset + 1, companies.total)}-${Math.min(companies.offset + companies.items.length, companies.total)} of ${companies.total}`
+      : companies && companies.items.length > 0
+        ? `${companies.offset + 1}-${companies.offset + companies.items.length}`
       : '0 of 0'
   const allVisibleSelected =
     companies ? companies.items.length > 0 && companies.items.every((item) => selectedCompanyIds.includes(item.id)) : false
   const canPagePrev = !!companies && companyOffset > 0 && !isCompaniesLoading
-  const canPageNext = !!companies && companyOffset + (companies?.limit ?? pageSize) < companies.total && !isCompaniesLoading
+  const canPageNext = !!companies && companies.has_more && !isCompaniesLoading
 
   const decisionBadgeClass = (decision: string | null): string => {
     if (!decision) {
@@ -242,8 +284,18 @@ function App() {
               </p>
             </div>
             <div className="rounded-xl border border-[var(--oc-border)] bg-[var(--oc-surface)] px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.18em] text-[var(--oc-muted)]">API</p>
-              <p className="mt-1 font-semibold text-[var(--oc-accent-ink)]">{import.meta.env.VITE_API_BASE_URL}</p>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-[var(--oc-muted)]">API</p>
+                  <p className="mt-1 font-semibold text-[var(--oc-accent-ink)]">{import.meta.env.VITE_API_BASE_URL}</p>
+                </div>
+                <a
+                  href={getCompaniesExportUrl()}
+                  className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-2 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
+                >
+                  Export CSV
+                </a>
+              </div>
             </div>
           </div>
         </header>
@@ -322,7 +374,6 @@ function App() {
                         </th>
                         <th className="px-3 py-2">Domain</th>
                         <th className="px-3 py-2">URL</th>
-                        <th className="px-3 py-2">Upload</th>
                         <th className="px-3 py-2">Decision</th>
                         <th className="px-3 py-2">Added</th>
                         <th className="px-3 py-2">Actions</th>
@@ -344,10 +395,6 @@ function App() {
                             <p className="mt-0.5 font-mono text-[11px] text-[var(--oc-muted)]">{item.raw_url}</p>
                           </td>
                           <td className="px-3 py-2 font-mono text-[11px] text-[var(--oc-muted)]">{item.normalized_url}</td>
-                          <td className="px-3 py-2">
-                            <p className="text-xs font-semibold">{item.upload_filename}</p>
-                            <p className="mt-0.5 font-mono text-[11px] text-[var(--oc-muted)]">{item.upload_id}</p>
-                          </td>
                           <td className="px-3 py-2">
                             {item.latest_decision ? (
                               <div>

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import case, func
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from sqlalchemy import String, case, cast, func
 from sqlmodel import Session, col, delete, select
 
 from app.api.schemas.upload import (
@@ -34,6 +37,20 @@ from app.services.upload_service import UploadIssue, UploadService
 
 router = APIRouter(prefix="/v1", tags=["uploads"])
 upload_service = UploadService()
+
+
+def _latest_classification_subquery():
+    return (
+        select(
+            AnalysisJob.company_id.label("company_id"),
+            cast(ClassificationResult.predicted_label, String()).label("predicted_label"),
+            ClassificationResult.confidence.label("confidence"),
+        )
+        .join(AnalysisJob, AnalysisJob.id == ClassificationResult.analysis_job_id)
+        .distinct(AnalysisJob.company_id)
+        .order_by(AnalysisJob.company_id, ClassificationResult.created_at.desc())
+        .subquery()
+    )
 
 
 def _as_upload_read(upload: Upload) -> UploadRead:
@@ -135,7 +152,12 @@ def list_upload_companies(
         session.exec(
             select(Company)
             .where(col(Company.upload_id) == upload_id)
-            .order_by(col(Company.created_at).asc(), col(Company.domain).asc())
+            .order_by(
+                case((col(Company.source_row_number).is_(None), 1), else_=0).asc(),
+                col(Company.source_row_number).asc(),
+                col(Company.created_at).asc(),
+                col(Company.domain).asc(),
+            )
             .offset(offset)
             .limit(limit)
         )
@@ -156,24 +178,12 @@ def list_companies(
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     decision_filter: str = Query(default="all"),
+    include_total: bool = Query(default=False),
 ) -> CompanyList:
-    latest_decision = (
-        select(ClassificationResult.predicted_label)
-        .join(AnalysisJob, AnalysisJob.id == ClassificationResult.analysis_job_id)
-        .where(AnalysisJob.company_id == Company.id)
-        .order_by(ClassificationResult.created_at.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-    latest_confidence = (
-        select(ClassificationResult.confidence)
-        .join(AnalysisJob, AnalysisJob.id == ClassificationResult.analysis_job_id)
-        .where(AnalysisJob.company_id == Company.id)
-        .order_by(ClassificationResult.created_at.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-    decision_lower = func.lower(func.coalesce(latest_decision, ""))
+    latest_classification = _latest_classification_subquery()
+    latest_decision_text = latest_classification.c.predicted_label
+    latest_confidence = latest_classification.c.confidence
+    decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
     decision_rank = case(
         (decision_lower == "", 0),
         (decision_lower == "possible", 1),
@@ -194,10 +204,11 @@ def list_companies(
             Company.normalized_url,
             Company.domain,
             Company.created_at,
-            latest_decision,
+            latest_decision_text,
             latest_confidence,
         )
         .join(Upload, Upload.id == Company.upload_id)
+        .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
     )
     if normalized_filter == "unlabeled":
         statement = statement.where(decision_lower == "")
@@ -212,16 +223,23 @@ def list_companies(
                 col(Company.domain).asc(),
             )
             .offset(offset)
-            .limit(limit)
+            .limit(limit + 1)
         )
     )
-
-    total_stmt = select(func.count()).select_from(Company)
-    if normalized_filter == "unlabeled":
-        total_stmt = total_stmt.where(decision_lower == "")
-    elif normalized_filter in {"possible", "unknown", "crap"}:
-        total_stmt = total_stmt.where(decision_lower == normalized_filter)
-    total = session.exec(total_stmt).one()
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    total: int | None = None
+    if include_total:
+        total_stmt = (
+            select(func.count())
+            .select_from(Company)
+            .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        )
+        if normalized_filter == "unlabeled":
+            total_stmt = total_stmt.where(decision_lower == "")
+        elif normalized_filter in {"possible", "unknown", "crap"}:
+            total_stmt = total_stmt.where(decision_lower == normalized_filter)
+        total = session.exec(total_stmt).one()
     items = [
         CompanyListItem(
             id=row[0],
@@ -234,9 +252,44 @@ def list_companies(
             latest_decision=str(row[7]) if row[7] is not None else None,
             latest_confidence=row[8],
         )
-        for row in rows
+        for row in page_rows
     ]
-    return CompanyList(total=total, limit=limit, offset=offset, items=items)
+    return CompanyList(total=total, has_more=has_more, limit=limit, offset=offset, items=items)
+
+
+@router.get("/companies/export.csv")
+def export_companies_csv(session: Session = Depends(get_session)) -> Response:
+    latest_classification = _latest_classification_subquery()
+    latest_decision_text = latest_classification.c.predicted_label
+    rows = session.exec(
+        select(
+            Company.raw_url,
+            func.coalesce(latest_decision_text, "Unknown"),
+        )
+        .join(Upload, Upload.id == Company.upload_id)
+        .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        .order_by(
+            col(Upload.created_at).asc(),
+            case((col(Company.source_row_number).is_(None), 1), else_=0).asc(),
+            col(Company.source_row_number).asc(),
+            col(Company.created_at).asc(),
+        )
+    ).all()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(["website", "classification"])
+    for raw_url, classification in rows:
+        writer.writerow([raw_url, classification])
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="prospects-{timestamp}.csv"',
+        },
+    )
 
 
 @router.post("/companies/delete", response_model=CompanyDeleteResult)

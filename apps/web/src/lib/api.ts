@@ -59,9 +59,10 @@ export async function listCompanies(
   limit = 25,
   offset = 0,
   decisionFilter: DecisionFilter = 'all',
+  includeTotal = false,
 ): Promise<CompanyList> {
   return request<CompanyList>(
-    `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}`,
+    `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&include_total=${includeTotal}`,
   )
 }
 
@@ -93,4 +94,8 @@ export async function enqueueRunAll(jobId: string): Promise<JobEnqueueResult> {
 
 export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
+}
+
+export function getCompaniesExportUrl(): string {
+  return `${API_BASE_URL}/v1/companies/export.csv`
 }

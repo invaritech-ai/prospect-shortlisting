@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Numeric, UniqueConstraint
+from sqlalchemy import JSON, Column, Numeric, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -70,9 +70,10 @@ class Company(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     upload_id: UUID = Field(foreign_key="uploads.id", index=True)
-    raw_url: str = Field(max_length=2048)
+    raw_url: str = Field(sa_column=Column(Text, nullable=False))
     normalized_url: str = Field(max_length=2048)
     domain: str = Field(max_length=255, index=True)
+    source_row_number: int | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

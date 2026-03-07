@@ -51,7 +51,8 @@ export type CompanyListItem = {
 }
 
 export type CompanyList = {
-  total: number
+  total: number | null
+  has_more: boolean
   limit: number
   offset: number
   items: CompanyListItem[]

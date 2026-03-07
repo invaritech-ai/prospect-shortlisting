@@ -9,7 +9,7 @@ import polars as pl
 from sqlmodel import Session
 
 from app.models import Company, Upload
-from app.services.url_utils import domain_from_url, normalize_url, split_url_candidates
+from app.services.url_utils import domain_from_url, normalize_url
 
 
 MAX_VALIDATION_ERRORS = 200
@@ -49,11 +49,11 @@ class UploadService:
         checksum = hashlib.sha256(raw_bytes).hexdigest()
 
         issues: list[UploadIssue] = []
-        company_rows: list[tuple[str, str, str]] = []
+        company_rows: list[tuple[str, str, str, int]] = []
         seen_normalized: set[str] = set()
 
         for row_number, raw_value in rows:
-            extracted_value = self._extract_storable_value(raw_value)
+            raw_url = raw_value.strip()
             normalized = normalize_url(raw_value)
             if not normalized:
                 self._append_issue(
@@ -68,14 +68,14 @@ class UploadService:
                 continue
 
             domain = domain_from_url(normalized)
-            if not extracted_value or len(extracted_value) > MAX_URL_FIELD_LEN:
+            if not raw_url:
                 self._append_issue(
                     issues,
                     UploadIssue(
                         row_number=row_number,
                         raw_value=self._truncate_for_error(raw_value),
-                        error_code="url_too_long",
-                        error_message="Extracted URL exceeded storage limit.",
+                        error_code="invalid_url",
+                        error_message="Could not parse a valid URL from row.",
                     ),
                 )
                 continue
@@ -114,7 +114,7 @@ class UploadService:
                 continue
 
             seen_normalized.add(normalized)
-            company_rows.append((extracted_value, normalized, domain))
+            company_rows.append((raw_url, normalized, domain, row_number))
 
         upload = Upload(
             filename=filename or "upload",
@@ -135,13 +135,14 @@ class UploadService:
         session.add(upload)
         session.flush()
 
-        for raw_url, normalized_url, domain in company_rows:
+        for raw_url, normalized_url, domain, source_row_number in company_rows:
             session.add(
                 Company(
                     upload_id=upload.id,
                     raw_url=raw_url,
                     normalized_url=normalized_url,
                     domain=domain,
+                    source_row_number=source_row_number,
                 )
             )
 
@@ -276,12 +277,6 @@ class UploadService:
     def _append_issue(self, issues: list[UploadIssue], issue: UploadIssue) -> None:
         if len(issues) < MAX_VALIDATION_ERRORS:
             issues.append(issue)
-
-    def _extract_storable_value(self, raw_value: str) -> str:
-        candidates = split_url_candidates(raw_value)
-        if candidates:
-            return candidates[0][:MAX_URL_FIELD_LEN]
-        return raw_value.strip()[:MAX_URL_FIELD_LEN]
 
     def _truncate_for_error(self, raw_value: str) -> str:
         value = raw_value.strip()
