@@ -73,6 +73,9 @@ class CompanyListItem(BaseModel):
     latest_scrape_terminal: bool | None = None
     latest_scrape_stage1_status: str | None = None
     latest_scrape_stage2_status: str | None = None
+    latest_analysis_run_id: UUID | None = None
+    latest_analysis_status: str | None = None
+    latest_analysis_terminal: bool | None = None
 
 
 class CompanyList(BaseModel):

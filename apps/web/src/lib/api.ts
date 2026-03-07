@@ -7,6 +7,9 @@ import type {
   PromptCreate,
   PromptRead,
   PromptUpdate,
+  RunCreateRequest,
+  RunCreateResult,
+  RunRead,
   ScrapeJobCreate,
   ScrapeJobRead,
   ScrapePageContentRead,
@@ -141,6 +144,18 @@ export async function updatePrompt(promptId: string, payload: PromptUpdate): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+export async function createRuns(payload: RunCreateRequest): Promise<RunCreateResult> {
+  return request<RunCreateResult>('/v1/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function listRuns(limit = 25, offset = 0): Promise<RunRead[]> {
+  return request<RunRead[]>(`/v1/runs?limit=${limit}&offset=${offset}`)
 }
 
 export function getCompaniesExportUrl(): string {

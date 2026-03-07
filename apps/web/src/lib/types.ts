@@ -53,6 +53,9 @@ export type CompanyListItem = {
   latest_scrape_terminal: boolean | null
   latest_scrape_stage1_status: string | null
   latest_scrape_stage2_status: string | null
+  latest_analysis_run_id: string | null
+  latest_analysis_status: string | null
+  latest_analysis_terminal: boolean | null
 }
 
 export type CompanyList = {
@@ -176,4 +179,37 @@ export type PromptUpdate = {
   name?: string
   prompt_text?: string
   enabled?: boolean
+}
+
+export type RunRead = {
+  id: string
+  upload_id: string
+  prompt_id: string
+  prompt_name: string
+  general_model: string
+  classify_model: string
+  ocr_model: string
+  status: string
+  total_jobs: number
+  completed_jobs: number
+  failed_jobs: number
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export type RunCreateRequest = {
+  prompt_id: string
+  scope: 'all' | 'selected'
+  company_ids?: string[]
+  general_model?: string
+  classify_model?: string
+  ocr_model?: string
+}
+
+export type RunCreateResult = {
+  requested_count: number
+  queued_count: number
+  skipped_company_ids: string[]
+  runs: RunRead[]
 }

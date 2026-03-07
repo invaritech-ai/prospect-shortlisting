@@ -9,6 +9,7 @@ from app.api.schemas.scrape import (
     ScrapePageRead,
 )
 from app.api.schemas.prompt import PromptCreate, PromptRead, PromptUpdate
+from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.api.schemas.upload import (
     CompanyList,
     CompanyDeleteRequest,
@@ -35,6 +36,9 @@ __all__ = [
     "PromptCreate",
     "PromptRead",
     "PromptUpdate",
+    "RunCreateRequest",
+    "RunCreateResult",
+    "RunRead",
     "UploadValidationError",
     "CompanyRead",
     "CompanyListItem",

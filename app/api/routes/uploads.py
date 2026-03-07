@@ -87,6 +87,20 @@ def _latest_scrape_subquery():
     )
 
 
+def _latest_analysis_subquery():
+    return (
+        select(
+            AnalysisJob.company_id.label("company_id"),
+            AnalysisJob.run_id.label("run_id"),
+            cast(AnalysisJob.state, String()).label("state"),
+            AnalysisJob.terminal_state.label("terminal_state"),
+        )
+        .distinct(AnalysisJob.company_id)
+        .order_by(AnalysisJob.company_id, AnalysisJob.created_at.desc())
+        .subquery()
+    )
+
+
 def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]) -> CompanyScrapeResult:
     queued_job_ids: list[UUID] = []
     failed_company_ids: list[UUID] = []
@@ -246,6 +260,7 @@ def list_companies(
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
+    latest_analysis = _latest_analysis_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     latest_confidence = latest_classification.c.confidence
     decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
@@ -276,10 +291,14 @@ def list_companies(
             latest_scrape.c.terminal_state,
             latest_scrape.c.stage1_status,
             latest_scrape.c.stage2_status,
+            latest_analysis.c.run_id,
+            latest_analysis.c.state,
+            latest_analysis.c.terminal_state,
         )
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
     )
     if normalized_filter == "unlabeled":
         statement = statement.where(decision_lower == "")
@@ -327,6 +346,9 @@ def list_companies(
             latest_scrape_terminal=row[11],
             latest_scrape_stage1_status=str(row[12]) if row[12] is not None else None,
             latest_scrape_stage2_status=str(row[13]) if row[13] is not None else None,
+            latest_analysis_run_id=row[14],
+            latest_analysis_status=str(row[15]) if row[15] is not None else None,
+            latest_analysis_terminal=row[16],
         )
         for row in page_rows
     ]

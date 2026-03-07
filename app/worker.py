@@ -11,7 +11,8 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.core.logging import configure_logging, log_event
 from app.db.session import engine
-from app.models import ScrapeJob
+from app.models import AnalysisJob, ScrapeJob
+from app.services.analysis_service import AnalysisService
 from app.services.artifact_cleanup_service import ArtifactCleanupService
 from app.services.queue_service import QueueService, QueueTask
 from app.services.scrape_service import ScrapeService
@@ -25,6 +26,7 @@ class Worker:
         self._running = True
         self._queue = QueueService()
         self._scrape_service = ScrapeService()
+        self._analysis_service = AnalysisService()
         self._cleanup_service = ArtifactCleanupService()
         self._last_cleanup_at = 0.0
 
@@ -86,6 +88,8 @@ class Worker:
                 self._run_step2(task)
             elif task.task_type == "scrape_run_all":
                 self._run_all(task)
+            elif task.task_type == "analysis_job":
+                self._run_analysis_job(task)
             else:
                 log_event(logger, "worker_task_unknown", task_id=task.task_id, task_type=task.task_type)
         except Exception as exc:  # noqa: BLE001
@@ -144,8 +148,30 @@ class Worker:
                 self._scrape_service.run_step2(session=session, job=job)
             log_event(logger, "worker_run_all_done", task_id=task.task_id, job_id=str(job_id), status=job.status)
 
+    def _run_analysis_job(self, task: QueueTask) -> None:
+        analysis_job_id = self._payload_uuid(task, key="analysis_job_id")
+        if not analysis_job_id:
+            return
+        with Session(engine) as session:
+            job = session.get(AnalysisJob, analysis_job_id)
+            if not job:
+                log_event(logger, "worker_job_missing", task_id=task.task_id, analysis_job_id=str(analysis_job_id))
+                return
+            self._analysis_service.run_analysis_job(session=session, analysis_job_id=analysis_job_id)
+            log_event(
+                logger,
+                "worker_analysis_done",
+                task_id=task.task_id,
+                analysis_job_id=str(analysis_job_id),
+                state=job.state,
+                run_id=str(job.run_id),
+            )
+
     def _payload_job_id(self, task: QueueTask) -> UUID | None:
-        raw = task.payload.get("job_id", "")
+        return self._payload_uuid(task, key="job_id")
+
+    def _payload_uuid(self, task: QueueTask, *, key: str) -> UUID | None:
+        raw = task.payload.get(key, "")
         try:
             return UUID(raw)
         except Exception:  # noqa: BLE001

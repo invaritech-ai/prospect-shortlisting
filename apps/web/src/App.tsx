@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ApiError,
+  createRuns,
   createPrompt,
   createScrapeJob,
   deleteCompanies,
@@ -11,6 +12,7 @@ import {
   getCompaniesExportUrl,
   listCompanies,
   listPrompts,
+  listRuns,
   listScrapeJobPageContents,
   listScrapeJobs,
   scrapeAllCompanies,
@@ -23,6 +25,7 @@ import type {
   CompanyListItem,
   DecisionFilter,
   PromptRead,
+  RunRead,
   ScrapeJobRead,
   ScrapePageContentRead,
 } from './lib/types'
@@ -31,6 +34,8 @@ const DEFAULT_COMPANY_PAGE_SIZE = 100
 const PAGE_SIZE_OPTIONS = [50, 100, 200] as const
 const DEFAULT_JOBS_PAGE_SIZE = 50
 const JOBS_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
+const DEFAULT_RUNS_PAGE_SIZE = 25
+const RUNS_PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 const PAGE_KIND_ORDER = ['home', 'about', 'products'] as const
 const PAGE_KIND_LABELS: Record<(typeof PAGE_KIND_ORDER)[number], string> = {
   home: 'Home',
@@ -38,7 +43,7 @@ const PAGE_KIND_LABELS: Record<(typeof PAGE_KIND_ORDER)[number], string> = {
   products: 'Products',
 }
 const PROMPT_SELECTION_KEY = 'ps:selected-prompt-id'
-type ActiveView = 'companies' | 'jobs'
+type ActiveView = 'companies' | 'jobs' | 'runs'
 type JobFilter = 'all' | 'active' | 'completed' | 'failed'
 const JOB_FILTERS: Array<{ value: JobFilter; label: string }> = [
   { value: 'all', label: 'All jobs' },
@@ -66,10 +71,14 @@ function App() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isScrapingSelected, setIsScrapingSelected] = useState(false)
   const [isScrapingAll, setIsScrapingAll] = useState(false)
+  const [isClassifyingSelected, setIsClassifyingSelected] = useState(false)
+  const [isClassifyingAll, setIsClassifyingAll] = useState(false)
   const [isDragActive, setIsDragActive] = useState(false)
   const [actionState, setActionState] = useState<Record<string, string>>({})
+  const [analysisActionState, setAnalysisActionState] = useState<Record<string, string>>({})
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([])
   const [scrapeJobs, setScrapeJobs] = useState<ScrapeJobRead[]>([])
+  const [runs, setRuns] = useState<RunRead[]>([])
   const [activeView, setActiveView] = useState<ActiveView>('companies')
   const [utilitiesOpen, setUtilitiesOpen] = useState(false)
   const [promptSheetOpen, setPromptSheetOpen] = useState(false)
@@ -87,6 +96,10 @@ function App() {
   const [jobsFilter, setJobsFilter] = useState<JobFilter>('all')
   const [isJobsLoading, setIsJobsLoading] = useState(false)
   const [jobsHasMore, setJobsHasMore] = useState(false)
+  const [runsOffset, setRunsOffset] = useState(0)
+  const [runsPageSize, setRunsPageSize] = useState(DEFAULT_RUNS_PAGE_SIZE)
+  const [isRunsLoading, setIsRunsLoading] = useState(false)
+  const [runsHasMore, setRunsHasMore] = useState(false)
   const [markdownJob, setMarkdownJob] = useState<ScrapeJobRead | null>(null)
   const [markdownPages, setMarkdownPages] = useState<ScrapePageContentRead[]>([])
   const [activeMarkdownPageKind, setActiveMarkdownPageKind] = useState<string>('')
@@ -192,6 +205,23 @@ function App() {
     [jobsPageSize],
   )
 
+  const loadRuns = useCallback(
+    async (offset = 0, limit = runsPageSize) => {
+      setIsRunsLoading(true)
+      try {
+        const rows = await listRuns(limit + 1, offset)
+        setRunsHasMore(rows.length > limit)
+        setRuns(rows.slice(0, limit))
+        setRunsOffset(offset)
+      } catch (err) {
+        setError(parseError(err))
+      } finally {
+        setIsRunsLoading(false)
+      }
+    },
+    [runsPageSize],
+  )
+
   const loadPrompts = useCallback(
     async (preferredPromptId?: string, preserveEditor = false) => {
       setIsPromptsLoading(true)
@@ -250,6 +280,10 @@ function App() {
   }, [jobsPageSize, loadScrapeJobs])
 
   useEffect(() => {
+    void loadRuns(0, runsPageSize)
+  }, [runsPageSize, loadRuns])
+
+  useEffect(() => {
     void loadPrompts()
   }, [loadPrompts])
 
@@ -263,6 +297,18 @@ function App() {
     }, 4000)
     return () => window.clearInterval(timer)
   }, [jobsOffset, jobsPageSize, loadScrapeJobs, scrapeJobs])
+
+  useEffect(() => {
+    const hasActiveRuns = runs.some((run) => run.status === 'running' || run.status === 'created')
+    if (!hasActiveRuns) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void loadRuns(runsOffset, runsPageSize)
+      void loadCompanies(companyOffset, pageSize, decisionFilter)
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [companyOffset, decisionFilter, loadCompanies, loadRuns, pageSize, runs, runsOffset, runsPageSize])
 
   useEffect(() => {
     if (!markdownJob) {
@@ -458,6 +504,71 @@ function App() {
     } finally {
       setIsScrapingAll(false)
     }
+  }
+
+  const startClassification = async (scope: 'all' | 'selected', companyIds: string[] = []) => {
+    if (!selectedPrompt || !selectedPrompt.enabled) {
+      setError('Select an enabled prompt before starting classification.')
+      return
+    }
+
+    setError('')
+    setNotice('')
+    if (scope === 'all') {
+      setIsClassifyingAll(true)
+    } else {
+      setIsClassifyingSelected(true)
+    }
+
+    try {
+      const result = await createRuns({
+        prompt_id: selectedPrompt.id,
+        scope,
+        company_ids: scope === 'selected' ? companyIds : undefined,
+      })
+      await loadRuns(0, runsPageSize)
+      await loadCompanies(companyOffset, pageSize, decisionFilter)
+      const runCount = result.runs.length
+      const message = `Created ${runCount} run${runCount === 1 ? '' : 's'} and queued ${result.queued_count}/${result.requested_count} classifications.`
+      if (result.skipped_company_ids.length > 0) {
+        setNotice(`${message} Skipped ${result.skipped_company_ids.length} companies without completed scrape markdown.`)
+      } else {
+        setNotice(message)
+      }
+      if (scope === 'selected') {
+        setAnalysisActionState((current) => {
+          const next = { ...current }
+          const skipped = new Set(result.skipped_company_ids)
+          for (const companyId of companyIds) {
+            next[companyId] = skipped.has(companyId) ? 'Skipped' : 'Queued'
+          }
+          return next
+        })
+      }
+    } catch (err) {
+      setError(parseError(err))
+    } finally {
+      if (scope === 'all') {
+        setIsClassifyingAll(false)
+      } else {
+        setIsClassifyingSelected(false)
+      }
+    }
+  }
+
+  const onClassify = async (company: CompanyListItem) => {
+    await startClassification('selected', [company.id])
+  }
+
+  const onClassifySelected = async () => {
+    if (selectedCompanyIds.length === 0) {
+      return
+    }
+    await startClassification('selected', selectedCompanyIds)
+  }
+
+  const onClassifyAll = async () => {
+    await startClassification('all')
   }
 
   const closeMarkdownDrawer = () => {
@@ -688,9 +799,23 @@ function App() {
     filteredJobs.length > 0
       ? `${jobsOffset + 1}-${jobsOffset + filteredJobs.length}`
       : '0 of 0'
+  const runsRangeLabel =
+    runs.length > 0
+      ? `${runsOffset + 1}-${runsOffset + runs.length}`
+      : '0 of 0'
   const activeMarkdownPage =
     markdownPages.find((page) => page.page_kind === activeMarkdownPageKind) ?? null
   const selectedPrompt = prompts.find((item) => item.id === selectedPromptId) ?? null
+
+  const runBadge = (run: RunRead): { className: string; label: string } => {
+    if (run.status === 'running' || run.status === 'created') {
+      return { className: 'oc-badge oc-badge-info', label: 'Running' }
+    }
+    if (run.status === 'failed') {
+      return { className: 'oc-badge oc-badge-fail', label: 'Failed' }
+    }
+    return { className: 'oc-badge oc-badge-success', label: 'Done' }
+  }
 
   const renderPager = () => (
     <div className="flex flex-wrap items-center gap-2">
@@ -782,6 +907,10 @@ function App() {
               <span className="oc-folder-title">Scrape Jobs</span>
               <span className="oc-folder-meta">{jobsRangeLabel}</span>
             </button>
+            <button type="button" className="oc-folder-tab" data-active={activeView === 'runs'} onClick={() => setActiveView('runs')}>
+              <span className="oc-folder-title">Analysis Runs</span>
+              <span className="oc-folder-meta">{runsRangeLabel}</span>
+            </button>
           </div>
 
           <section className="oc-panel rounded-tl-none p-5 md:p-6">
@@ -813,11 +942,27 @@ function App() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => void onClassifyAll()}
+                        disabled={!selectedPrompt || !selectedPrompt.enabled || isClassifyingAll}
+                        className="rounded-lg border border-[var(--oc-accent)] bg-[var(--oc-accent-soft)] px-3 py-1.5 text-xs font-bold text-[var(--oc-accent-ink)] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isClassifyingAll ? 'Classifying all...' : 'Classify all'}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void onScrapeSelected()}
                         disabled={selectedCompanyIds.length === 0 || isScrapingSelected}
                         className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isScrapingSelected ? 'Scraping selected...' : `Scrape selected (${selectedCompanyIds.length})`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onClassifySelected()}
+                        disabled={selectedCompanyIds.length === 0 || !selectedPrompt || !selectedPrompt.enabled || isClassifyingSelected}
+                        className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isClassifyingSelected ? 'Classifying selected...' : `Classify selected (${selectedCompanyIds.length})`}
                       </button>
                       <button
                         type="button"
@@ -970,12 +1115,20 @@ function App() {
                                     </button>
                                     <button
                                       type="button"
-                                      disabled
-                                      className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-muted)] opacity-60"
+                                      onClick={() => void onClassify(item)}
+                                      disabled={
+                                        !selectedPrompt ||
+                                        !selectedPrompt.enabled ||
+                                        item.latest_scrape_status !== 'completed' ||
+                                        item.latest_analysis_terminal === false
+                                      }
+                                      className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
                                     >
-                                      Classify
+                                      {item.latest_analysis_terminal === false ? 'Classifying...' : 'Classify'}
                                     </button>
-                                    <span className="text-[11px] text-[var(--oc-muted)]">{actionState[item.id] ?? ''}</span>
+                                    <span className="text-[11px] text-[var(--oc-muted)]">
+                                      {analysisActionState[item.id] || actionState[item.id] || ''}
+                                    </span>
                                   </div>
                                 </td>
                               </tr>
@@ -988,7 +1141,7 @@ function App() {
                   )}
                 </div>
               </>
-            ) : (
+            ) : activeView === 'jobs' ? (
               <>
                 <div className="oc-toolbar">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1105,6 +1258,105 @@ function App() {
                                   View Markdown
                                 </button>
                               </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="oc-toolbar">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold tracking-tight">Analysis Runs</h2>
+                      <p className="mt-1 text-sm text-[var(--oc-muted)]">
+                        Classification progress grouped by upload. Active runs auto-refresh every 4 seconds.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void loadRuns(runsOffset, runsPageSize)}
+                        disabled={isRunsLoading}
+                        className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isRunsLoading ? 'Refreshing...' : 'Refresh'}
+                      </button>
+                      <label className="text-xs font-semibold text-[var(--oc-muted)]">
+                        Rows
+                        <select
+                          value={runsPageSize}
+                          onChange={(event) => setRunsPageSize(Number(event.target.value))}
+                          className="ml-2 rounded-lg border border-[var(--oc-border)] bg-white px-2 py-1 text-xs font-semibold text-[var(--oc-text)]"
+                        >
+                          {RUNS_PAGE_SIZE_OPTIONS.map((size) => (
+                            <option key={size} value={size}>
+                              {size}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => void loadRuns(Math.max(runsOffset - runsPageSize, 0), runsPageSize)}
+                        disabled={runsOffset === 0 || isRunsLoading}
+                        className="rounded-lg border border-[var(--oc-border)] px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Prev
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void loadRuns(runsOffset + runsPageSize, runsPageSize)}
+                        disabled={!runsHasMore || isRunsLoading}
+                        className="rounded-lg border border-[var(--oc-border)] px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 overflow-x-auto">
+                  {isRunsLoading && runs.length === 0 ? (
+                    <p className="py-6 text-sm text-[var(--oc-muted)]">Loading analysis runs...</p>
+                  ) : runs.length === 0 ? (
+                    <p className="py-6 text-sm text-[var(--oc-muted)]">No analysis runs yet.</p>
+                  ) : (
+                    <table className="oc-compact-table min-w-[920px]">
+                      <thead>
+                        <tr>
+                          <th>Run</th>
+                          <th>Prompt</th>
+                          <th>Status</th>
+                          <th>Progress</th>
+                          <th>Failed</th>
+                          <th>Created</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runs.map((run) => {
+                          const badge = runBadge(run)
+                          return (
+                            <tr key={run.id}>
+                              <td className="font-mono text-[11px] text-[var(--oc-muted)]" title={run.id}>
+                                {run.id.slice(0, 8)}...
+                              </td>
+                              <td>
+                                <span className="block max-w-[260px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)]">
+                                  {run.prompt_name}
+                                </span>
+                              </td>
+                              <td>
+                                <span className={badge.className}>{badge.label}</span>
+                              </td>
+                              <td className="text-[12px] text-[var(--oc-muted)]">
+                                {run.completed_jobs + run.failed_jobs}/{run.total_jobs}
+                              </td>
+                              <td className="text-[12px] text-[var(--oc-muted)]">{run.failed_jobs}</td>
+                              <td className="text-[12px] text-[var(--oc-muted)]">{new Date(run.created_at).toLocaleString()}</td>
                             </tr>
                           )
                         })}
