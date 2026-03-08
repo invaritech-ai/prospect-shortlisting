@@ -8,15 +8,18 @@ import {
   createPrompt,
   createScrapeJob,
   deleteCompanies,
+  drainQueue,
   enqueueRunAll,
   getAnalysisJobDetail,
   getCompaniesExportUrl,
+  getStats,
   listCompanies,
   listPrompts,
   listRunJobs,
   listRuns,
   listScrapeJobPageContents,
   listScrapeJobs,
+  resetStuckJobs,
   scrapeAllCompanies,
   scrapeSelectedCompanies,
   updatePrompt,
@@ -28,10 +31,12 @@ import type {
   CompanyList,
   CompanyListItem,
   DecisionFilter,
+  PipelineStageStats,
   PromptRead,
   RunRead,
   ScrapeJobRead,
   ScrapePageContentRead,
+  StatsResponse,
 } from './lib/types'
 
 const DEFAULT_COMPANY_PAGE_SIZE = 100
@@ -117,6 +122,9 @@ function App() {
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [markdownError, setMarkdownError] = useState('')
   const [markdownCopyState, setMarkdownCopyState] = useState('')
+  const [stats, setStats] = useState<StatsResponse | null>(null)
+  const [isDrainingQueue, setIsDrainingQueue] = useState(false)
+  const [isResettingStuck, setIsResettingStuck] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -298,6 +306,15 @@ function App() {
     [editingPromptId, selectedPromptId],
   )
 
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await getStats()
+      setStats(data)
+    } catch {
+      // Stats panel failure should not interrupt main flow.
+    }
+  }, [])
+
   useEffect(() => {
     setSelectedCompanyIds([])
     void loadCompanies(0, pageSize, decisionFilter)
@@ -314,6 +331,12 @@ function App() {
   useEffect(() => {
     void loadPrompts()
   }, [loadPrompts])
+
+  useEffect(() => {
+    void loadStats()
+    const timer = window.setInterval(() => void loadStats(), 10000)
+    return () => window.clearInterval(timer)
+  }, [loadStats])
 
   useEffect(() => {
     const hasActiveJobs = scrapeJobs.some((job) => !job.terminal_state)
@@ -759,6 +782,87 @@ function App() {
     }
   }
 
+  const onDrainQueue = async () => {
+    const confirmed = window.confirm(
+      'Cancel all queued jobs? This removes them from Redis and marks them as cancelled in the database.',
+    )
+    if (!confirmed) return
+    setError('')
+    setNotice('')
+    setIsDrainingQueue(true)
+    try {
+      const result = await drainQueue()
+      await Promise.all([loadScrapeJobs(0, jobsPageSize), loadStats()])
+      setNotice(
+        `Drained ${result.drained.toLocaleString()} tasks from queue and cancelled ${result.cancelled_db_jobs.toLocaleString()} jobs.`,
+      )
+    } catch (err) {
+      setError(parseError(err))
+    } finally {
+      setIsDrainingQueue(false)
+    }
+  }
+
+  const onResetStuck = async () => {
+    setError('')
+    setNotice('')
+    setIsResettingStuck(true)
+    try {
+      const result = await resetStuckJobs()
+      await Promise.all([loadScrapeJobs(0, jobsPageSize), loadStats()])
+      setNotice(`Reset and re-queued ${result.reset_count.toLocaleString()} stuck jobs.`)
+    } catch (err) {
+      setError(parseError(err))
+    } finally {
+      setIsResettingStuck(false)
+    }
+  }
+
+  const renderStageStats = (label: string, stage: PipelineStageStats) => (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-sm font-bold text-[var(--oc-text)]">{label}</span>
+        <span className="font-mono text-xs text-[var(--oc-muted)]" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {stage.pct_done}%
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-[var(--oc-border)]">
+        <div
+          className="h-full rounded-full bg-[var(--oc-accent)] transition-[width] duration-500"
+          style={{ width: `${Math.min(stage.pct_done, 100)}%` }}
+          role="progressbar"
+          aria-valuenow={stage.pct_done}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${label} progress`}
+        />
+      </div>
+      <div
+        className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"
+        style={{ fontVariantNumeric: 'tabular-nums' }}
+      >
+        <span className="text-[var(--oc-muted)]">{stage.completed.toLocaleString()} done</span>
+        {stage.running > 0 && (
+          <span className="text-[var(--oc-info-text)]">{stage.running.toLocaleString()} running</span>
+        )}
+        {stage.queued > 0 && (
+          <span className="text-[var(--oc-muted)]">{stage.queued.toLocaleString()} queued</span>
+        )}
+        {stage.failed > 0 && (
+          <span className="text-[var(--oc-fail-text)]">{stage.failed.toLocaleString()} failed</span>
+        )}
+        {stage.avg_job_sec != null && (
+          <span className="text-[var(--oc-muted)]">avg {stage.avg_job_sec}s/job</span>
+        )}
+        {stage.eta_at && (
+          <span className="font-semibold text-[var(--oc-accent-ink)]">
+            ETA {new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(new Date(stage.eta_at))}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+
   const rangeLabel =
     companies && companies.total !== null && companies.total > 0
       ? `${Math.min(companies.offset + 1, companies.total)}-${Math.min(companies.offset + companies.items.length, companies.total)} of ${companies.total}`
@@ -980,6 +1084,41 @@ function App() {
             </div>
           </div>
         </header>
+
+        {stats && (
+          <section className="oc-panel p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="oc-kbd mb-1">Pipeline Status</p>
+                <p className="text-xs text-[var(--oc-muted)]">
+                  as of {new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' }).format(new Date(stats.as_of))}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void onResetStuck()}
+                  disabled={isResettingStuck || stats.scrape.running === 0}
+                  className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isResettingStuck ? 'Resetting…' : `Reset Stuck (${stats.scrape.running.toLocaleString()})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onDrainQueue()}
+                  disabled={isDrainingQueue || (stats.scrape.queued === 0 && stats.analysis.queued === 0)}
+                  className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isDrainingQueue ? 'Draining…' : `Drain Queue (${(stats.scrape.queued + stats.analysis.queued).toLocaleString()})`}
+                </button>
+              </div>
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2">
+              {renderStageStats('Scrape', stats.scrape)}
+              {renderStageStats('Analysis', stats.analysis)}
+            </div>
+          </section>
+        )}
 
         <section>
           <div className="oc-folder-rail">
@@ -1299,7 +1438,7 @@ function App() {
 
                 <div className="mt-4 overflow-x-auto">
                   {isJobsLoading && scrapeJobs.length === 0 ? (
-                    <p className="py-6 text-sm text-[var(--oc-muted)]">Loading scrape jobs...</p>
+                    <p className="py-6 text-sm text-[var(--oc-muted)]">Loading scrape jobs…</p>
                   ) : scrapeJobs.length === 0 ? (
                     <p className="py-6 text-sm text-[var(--oc-muted)]">No scrape jobs in this view.</p>
                   ) : (
@@ -1408,7 +1547,7 @@ function App() {
 
                 <div className="mt-4 overflow-x-auto">
                   {isRunsLoading && runs.length === 0 ? (
-                    <p className="py-6 text-sm text-[var(--oc-muted)]">Loading analysis runs...</p>
+                    <p className="py-6 text-sm text-[var(--oc-muted)]">Loading analysis runs…</p>
                   ) : runs.length === 0 ? (
                     <p className="py-6 text-sm text-[var(--oc-muted)]">No analysis runs yet.</p>
                   ) : (
@@ -1466,16 +1605,18 @@ function App() {
           </section>
         </section>
 
-        {error && (
-          <section className="oc-panel border-[var(--oc-danger-bg)] bg-[var(--oc-danger-bg)] p-4">
-            <p className="font-medium text-[var(--oc-danger-text)]">{error}</p>
-          </section>
-        )}
-        {notice && (
-          <section className="oc-panel border-emerald-200 bg-emerald-50 p-4">
-            <p className="font-medium text-emerald-800">{notice}</p>
-          </section>
-        )}
+        <div aria-live="polite" aria-atomic="true">
+          {error && (
+            <section className="oc-panel border-[var(--oc-danger-bg)] bg-[var(--oc-danger-bg)] p-4">
+              <p className="font-medium text-[var(--oc-danger-text)]">{error}</p>
+            </section>
+          )}
+          {notice && (
+            <section className="oc-panel border-emerald-200 bg-emerald-50 p-4">
+              <p className="font-medium text-emerald-800">{notice}</p>
+            </section>
+          )}
+        </div>
 
         {markdownJob && (
           <div className="fixed inset-0 z-40 bg-slate-950/18 backdrop-blur-[1px]">
@@ -1529,9 +1670,9 @@ function App() {
                   )}
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
                   {isMarkdownLoading ? (
-                    <p className="text-sm text-[var(--oc-muted)]">Loading markdown...</p>
+                    <p className="text-sm text-[var(--oc-muted)]">Loading markdown…</p>
                   ) : markdownError ? (
                     <div className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
                       <p className="text-sm text-[var(--oc-muted)]">{markdownError}</p>

@@ -230,6 +230,34 @@ export type AnalysisRunJobRead = {
   finished_at: string | null
 }
 
+export type PipelineStageStats = {
+  total: number
+  completed: number
+  failed: number
+  running: number
+  queued: number
+  pct_done: number
+  avg_job_sec: number | null
+  eta_seconds: number | null
+  eta_at: string | null
+}
+
+export type StatsResponse = {
+  scrape: PipelineStageStats
+  analysis: PipelineStageStats
+  as_of: string
+}
+
+export type DrainQueueResult = {
+  drained: number
+  cancelled_db_jobs: number
+  queue_key: string
+}
+
+export type ResetStuckResult = {
+  reset_count: number
+}
+
 export type AnalysisJobDetailRead = {
   analysis_job_id: string
   run_id: string

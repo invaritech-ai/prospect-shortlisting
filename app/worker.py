@@ -8,12 +8,13 @@ import time
 import traceback
 from uuid import UUID
 
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.core.config import settings
 from app.core.logging import configure_logging, log_event
 from app.db.session import engine
 from app.models import AnalysisJob, ScrapeJob
+from app.models.pipeline import AnalysisJobState
 from app.services.analysis_service import AnalysisService
 from app.services.artifact_cleanup_service import ArtifactCleanupService
 from app.services.queue_service import QueueService, QueueTask
@@ -210,6 +211,7 @@ def main() -> int:
     configure_logging()
     concurrency = max(1, settings.worker_concurrency)
     if concurrency == 1:
+        _recover_stuck_jobs(QueueService())
         return Worker().run()
     return WorkerSupervisor(concurrency=concurrency).run()
 
@@ -221,11 +223,67 @@ def _run_worker_process(slot: int, *, cleanup_enabled: bool) -> int:
     return worker.run()
 
 
+def _recover_stuck_jobs(queue: QueueService) -> None:
+    """Reset jobs left in running states from a previous crashed run and re-enqueue them.
+
+    Safe to call at supervisor startup because at that point all worker processes are
+    guaranteed to be dead — no job in a running/queued-but-lost state has a live owner.
+    """
+    stuck_scrape_statuses = ["running_step1", "running_step2", "step1_completed"]
+    scrape_count = 0
+    analysis_count = 0
+
+    with Session(engine) as session:
+        stuck_scrape = list(
+            session.exec(
+                select(ScrapeJob).where(
+                    col(ScrapeJob.terminal_state).is_(False)
+                    & col(ScrapeJob.status).in_(stuck_scrape_statuses)
+                )
+            )
+        )
+        for job in stuck_scrape:
+            job.status = "created"
+            job.terminal_state = False
+            session.add(job)
+        session.commit()
+        scrape_count = len(stuck_scrape)
+
+    with Session(engine) as session:
+        stuck_analysis = list(
+            session.exec(
+                select(AnalysisJob).where(
+                    col(AnalysisJob.terminal_state).is_(False)
+                    & col(AnalysisJob.state).in_([AnalysisJobState.RUNNING, AnalysisJobState.QUEUED])
+                )
+            )
+        )
+        for job in stuck_analysis:
+            job.state = AnalysisJobState.QUEUED
+            job.started_at = None
+            session.add(job)
+        session.commit()
+        analysis_count = len(stuck_analysis)
+
+    for job in stuck_scrape:
+        queue.enqueue(task_type="scrape_run_all", payload={"job_id": str(job.id)})
+    for job in stuck_analysis:
+        queue.enqueue(task_type="analysis_job", payload={"analysis_job_id": str(job.id)})
+
+    log_event(
+        logger,
+        "worker_startup_recovery",
+        scrape_jobs_recovered=scrape_count,
+        analysis_jobs_recovered=analysis_count,
+    )
+
+
 class WorkerSupervisor:
     def __init__(self, *, concurrency: int) -> None:
         self._concurrency = concurrency
         self._running = True
         self._children: dict[int, multiprocessing.Process] = {}
+        self._queue = QueueService()
 
     def stop(self, *_: object) -> None:
         self._running = False
@@ -234,6 +292,8 @@ class WorkerSupervisor:
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
         log_event(logger, "worker_supervisor_started", concurrency=self._concurrency)
+
+        _recover_stuck_jobs(self._queue)
 
         for slot in range(self._concurrency):
             self._spawn(slot)

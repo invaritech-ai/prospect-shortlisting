@@ -5,16 +5,19 @@ import type {
   CompanyList,
   CompanyScrapeResult,
   DecisionFilter,
+  DrainQueueResult,
   JobEnqueueResult,
   PromptCreate,
   PromptRead,
   PromptUpdate,
+  ResetStuckResult,
   RunCreateRequest,
   RunCreateResult,
   RunRead,
   ScrapeJobCreate,
   ScrapeJobRead,
   ScrapePageContentRead,
+  StatsResponse,
   UploadCompanyList,
   UploadCreateResult,
   UploadDetail,
@@ -169,6 +172,18 @@ export async function listRunJobs(runId: string, limit = 500, offset = 0): Promi
 
 export async function getAnalysisJobDetail(analysisJobId: string): Promise<AnalysisJobDetailRead> {
   return request<AnalysisJobDetailRead>(`/v1/analysis-jobs/${analysisJobId}`)
+}
+
+export async function getStats(): Promise<StatsResponse> {
+  return request<StatsResponse>('/v1/stats')
+}
+
+export async function drainQueue(): Promise<DrainQueueResult> {
+  return request<DrainQueueResult>('/v1/queue/drain', { method: 'POST' })
+}
+
+export async function resetStuckJobs(): Promise<ResetStuckResult> {
+  return request<ResetStuckResult>('/v1/jobs/reset-stuck', { method: 'POST' })
 }
 
 export function getCompaniesExportUrl(): string {

@@ -7,6 +7,7 @@ from app.api.routes.analysis import router as analysis_router
 from app.api.routes.prompts import router as prompts_router
 from app.api.routes.runs import router as runs_router
 from app.api.routes.scrape_jobs import router as scrape_jobs_router
+from app.api.routes.stats import router as stats_router
 from app.api.routes.uploads import router as uploads_router
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(prompts_router)
     app.include_router(runs_router)
     app.include_router(scrape_jobs_router)
+    app.include_router(stats_router)
     app.include_router(uploads_router)
     return app
 
