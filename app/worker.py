@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 import signal
 import time
+import traceback
 from uuid import UUID
 
 from sqlmodel import Session
@@ -102,7 +103,9 @@ class Worker:
                 "worker_task_failed",
                 task_id=task.task_id,
                 task_type=task.task_type,
+                payload=task.payload,
                 error=str(exc),
+                traceback=traceback.format_exc(),
             )
 
     def _run_step1(self, task: QueueTask) -> None:
@@ -110,12 +113,12 @@ class Worker:
         if not job_id:
             return
         with Session(engine) as session:
-            job = session.get(ScrapeJob, job_id)
-            if not job:
+            if not session.get(ScrapeJob, job_id):
                 log_event(logger, "worker_job_missing", task_id=task.task_id, job_id=str(job_id))
                 return
-            asyncio.run(self._scrape_service.run_step1(session=session, job=job))
-            log_event(logger, "worker_step1_done", task_id=task.task_id, job_id=str(job_id), status=job.status)
+        # Session closed before the long async I/O; run_step1 manages its own sessions.
+        asyncio.run(self._scrape_service.run_step1(engine=engine, job_id=job_id))
+        log_event(logger, "worker_step1_done", task_id=task.task_id, job_id=str(job_id))
 
     def _run_step2(self, task: QueueTask) -> None:
         job_id = self._payload_job_id(task)
@@ -135,22 +138,27 @@ class Worker:
                     reason="step1_not_completed",
                 )
                 return
-            self._scrape_service.run_step2(session=session, job=job)
-            log_event(logger, "worker_step2_done", task_id=task.task_id, job_id=str(job_id), status=job.status)
+        # Session closed before the long sync I/O; run_step2 manages its own sessions.
+        self._scrape_service.run_step2(engine=engine, job_id=job_id)
+        log_event(logger, "worker_step2_done", task_id=task.task_id, job_id=str(job_id))
 
     def _run_all(self, task: QueueTask) -> None:
         job_id = self._payload_job_id(task)
         if not job_id:
             return
         with Session(engine) as session:
-            job = session.get(ScrapeJob, job_id)
-            if not job:
+            if not session.get(ScrapeJob, job_id):
                 log_event(logger, "worker_job_missing", task_id=task.task_id, job_id=str(job_id))
                 return
-            asyncio.run(self._scrape_service.run_step1(session=session, job=job))
-            if job.stage1_status == "completed":
-                self._scrape_service.run_step2(session=session, job=job)
-            log_event(logger, "worker_run_all_done", task_id=task.task_id, job_id=str(job_id), status=job.status)
+        asyncio.run(self._scrape_service.run_step1(engine=engine, job_id=job_id))
+        # Check step1 result before proceeding.
+        with Session(engine) as session:
+            job = session.get(ScrapeJob, job_id)
+            if not job or job.stage1_status != "completed":
+                log_event(logger, "worker_run_all_done", task_id=task.task_id, job_id=str(job_id), reason="step1_not_completed")
+                return
+        self._scrape_service.run_step2(engine=engine, job_id=job_id)
+        log_event(logger, "worker_run_all_done", task_id=task.task_id, job_id=str(job_id))
 
     def _run_analysis_job(self, task: QueueTask) -> None:
         analysis_job_id = self._payload_uuid(task, key="analysis_job_id")
@@ -161,15 +169,30 @@ class Worker:
             if not job:
                 log_event(logger, "worker_job_missing", task_id=task.task_id, analysis_job_id=str(analysis_job_id))
                 return
-            self._analysis_service.run_analysis_job(session=session, analysis_job_id=analysis_job_id)
+            result = self._analysis_service.run_analysis_job(session=session, analysis_job_id=analysis_job_id)
             log_event(
                 logger,
                 "worker_analysis_done",
                 task_id=task.task_id,
                 analysis_job_id=str(analysis_job_id),
-                state=job.state,
-                run_id=str(job.run_id),
+                state=result.state,
+                attempt_count=result.attempt_count,
+                run_id=str(result.run_id),
             )
+            # Re-enqueue if the job failed transiently and has retries remaining.
+            if not result.terminal_state:
+                self._queue.enqueue(
+                    task_type="analysis_job",
+                    payload={"analysis_job_id": str(analysis_job_id)},
+                )
+                log_event(
+                    logger,
+                    "worker_analysis_requeued",
+                    analysis_job_id=str(analysis_job_id),
+                    attempt_count=result.attempt_count,
+                    max_attempts=result.max_attempts,
+                    error_code=result.last_error_code,
+                )
 
     def _payload_job_id(self, task: QueueTask) -> UUID | None:
         return self._payload_uuid(task, key="job_id")

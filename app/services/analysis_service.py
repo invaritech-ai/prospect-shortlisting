@@ -9,6 +9,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 from uuid import UUID
 
+from sqlalchemy import case, update
 from sqlmodel import Session, col, func, select
 
 from app.core.config import settings
@@ -155,6 +156,15 @@ class AnalysisService:
             session.refresh(job)
         return queued_runs, queued_jobs, skipped_company_ids
 
+    # Error codes that are permanent (data missing, config wrong).
+    # Everything else is treated as transient and will be retried.
+    _PERMANENT_ERROR_CODES: frozenset[str] = frozenset({
+        "analysis_dependencies_missing",
+        "analysis_api_key_missing",
+        "scrape_missing",
+        "analysis_context_empty",
+    })
+
     def run_analysis_job(self, *, session: Session, analysis_job_id: UUID) -> AnalysisJob:
         analysis_job = session.get(AnalysisJob, analysis_job_id)
         if not analysis_job:
@@ -174,6 +184,7 @@ class AnalysisService:
             self._refresh_run_status(session=session, run_id=analysis_job.run_id)
             return analysis_job
 
+        analysis_job.attempt_count += 1
         analysis_job.state = AnalysisJobState.RUNNING
         analysis_job.started_at = analysis_job.started_at or utcnow()
         analysis_job.last_error_code = None
@@ -348,6 +359,12 @@ class AnalysisService:
             return "", "analysis_llm_failed"
 
     def _ensure_crawl_adapter(self, *, session: Session, company: Company, scrape_job: ScrapeJob) -> CrawlArtifact:
+        # Derive the actual crawl state from the scrape job outcome.
+        actual_state = (
+            CrawlJobState.SUCCEEDED
+            if scrape_job.status == "completed" and scrape_job.pages_fetched_count > 0
+            else CrawlJobState.FAILED
+        )
         crawl_job = session.exec(
             select(CrawlJob)
             .where(
@@ -359,7 +376,7 @@ class AnalysisService:
             crawl_job = CrawlJob(
                 upload_id=company.upload_id,
                 company_id=company.id,
-                state=CrawlJobState.SUCCEEDED,
+                state=actual_state,
                 attempt_count=1,
                 started_at=scrape_job.step1_started_at or scrape_job.created_at,
                 finished_at=scrape_job.step2_finished_at or scrape_job.updated_at,
@@ -367,7 +384,7 @@ class AnalysisService:
             session.add(crawl_job)
             session.flush()
         else:
-            crawl_job.state = CrawlJobState.SUCCEEDED
+            crawl_job.state = actual_state
             crawl_job.finished_at = scrape_job.step2_finished_at or scrape_job.updated_at
             crawl_job.updated_at = utcnow()
             session.add(crawl_job)
@@ -396,46 +413,84 @@ class AnalysisService:
         return artifact
 
     def _fail_job(self, *, session: Session, analysis_job: AnalysisJob, error_code: str, error_message: str) -> AnalysisJob:
-        analysis_job.state = AnalysisJobState.FAILED
-        analysis_job.terminal_state = True
+        is_permanent = error_code in self._PERMANENT_ERROR_CODES
+        attempts_exhausted = analysis_job.attempt_count >= analysis_job.max_attempts
+
+        if is_permanent or attempts_exhausted:
+            # Terminal failure: permanent error or no retries left.
+            analysis_job.state = AnalysisJobState.DEAD if attempts_exhausted and not is_permanent else AnalysisJobState.FAILED
+            analysis_job.terminal_state = True
+            analysis_job.finished_at = utcnow()
+        else:
+            # Transient failure with retries remaining: put back to QUEUED.
+            # The worker will re-enqueue this job for another attempt.
+            analysis_job.state = AnalysisJobState.QUEUED
+            analysis_job.terminal_state = False
+
         analysis_job.last_error_code = error_code
         analysis_job.last_error_message = error_message
-        analysis_job.finished_at = utcnow()
         session.add(analysis_job)
         session.commit()
-        self._refresh_run_status(session=session, run_id=analysis_job.run_id)
+        if analysis_job.terminal_state:
+            self._refresh_run_status(session=session, run_id=analysis_job.run_id)
         session.refresh(analysis_job)
         return analysis_job
 
     def _refresh_run_status(self, *, session: Session, run_id: UUID) -> None:
         run = session.get(Run, run_id)
-        if not run:
+        if not run or run.total_jobs == 0:
             return
-        succeeded = session.exec(
+
+        # All counts are evaluated as scalar subqueries inside a single UPDATE.
+        # This eliminates the read-compute-write race: concurrent workers computing
+        # these values at SELECT time can overwrite each other with stale data.
+        # With inline subqueries, every UPDATE sees the current DB state at the
+        # moment it executes, so the last writer always produces the correct result.
+        succeeded_sub = (
             select(func.count())
             .select_from(AnalysisJob)
-            .where((col(AnalysisJob.run_id) == run_id) & (col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED))
-        ).one()
-        failed = session.exec(
+            .where(
+                (col(AnalysisJob.run_id) == run_id)
+                & (col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED)
+            )
+            .scalar_subquery()
+        )
+        failed_sub = (
             select(func.count())
             .select_from(AnalysisJob)
             .where(
                 (col(AnalysisJob.run_id) == run_id)
                 & col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD])
             )
-        ).one()
-        terminal = session.exec(
+            .scalar_subquery()
+        )
+        terminal_sub = (
             select(func.count())
             .select_from(AnalysisJob)
-            .where((col(AnalysisJob.run_id) == run_id) & col(AnalysisJob.terminal_state))
-        ).one()
+            .where(
+                (col(AnalysisJob.run_id) == run_id)
+                & col(AnalysisJob.terminal_state)
+            )
+            .scalar_subquery()
+        )
 
-        run.completed_jobs = int(succeeded or 0)
-        run.failed_jobs = int(failed or 0)
-        if terminal >= run.total_jobs and run.total_jobs > 0:
-            run.status = RunStatus.FAILED if run.failed_jobs > 0 else RunStatus.COMPLETED
-            run.finished_at = utcnow()
-        else:
-            run.status = RunStatus.RUNNING
-        session.add(run)
+        is_done = terminal_sub >= run.total_jobs
+        session.execute(
+            update(Run)
+            .where(Run.id == run_id)
+            .values(
+                completed_jobs=succeeded_sub,
+                failed_jobs=failed_sub,
+                status=case(
+                    (is_done & (failed_sub > 0), RunStatus.FAILED),
+                    (is_done, RunStatus.COMPLETED),
+                    else_=RunStatus.RUNNING,
+                ),
+                # Preserve existing finished_at if the run is not yet done.
+                finished_at=case(
+                    (is_done, utcnow()),
+                    else_=Run.__table__.c.finished_at,
+                ),
+            )
+        )
         session.commit()

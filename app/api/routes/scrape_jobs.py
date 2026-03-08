@@ -16,7 +16,7 @@ from app.api.schemas.scrape import (
     ScrapePageContentRead,
     ScrapePageRead,
 )
-from app.db.session import get_session
+from app.db.session import engine, get_session
 from app.models import ScrapeJob, ScrapePage
 from app.services.queue_service import QueueService
 from app.services.scrape_service import ScrapeJobAlreadyRunningError, ScrapeService
@@ -183,10 +183,10 @@ def list_job_page_contents(
 
 @router.post("/scrape-jobs/{job_id}/run-step1", response_model=JobActionResult)
 def run_step1(job_id: UUID, session: Session = Depends(get_session)) -> JobActionResult:
-    job = session.get(ScrapeJob, job_id)
-    if not job:
+    if not session.get(ScrapeJob, job_id):
         raise HTTPException(status_code=404, detail="Job not found.")
-    job = asyncio.run(scrape_service.run_step1(session=session, job=job))
+    asyncio.run(scrape_service.run_step1(engine=engine, job_id=job_id))
+    job = session.get(ScrapeJob, job_id)
     return JobActionResult(job=_as_job_read(job), message="Step 1 completed.")
 
 
@@ -197,19 +197,25 @@ def run_step2(job_id: UUID, session: Session = Depends(get_session)) -> JobActio
         raise HTTPException(status_code=404, detail="Job not found.")
     if job.stage1_status != "completed":
         raise HTTPException(status_code=409, detail="Step 1 must complete before Step 2.")
-    job = scrape_service.run_step2(session=session, job=job)
+    scrape_service.run_step2(engine=engine, job_id=job_id)
+    session.expire(job)
+    session.refresh(job)
     return JobActionResult(job=_as_job_read(job), message="Step 2 completed.")
 
 
 @router.post("/scrape-jobs/{job_id}/run-all", response_model=JobActionResult)
 def run_all(job_id: UUID, session: Session = Depends(get_session)) -> JobActionResult:
-    job = session.get(ScrapeJob, job_id)
-    if not job:
+    if not session.get(ScrapeJob, job_id):
         raise HTTPException(status_code=404, detail="Job not found.")
-    job = asyncio.run(scrape_service.run_step1(session=session, job=job))
+    asyncio.run(scrape_service.run_step1(engine=engine, job_id=job_id))
+    job = session.get(ScrapeJob, job_id)
+    session.expire(job)
+    session.refresh(job)
     if job.stage1_status != "completed":
         return JobActionResult(job=_as_job_read(job), message="Step 1 failed. Step 2 skipped.")
-    job = scrape_service.run_step2(session=session, job=job)
+    scrape_service.run_step2(engine=engine, job_id=job_id)
+    session.expire(job)
+    session.refresh(job)
     return JobActionResult(job=_as_job_read(job), message="Step 1 + Step 2 completed.")
 
 

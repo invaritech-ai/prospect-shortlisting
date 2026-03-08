@@ -135,16 +135,22 @@ class UploadService:
         session.add(upload)
         session.flush()
 
-        for raw_url, normalized_url, domain, source_row_number in company_rows:
-            session.add(
-                Company(
-                    upload_id=upload.id,
-                    raw_url=raw_url,
-                    normalized_url=normalized_url,
-                    domain=domain,
-                    source_row_number=source_row_number,
+        # Insert in batches to avoid accumulating all Company objects in the
+        # SQLAlchemy identity map simultaneously (OOM risk for large uploads).
+        batch_size = 1000
+        for i in range(0, len(company_rows), batch_size):
+            for raw_url, normalized_url, domain, source_row_number in company_rows[i : i + batch_size]:
+                session.add(
+                    Company(
+                        upload_id=upload.id,
+                        raw_url=raw_url,
+                        normalized_url=normalized_url,
+                        domain=domain,
+                        source_row_number=source_row_number,
+                    )
                 )
-            )
+            session.flush()
+            session.expire_all()  # Release identity map entries after each batch.
 
         session.commit()
         session.refresh(upload)

@@ -16,6 +16,8 @@ from urllib.request import Request, urlopen
 
 from playwright.sync_api import sync_playwright
 from scrapling import AsyncFetcher, DynamicFetcher, Selector
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
 from app.core.config import settings
@@ -225,7 +227,12 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
             )
             if is_html_selector_response(static_response):
                 static_text = clean_text(str(static_response.get_all_text(separator=" ")))
-                if not use_js or len(static_text) >= 250:
+                # Raise threshold to 600 chars when JS fallback is available.
+                # Loading screens often have 200-400 chars of boilerplate/spinner
+                # text that would otherwise pass the lower threshold and get accepted
+                # as real content, preventing the JS fetch from running.
+                min_static_chars = 600 if use_js else 250
+                if not use_js or len(static_text) >= min_static_chars:
                     return FetchResult(
                         final_url=str(static_response.url),
                         status_code=int(getattr(static_response, "status", 0) or 0),
@@ -247,7 +254,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                     headless=True,
                     timeout=settings.scrape_dynamic_timeout_ms,
                     wait=settings.scrape_dynamic_wait_ms,
-                    network_idle=False,
+                    network_idle=True,   # wait for XHR/fetch calls to settle (critical for SPAs)
                     disable_resources=False,
                     load_dom=True,
                     retries=settings.scrape_dynamic_retries,
@@ -397,6 +404,9 @@ class ScrapeService:
         if not domain:
             raise ValueError("Could not derive domain from URL.")
 
+        # Fast-path check: surface existing job ID in the error message without
+        # waiting for the DB constraint to fire. Not a safety guarantee — the
+        # unique index below is the real guard against concurrent duplicates.
         active_job = session.exec(
             select(ScrapeJob)
             .where(
@@ -427,71 +437,105 @@ class ScrapeService:
             max_images_per_page=max_images_per_page,
         )
         session.add(job)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            # A concurrent request won the race and created an active job for
+            # this URL between our SELECT and INSERT. Find it and report it.
+            conflicting = session.exec(
+                select(ScrapeJob)
+                .where(
+                    (col(ScrapeJob.normalized_url) == normalized)
+                    & (col(ScrapeJob.terminal_state).is_(False))
+                )
+                .order_by(col(ScrapeJob.created_at).desc())
+                .limit(1)
+            ).first()
+            raise ScrapeJobAlreadyRunningError(
+                normalized_url=normalized,
+                existing_job_id=conflicting.id if conflicting else None,
+            ) from None
         session.refresh(job)
         return job
 
-    async def run_step1(self, *, session: Session, job: ScrapeJob) -> ScrapeJob:
-        job.status = "running_step1"
-        job.stage1_status = "running"
-        job.terminal_state = False
-        job.step1_started_at = utcnow()
-        job.updated_at = utcnow()
-        session.add(job)
-        session.commit()
-
-        if not await resolve_domain(job.domain):
-            job.status = "step1_failed"
-            job.stage1_status = "failed"
-            job.stage2_status = "skipped"
-            job.terminal_state = True
-            job.last_error_code = "dns_not_resolved"
-            job.last_error_message = f"{job.domain} :: dns_not_resolved"
-            job.fetch_failures_count = 1
-            job.step1_finished_at = utcnow()
+    async def run_step1(self, *, engine: Engine, job_id: Any) -> None:
+        # Phase 1: mark running — short session, released before any I/O.
+        with Session(engine) as session:
+            job = session.get(ScrapeJob, job_id)
+            if not job:
+                return
+            domain = job.domain
+            normalized_url = job.normalized_url
+            js_fallback = job.js_fallback
+            include_sitemap = job.include_sitemap
+            classify_model = job.classify_model
+            job.status = "running_step1"
+            job.stage1_status = "running"
+            job.terminal_state = False
+            job.step1_started_at = utcnow()
             job.updated_at = utcnow()
             session.add(job)
             session.commit()
-            return job
 
-        session.exec(delete(ScrapePage).where(col(ScrapePage.job_id) == job.id))
-        session.commit()
-        job.pages_fetched_count = 0
-        failure_count = 0
+        # Phase 2: DNS check — no DB connection held.
+        if not await resolve_domain(domain):
+            with Session(engine) as session:
+                job = session.get(ScrapeJob, job_id)
+                if job:
+                    job.status = "step1_failed"
+                    job.stage1_status = "failed"
+                    job.stage2_status = "skipped"
+                    job.terminal_state = True
+                    job.last_error_code = "dns_not_resolved"
+                    job.last_error_message = f"{domain} :: dns_not_resolved"
+                    job.fetch_failures_count = 1
+                    job.step1_finished_at = utcnow()
+                    job.updated_at = utcnow()
+                    session.add(job)
+                    session.commit()
+            return
 
+        # Phase 3: clear stale pages — short session.
+        with Session(engine) as session:
+            session.exec(delete(ScrapePage).where(col(ScrapePage.job_id) == job_id))
+            session.commit()
+
+        # Phase 4: all network I/O — no DB connection held for any of this.
         targets = await discover_focus_targets(
-            start_url=job.normalized_url,
-            domain=job.domain,
-            include_sitemap=job.include_sitemap,
-            use_js_fallback=job.js_fallback,
-            classify_model=job.classify_model,
+            start_url=normalized_url,
+            domain=domain,
+            include_sitemap=include_sitemap,
+            use_js_fallback=js_fallback,
+            classify_model=classify_model,
         )
 
         ordered_targets = [("home", 0), ("about", 1), ("products", 1)]
         seen: set[str] = set()
+        fetched_pages: list[dict[str, Any]] = []
+        failure_count = 0
+
         for kind, depth in ordered_targets:
             target_url = targets.get(kind, "")
-            canonical = canonical_internal_url(target_url, job.domain) if target_url else ""
+            canonical = canonical_internal_url(target_url, domain) if target_url else ""
             if not canonical or canonical in seen:
                 continue
             seen.add(canonical)
 
-            fetch = await fetch_with_fallback(canonical, use_js=job.js_fallback)
+            fetch = await fetch_with_fallback(canonical, use_js=js_fallback)
             if fetch.selector is None:
                 failure_count += 1
-                session.add(
-                    ScrapePage(
-                        job_id=job.id,
-                        url=canonical,
-                        canonical_url=canonical,
-                        depth=depth,
-                        page_kind=kind,
-                        fetch_mode=fetch.fetch_mode,
-                        status_code=fetch.status_code,
-                        fetch_error_code=fetch.error_code or "fetch_failed",
-                        fetch_error_message=fetch.error_message,
-                    )
-                )
+                fetched_pages.append({
+                    "success": False,
+                    "url": canonical,
+                    "canonical_url": canonical,
+                    "depth": depth,
+                    "page_kind": kind,
+                    "fetch_mode": fetch.fetch_mode,
+                    "status_code": fetch.status_code,
+                    "fetch_error_code": fetch.error_code or "fetch_failed",
+                    "fetch_error_message": fetch.error_message,
+                })
                 continue
 
             selector = fetch.selector
@@ -505,95 +549,155 @@ class ScrapeService:
                 if isinstance(html_body, (bytes, bytearray))
                 else str(html_body or "")
             )
-            session.add(
-                ScrapePage(
-                    job_id=job.id,
-                    url=page_url,
-                    canonical_url=canonical_internal_url(page_url, job.domain) or canonical,
-                    depth=depth,
-                    page_kind=kind,
-                    fetch_mode=fetch.fetch_mode,
-                    status_code=fetch.status_code,
-                    title=title,
-                    description=description,
-                    text_len=len(text),
-                    raw_text=text[:40000],
-                    html_snapshot=html_snapshot[:200000],
-                    image_urls_json="[]",
-                    fetch_error_code="",
-                    fetch_error_message="",
+            fetched_pages.append({
+                "success": True,
+                "url": page_url,
+                "canonical_url": canonical_internal_url(page_url, domain) or canonical,
+                "depth": depth,
+                "page_kind": kind,
+                "fetch_mode": fetch.fetch_mode,
+                "status_code": fetch.status_code,
+                "title": title,
+                "description": description,
+                "text_len": len(text),
+                "raw_text": text[:40000],
+                "html_snapshot": html_snapshot[:200000],
+            })
+
+        pages_fetched_count = sum(1 for p in fetched_pages if p["success"])
+
+        # Phase 5: write all results — short session.
+        with Session(engine) as session:
+            job = session.get(ScrapeJob, job_id)
+            if not job:
+                return
+            for page_data in fetched_pages:
+                if page_data["success"]:
+                    session.add(ScrapePage(
+                        job_id=job_id,
+                        url=page_data["url"],
+                        canonical_url=page_data["canonical_url"],
+                        depth=page_data["depth"],
+                        page_kind=page_data["page_kind"],
+                        fetch_mode=page_data["fetch_mode"],
+                        status_code=page_data["status_code"],
+                        title=page_data["title"],
+                        description=page_data["description"],
+                        text_len=page_data["text_len"],
+                        raw_text=page_data["raw_text"],
+                        html_snapshot=page_data["html_snapshot"],
+                        image_urls_json="[]",
+                        fetch_error_code="",
+                        fetch_error_message="",
+                    ))
+                else:
+                    session.add(ScrapePage(
+                        job_id=job_id,
+                        url=page_data["url"],
+                        canonical_url=page_data["canonical_url"],
+                        depth=page_data["depth"],
+                        page_kind=page_data["page_kind"],
+                        fetch_mode=page_data["fetch_mode"],
+                        status_code=page_data["status_code"],
+                        fetch_error_code=page_data["fetch_error_code"],
+                        fetch_error_message=page_data["fetch_error_message"],
+                    ))
+
+            job.discovered_urls_count = len(seen)
+            job.fetch_failures_count = failure_count
+            job.pages_fetched_count = pages_fetched_count
+            job.stage1_status = "completed"
+            job.status = "step1_completed"
+            job.step1_finished_at = utcnow()
+            job.updated_at = utcnow()
+            if pages_fetched_count == 0:
+                job.status = "step1_failed"
+                job.stage1_status = "failed"
+                job.stage2_status = "skipped"
+                job.terminal_state = True
+                job.last_error_code = "no_pages_fetched"
+                job.last_error_message = "No pages fetched in step1."
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+
+            log_event(
+                logger,
+                "step1_completed",
+                job_id=str(job.id),
+                domain=domain,
+                pages_fetched=job.pages_fetched_count,
+                failures=job.fetch_failures_count,
+            )
+
+    def run_step2(self, *, engine: Engine, job_id: Any) -> None:
+        # Phase 1: mark running + load page data — short session, released before I/O.
+        with Session(engine) as session:
+            job = session.get(ScrapeJob, job_id)
+            if not job:
+                return
+            domain = job.domain
+            enable_ocr = job.enable_ocr
+            ocr_model = job.ocr_model
+            general_model = job.general_model
+            job.status = "running_step2"
+            job.stage2_status = "running"
+            job.step2_started_at = utcnow()
+            job.updated_at = utcnow()
+            session.add(job)
+            session.commit()
+
+            # Read all page data while the session is still open.
+            pages_raw = list(
+                session.exec(
+                    select(ScrapePage)
+                    .where(col(ScrapePage.job_id) == job_id)
+                    .order_by(col(ScrapePage.depth), col(ScrapePage.id))
                 )
             )
-            job.pages_fetched_count += 1
+            # Snapshot the fields we need so we don't carry ORM objects across sessions.
+            page_snapshots = [
+                {
+                    "id": page.id,
+                    "url": page.url,
+                    "title": page.title,
+                    "raw_text": page.raw_text,
+                    "status_code": page.status_code,
+                    "text_len": page.text_len,
+                    "page_kind": page.page_kind,
+                    "needs_markdown": should_convert_to_markdown(page),
+                }
+                for page in pages_raw
+            ]
 
-        job.discovered_urls_count = len(seen)
-        job.fetch_failures_count = failure_count
-        job.stage1_status = "completed"
-        job.status = "step1_completed"
-        job.step1_finished_at = utcnow()
-        job.updated_at = utcnow()
-        if job.pages_fetched_count == 0:
-            job.status = "step1_failed"
-            job.stage1_status = "failed"
-            job.stage2_status = "skipped"
-            job.terminal_state = True
-            job.last_error_code = "no_pages_fetched"
-            job.last_error_message = "No pages fetched in step1."
-        session.add(job)
-        session.commit()
-        session.refresh(job)
+        screenshot_dir = Path("data/scrape_screenshots") / str(job_id).replace("-", "")
 
-        log_event(
-            logger,
-            "step1_completed",
-            job_id=str(job.id),
-            domain=job.domain,
-            pages_fetched=job.pages_fetched_count,
-            failures=job.fetch_failures_count,
-        )
-        return job
-
-    def run_step2(self, *, session: Session, job: ScrapeJob) -> ScrapeJob:
-        job.status = "running_step2"
-        job.stage2_status = "running"
-        job.step2_started_at = utcnow()
-        job.updated_at = utcnow()
-        session.add(job)
-        session.commit()
-
-        pages = list(
-            session.exec(
-                select(ScrapePage)
-                .where(col(ScrapePage.job_id) == job.id)
-                .order_by(col(ScrapePage.depth), col(ScrapePage.id))
-            )
-        )
-        screenshot_dir = Path("data/scrape_screenshots") / str(job.id).replace("-", "")
+        # Phase 2: all I/O (screenshots, OCR, markdown LLM) — no DB connection held.
         markdown_pages = 0
         ocr_images = 0
         llm_used = 0
         llm_failed = 0
+        page_updates: list[dict[str, Any]] = []
 
-        for page in pages:
-            if not should_convert_to_markdown(page):
-                page.markdown_content = ""
-                page.updated_at = utcnow()
-                session.add(page)
+        for snap in page_snapshots:
+            if not snap["needs_markdown"]:
+                page_updates.append({"id": snap["id"], "markdown_content": "", "ocr_text": ""})
                 continue
 
             screenshot_path = ""
             screenshot_error = ""
-            if page.id is not None:
+            if snap["id"] is not None:
+                page_kind = snap["page_kind"]
                 screenshot_path, screenshot_error = capture_page_screenshot(
-                    page.url,
-                    screenshot_dir / f"{page.page_kind}_{page.id}.png",
+                    snap["url"],
+                    screenshot_dir / f"{page_kind}_{snap['id']}.png",
                 )
 
             ocr_text = ""
-            if job.enable_ocr and screenshot_path:
+            if enable_ocr and screenshot_path:
                 ocr_text, ocr_error = self.ocr_service.extract_text_from_file(
                     screenshot_path,
-                    model=job.ocr_model,
+                    model=ocr_model,
                 )
                 if ocr_text:
                     ocr_images += 1
@@ -608,44 +712,56 @@ class ScrapeService:
                 ocr_payload = f"{ocr_payload}\n\n[SCREENSHOT_ERROR] {screenshot_error}".strip()
 
             markdown, used_llm, llm_error = self.markdown_service.to_markdown(
-                url=page.url,
-                title=page.title,
-                page_text=page.raw_text,
+                url=snap["url"],
+                title=snap["title"],
+                page_text=snap["raw_text"],
                 ocr_text=ocr_payload,
-                model=job.general_model,
+                model=general_model,
             )
-            page.ocr_text = ocr_payload[:16000]
-            page.markdown_content = markdown[:50000]
-            page.updated_at = utcnow()
-            session.add(page)
-
+            page_updates.append({
+                "id": snap["id"],
+                "ocr_text": ocr_payload[:16000],
+                "markdown_content": markdown[:50000],
+            })
             markdown_pages += 1
             if used_llm:
                 llm_used += 1
             if llm_error:
                 llm_failed += 1
 
-        job.markdown_pages_count = markdown_pages
-        job.ocr_images_processed_count = ocr_images
-        job.llm_used_count = llm_used
-        job.llm_failed_count = llm_failed
-        job.stage2_status = "completed"
-        job.status = "completed"
-        job.terminal_state = True
-        job.step2_finished_at = utcnow()
-        job.updated_at = utcnow()
-        session.add(job)
-        session.commit()
-        session.refresh(job)
+        # Phase 3: write all results — short session.
+        with Session(engine) as session:
+            now = utcnow()
+            for update_data in page_updates:
+                page = session.get(ScrapePage, update_data["id"])
+                if page:
+                    page.ocr_text = update_data.get("ocr_text", "")
+                    page.markdown_content = update_data["markdown_content"]
+                    page.updated_at = now
+                    session.add(page)
 
-        log_event(
-            logger,
-            "step2_completed",
-            job_id=str(job.id),
-            domain=job.domain,
-            markdown_pages=job.markdown_pages_count,
-            ocr_images=job.ocr_images_processed_count,
-            llm_used=job.llm_used_count,
-            llm_failed=job.llm_failed_count,
-        )
-        return job
+            job = session.get(ScrapeJob, job_id)
+            if not job:
+                return
+            job.markdown_pages_count = markdown_pages
+            job.ocr_images_processed_count = ocr_images
+            job.llm_used_count = llm_used
+            job.llm_failed_count = llm_failed
+            job.stage2_status = "completed"
+            job.status = "completed"
+            job.terminal_state = True
+            job.step2_finished_at = now
+            job.updated_at = now
+            session.add(job)
+            session.commit()
+
+            log_event(
+                logger,
+                "step2_completed",
+                job_id=str(job_id),
+                domain=domain,
+                markdown_pages=markdown_pages,
+                ocr_images=ocr_images,
+                llm_used=llm_used,
+                llm_failed=llm_failed,
+            )

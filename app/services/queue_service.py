@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
 from redis import Redis
 
 from app.core.config import settings
+from app.core.logging import log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -55,4 +60,11 @@ class QueueService:
             payload = payload_raw if isinstance(payload_raw, dict) else {}
             return QueueTask(task_id=task_id, task_type=task_type, payload={str(k): str(v) for k, v in payload.items()})
         except Exception:  # noqa: BLE001
+            # Log the raw message so it can be recovered from logs; do not
+            # silently discard it, as there is no dead-letter queue.
+            log_event(
+                logger,
+                "queue_message_parse_error",
+                raw_message=raw[:500],  # truncate for safety
+            )
             return None

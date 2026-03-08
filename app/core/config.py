@@ -23,11 +23,11 @@ class Settings(BaseSettings):
     upload_file_ttl_hours: int = 24
     scrape_static_timeout_sec: float = 12.0
     scrape_static_retries: int = 1
-    scrape_dynamic_timeout_ms: int = 15000
-    scrape_dynamic_wait_ms: int = 400
+    scrape_dynamic_timeout_ms: int = 28000
+    scrape_dynamic_wait_ms: int = 3000
     scrape_dynamic_retries: int = 1
-    scrape_screenshot_timeout_ms: int = 25000
-    scrape_screenshot_settle_ms: int = 800
+    scrape_screenshot_timeout_ms: int = 30000
+    scrape_screenshot_settle_ms: int = 2500
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     model_config = SettingsConfigDict(
