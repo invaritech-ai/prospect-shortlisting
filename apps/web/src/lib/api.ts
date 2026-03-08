@@ -22,6 +22,7 @@ import type {
 } from './types'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
+type ScrapeJobFilter = 'all' | 'active' | 'completed' | 'failed'
 
 export class ApiError extends Error {
   status: number
@@ -120,8 +121,10 @@ export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
 }
 
-export async function listScrapeJobs(limit = 50, offset = 0): Promise<ScrapeJobRead[]> {
-  return request<ScrapeJobRead[]>(`/v1/scrape-jobs?limit=${limit}&offset=${offset}`)
+export async function listScrapeJobs(limit = 50, offset = 0, statusFilter: ScrapeJobFilter = 'all'): Promise<ScrapeJobRead[]> {
+  return request<ScrapeJobRead[]>(
+    `/v1/scrape-jobs?limit=${limit}&offset=${offset}&status_filter=${encodeURIComponent(statusFilter)}`,
+  )
 }
 
 export async function listScrapeJobPageContents(jobId: string, limit = 200, offset = 0): Promise<ScrapePageContentRead[]> {

@@ -203,7 +203,7 @@ function App() {
     async (offset = 0, limit = jobsPageSize) => {
       setIsJobsLoading(true)
       try {
-        const rows = await listScrapeJobs(limit + 1, offset)
+        const rows = await listScrapeJobs(limit + 1, offset, jobsFilter)
         setJobsHasMore(rows.length > limit)
         setScrapeJobs(rows.slice(0, limit))
         setJobsOffset(offset)
@@ -213,7 +213,7 @@ function App() {
         setIsJobsLoading(false)
       }
     },
-    [jobsPageSize],
+    [jobsFilter, jobsPageSize],
   )
 
   const loadRuns = useCallback(
@@ -305,7 +305,7 @@ function App() {
 
   useEffect(() => {
     void loadScrapeJobs(0, jobsPageSize)
-  }, [jobsPageSize, loadScrapeJobs])
+  }, [jobsFilter, jobsPageSize, loadScrapeJobs])
 
   useEffect(() => {
     void loadRuns(0, runsPageSize)
@@ -832,22 +832,9 @@ function App() {
     job.stage2_status === 'failed' ||
     !!job.last_error_code
 
-  const filteredJobs = scrapeJobs.filter((job) => {
-    if (jobsFilter === 'active') {
-      return !job.terminal_state
-    }
-    if (jobsFilter === 'completed') {
-      return job.terminal_state && !isFailedJob(job)
-    }
-    if (jobsFilter === 'failed') {
-      return isFailedJob(job)
-    }
-    return true
-  })
-
   const jobsRangeLabel =
-    filteredJobs.length > 0
-      ? `${jobsOffset + 1}-${jobsOffset + filteredJobs.length}`
+    scrapeJobs.length > 0
+      ? `${jobsOffset + 1}-${jobsOffset + scrapeJobs.length}`
       : '0 of 0'
   const runsRangeLabel =
     runs.length > 0
@@ -1293,7 +1280,10 @@ function App() {
                       <button
                         key={item.value}
                         type="button"
-                        onClick={() => setJobsFilter(item.value)}
+                        onClick={() => {
+                          setJobsFilter(item.value)
+                          setJobsOffset(0)
+                        }}
                         className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
                           jobsFilter === item.value
                             ? 'bg-[var(--oc-accent)] text-white'
@@ -1310,7 +1300,7 @@ function App() {
                 <div className="mt-4 overflow-x-auto">
                   {isJobsLoading && scrapeJobs.length === 0 ? (
                     <p className="py-6 text-sm text-[var(--oc-muted)]">Loading scrape jobs...</p>
-                  ) : filteredJobs.length === 0 ? (
+                  ) : scrapeJobs.length === 0 ? (
                     <p className="py-6 text-sm text-[var(--oc-muted)]">No scrape jobs in this view.</p>
                   ) : (
                     <table className="oc-compact-table min-w-[980px]">
@@ -1327,7 +1317,7 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredJobs.map((job) => {
+                        {scrapeJobs.map((job) => {
                           const badge = badgeForJob(job)
                           return (
                             <tr key={job.id}>

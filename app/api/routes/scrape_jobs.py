@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -72,10 +73,32 @@ def list_scrape_jobs(
     session: Session = Depends(get_session),
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    status_filter: Literal["all", "active", "completed", "failed"] = Query(default="all"),
 ) -> list[ScrapeJobRead]:
+    statement = select(ScrapeJob)
+    if status_filter == "active":
+        statement = statement.where(col(ScrapeJob.terminal_state).is_(False))
+    elif status_filter == "completed":
+        statement = statement.where(
+            col(ScrapeJob.terminal_state).is_(True)
+            & ~(
+                col(ScrapeJob.status).like("%failed%")
+                | (col(ScrapeJob.stage1_status) == "failed")
+                | (col(ScrapeJob.stage2_status) == "failed")
+                | col(ScrapeJob.last_error_code).is_not(None)
+            )
+        )
+    elif status_filter == "failed":
+        statement = statement.where(
+            col(ScrapeJob.status).like("%failed%")
+            | (col(ScrapeJob.stage1_status) == "failed")
+            | (col(ScrapeJob.stage2_status) == "failed")
+            | col(ScrapeJob.last_error_code).is_not(None)
+        )
+
     jobs = list(
         session.exec(
-            select(ScrapeJob).order_by(col(ScrapeJob.created_at).desc()).offset(offset).limit(limit)
+            statement.order_by(col(ScrapeJob.created_at).desc()).offset(offset).limit(limit)
         )
     )
     return [_as_job_read(job) for job in jobs]
