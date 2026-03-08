@@ -79,21 +79,11 @@ def list_scrape_jobs(
     if status_filter == "active":
         statement = statement.where(col(ScrapeJob.terminal_state).is_(False))
     elif status_filter == "completed":
-        statement = statement.where(
-            col(ScrapeJob.terminal_state).is_(True)
-            & ~(
-                col(ScrapeJob.status).like("%failed%")
-                | (col(ScrapeJob.stage1_status) == "failed")
-                | (col(ScrapeJob.stage2_status) == "failed")
-                | col(ScrapeJob.last_error_code).is_not(None)
-            )
-        )
+        statement = statement.where(col(ScrapeJob.status) == "completed")
     elif status_filter == "failed":
         statement = statement.where(
             col(ScrapeJob.status).like("%failed%")
             | (col(ScrapeJob.stage1_status) == "failed")
-            | (col(ScrapeJob.stage2_status) == "failed")
-            | col(ScrapeJob.last_error_code).is_not(None)
         )
 
     jobs = list(

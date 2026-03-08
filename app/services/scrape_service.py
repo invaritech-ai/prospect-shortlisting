@@ -614,6 +614,8 @@ class ScrapeService:
             job.pages_fetched_count = pages_fetched_count
             job.stage1_status = "completed"
             job.status = "step1_completed"
+            job.last_error_code = None
+            job.last_error_message = None
             job.step1_finished_at = utcnow()
             job.updated_at = utcnow()
             if pages_fetched_count == 0:
@@ -754,10 +756,17 @@ class ScrapeService:
             job.llm_used_count = llm_used
             job.llm_failed_count = llm_failed
             job.stage2_status = "completed"
-            job.status = "completed"
             job.terminal_state = True
             job.step2_finished_at = now
             job.updated_at = now
+            if markdown_pages == 0:
+                job.status = "failed"
+                job.last_error_code = "no_markdown_produced"
+                job.last_error_message = "Step 2 completed but produced no markdown pages."
+            else:
+                job.status = "completed"
+                job.last_error_code = None
+                job.last_error_message = None
             session.add(job)
             session.commit()
 

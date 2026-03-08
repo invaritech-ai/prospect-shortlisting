@@ -274,10 +274,7 @@ class AnalysisService:
             select(ScrapeJob)
             .where(
                 (col(ScrapeJob.normalized_url) == normalized_url)
-                & (
-                    (col(ScrapeJob.status) == "completed")
-                    | (col(ScrapeJob.stage2_status) == "completed")
-                )
+                & (col(ScrapeJob.status) == "completed")
             )
             .order_by(col(ScrapeJob.created_at).desc())
         ).first()

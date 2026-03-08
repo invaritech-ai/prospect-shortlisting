@@ -1556,13 +1556,15 @@ function App() {
                               <td className="text-[12px] text-[var(--oc-muted)]">{job.last_error_code ?? '-'}</td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{new Date(job.updated_at).toLocaleString()}</td>
                               <td>
-                                <button
-                                  type="button"
-                                  onClick={() => void openMarkdownDrawer(job)}
-                                  className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
-                                >
-                                  View Markdown
-                                </button>
+                                {(job.markdown_pages_count ?? 0) > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void openMarkdownDrawer(job)}
+                                    className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
+                                  >
+                                    View Markdown
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           )

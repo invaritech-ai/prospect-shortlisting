@@ -6,6 +6,7 @@ import multiprocessing
 import signal
 import time
 import traceback
+from urllib.parse import urlparse, urlunparse
 from uuid import UUID
 
 from sqlmodel import Session, col, select
@@ -22,6 +23,20 @@ from app.services.scrape_service import ScrapeService
 
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: str) -> str:
+    """Return the URL with any password replaced by '***'."""
+    try:
+        parsed = urlparse(url)
+        if parsed.password:
+            netloc = f"{parsed.username}:***@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return urlunparse(parsed._replace(netloc=netloc))
+    except Exception:  # noqa: BLE001
+        pass
+    return url
 
 
 class Worker:
@@ -45,7 +60,7 @@ class Worker:
             logger,
             "worker_started",
             queue_key=self._queue.queue_key,
-            redis_url=settings.redis_url,
+            redis_url=_redact_url(settings.redis_url),
         )
         while self._running:
             self._maybe_cleanup()
@@ -182,6 +197,9 @@ class Worker:
             )
             # Re-enqueue if the job failed transiently and has retries remaining.
             if not result.terminal_state:
+                # Exponential backoff: 5s, 10s, 20s … capped at 60s.
+                delay = min(5 * (2 ** (result.attempt_count - 1)), 60)
+                time.sleep(delay)
                 self._queue.enqueue(
                     task_type="analysis_job",
                     payload={"analysis_job_id": str(analysis_job_id)},
@@ -193,6 +211,7 @@ class Worker:
                     attempt_count=result.attempt_count,
                     max_attempts=result.max_attempts,
                     error_code=result.last_error_code,
+                    backoff_sec=delay,
                 )
 
     def _payload_job_id(self, task: QueueTask) -> UUID | None:
