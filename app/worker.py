@@ -218,6 +218,11 @@ def main() -> int:
 
 def _run_worker_process(slot: int, *, cleanup_enabled: bool) -> int:
     configure_logging()
+    # Discard any DB connections inherited from the parent process via fork.
+    # PostgreSQL sockets cannot be shared across fork boundaries — each child
+    # must establish its own connections. close=False avoids closing sockets
+    # that the parent process still owns.
+    engine.dispose(close=False)
     log_event(logger, "worker_process_started", slot=slot, cleanup_enabled=cleanup_enabled)
     worker = Worker(cleanup_enabled=cleanup_enabled)
     return worker.run()
@@ -233,6 +238,7 @@ def _recover_stuck_jobs(queue: QueueService) -> None:
     scrape_count = 0
     analysis_count = 0
 
+    stuck_scrape_ids: list[str] = []
     with Session(engine) as session:
         stuck_scrape = list(
             session.exec(
@@ -246,9 +252,12 @@ def _recover_stuck_jobs(queue: QueueService) -> None:
             job.status = "created"
             job.terminal_state = False
             session.add(job)
+        # Collect IDs before commit expires the objects
+        stuck_scrape_ids = [str(job.id) for job in stuck_scrape]
         session.commit()
-        scrape_count = len(stuck_scrape)
+        scrape_count = len(stuck_scrape_ids)
 
+    stuck_analysis_ids: list[str] = []
     with Session(engine) as session:
         stuck_analysis = list(
             session.exec(
@@ -262,13 +271,15 @@ def _recover_stuck_jobs(queue: QueueService) -> None:
             job.state = AnalysisJobState.QUEUED
             job.started_at = None
             session.add(job)
+        # Collect IDs before commit expires the objects
+        stuck_analysis_ids = [str(job.id) for job in stuck_analysis]
         session.commit()
-        analysis_count = len(stuck_analysis)
+        analysis_count = len(stuck_analysis_ids)
 
-    for job in stuck_scrape:
-        queue.enqueue(task_type="scrape_run_all", payload={"job_id": str(job.id)})
-    for job in stuck_analysis:
-        queue.enqueue(task_type="analysis_job", payload={"analysis_job_id": str(job.id)})
+    for job_id in stuck_scrape_ids:
+        queue.enqueue(task_type="scrape_run_all", payload={"job_id": job_id})
+    for job_id in stuck_analysis_ids:
+        queue.enqueue(task_type="analysis_job", payload={"analysis_job_id": job_id})
 
     log_event(
         logger,
