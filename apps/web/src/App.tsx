@@ -34,6 +34,7 @@ import type {
   PipelineStageStats,
   PromptRead,
   RunRead,
+  ScrapeFilter,
   ScrapeJobRead,
   ScrapePageContentRead,
   StatsResponse,
@@ -67,6 +68,12 @@ const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
   { value: 'unknown', label: 'Unknown' },
   { value: 'crap', label: 'Crap' },
 ]
+const SCRAPE_FILTERS: Array<{ value: ScrapeFilter; label: string }> = [
+  { value: 'all', label: 'Any scrape' },
+  { value: 'done', label: 'Scrape done' },
+  { value: 'failed', label: 'Scrape failed' },
+  { value: 'none', label: 'Not scraped' },
+]
 
 function App() {
   const companyCacheRef = useRef<Record<string, CompanyList>>({})
@@ -75,6 +82,7 @@ function App() {
   const [companyOffset, setCompanyOffset] = useState(0)
   const [pageSize, setPageSize] = useState(DEFAULT_COMPANY_PAGE_SIZE)
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('all')
+  const [scrapeFilter, setScrapeFilter] = useState<ScrapeFilter>('all')
   const [isCompaniesLoading, setIsCompaniesLoading] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -153,19 +161,19 @@ function App() {
   }
 
   const cacheKeyFor = useCallback(
-    (offset: number, limit: number, nextDecisionFilter: DecisionFilter): string =>
-      `${nextDecisionFilter}:${limit}:${offset}`,
+    (offset: number, limit: number, nextDecisionFilter: DecisionFilter, nextScrapeFilter: ScrapeFilter): string =>
+      `${nextDecisionFilter}:${nextScrapeFilter}:${limit}:${offset}`,
     [],
   )
 
   const prefetchCompanies = useCallback(
-    async (offset: number, limit: number, nextDecisionFilter: DecisionFilter) => {
-      const key = cacheKeyFor(offset, limit, nextDecisionFilter)
+    async (offset: number, limit: number, nextDecisionFilter: DecisionFilter, nextScrapeFilter: ScrapeFilter) => {
+      const key = cacheKeyFor(offset, limit, nextDecisionFilter, nextScrapeFilter)
       if (companyCacheRef.current[key]) {
         return
       }
       try {
-        const response = await listCompanies(limit, offset, nextDecisionFilter)
+        const response = await listCompanies(limit, offset, nextDecisionFilter, false, nextScrapeFilter)
         companyCacheRef.current[key] = response
       } catch {
         // Prefetch should never interrupt operator flow.
@@ -179,24 +187,25 @@ function App() {
       offset = 0,
       nextLimit = pageSize,
       nextDecisionFilter: DecisionFilter = decisionFilter,
+      nextScrapeFilter: ScrapeFilter = scrapeFilter,
     ) => {
-      const key = cacheKeyFor(offset, nextLimit, nextDecisionFilter)
+      const key = cacheKeyFor(offset, nextLimit, nextDecisionFilter, nextScrapeFilter)
       const cached = companyCacheRef.current[key]
       if (cached) {
         setCompanies(cached)
         setCompanyOffset(offset)
-        void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter)
+        void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter, nextScrapeFilter)
         return
       }
 
       setIsCompaniesLoading(true)
       try {
-        const response = await listCompanies(nextLimit, offset, nextDecisionFilter)
+        const response = await listCompanies(nextLimit, offset, nextDecisionFilter, false, nextScrapeFilter)
         companyCacheRef.current[key] = response
         setCompanies(response)
         setCompanyOffset(offset)
         if (response.has_more) {
-          void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter)
+          void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter, nextScrapeFilter)
         }
       } catch (err) {
         setError(parseError(err))
@@ -204,7 +213,7 @@ function App() {
         setIsCompaniesLoading(false)
       }
     },
-    [cacheKeyFor, decisionFilter, pageSize, prefetchCompanies],
+    [cacheKeyFor, decisionFilter, scrapeFilter, pageSize, prefetchCompanies],
   )
 
   const loadScrapeJobs = useCallback(
@@ -317,8 +326,8 @@ function App() {
 
   useEffect(() => {
     setSelectedCompanyIds([])
-    void loadCompanies(0, pageSize, decisionFilter)
-  }, [decisionFilter, loadCompanies, pageSize])
+    void loadCompanies(0, pageSize, decisionFilter, scrapeFilter)
+  }, [decisionFilter, scrapeFilter, loadCompanies, pageSize])
 
   useEffect(() => {
     void loadScrapeJobs(0, jobsPageSize)
@@ -356,10 +365,10 @@ function App() {
     }
     const timer = window.setInterval(() => {
       void loadRuns(runsOffset, runsPageSize)
-      void loadCompanies(companyOffset, pageSize, decisionFilter)
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter)
     }, 4000)
     return () => window.clearInterval(timer)
-  }, [companyOffset, decisionFilter, loadCompanies, loadRuns, pageSize, runs, runsOffset, runsPageSize])
+  }, [companyOffset, decisionFilter, scrapeFilter, loadCompanies, loadRuns, pageSize, runs, runsOffset, runsPageSize])
 
   useEffect(() => {
     if (!markdownJob) {
@@ -1228,7 +1237,21 @@ function App() {
                         {item.label}
                       </button>
                     ))}
-                    <span className="text-xs text-[var(--oc-muted)]">Visible columns stay minimal by design.</span>
+                    <span className="text-[var(--oc-border)]">|</span>
+                    {SCRAPE_FILTERS.map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => setScrapeFilter(item.value)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                          scrapeFilter === item.value
+                            ? 'bg-slate-700 text-white'
+                            : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
                   </div>
 
                   {utilitiesOpen && (

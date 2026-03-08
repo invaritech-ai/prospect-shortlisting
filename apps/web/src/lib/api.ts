@@ -14,6 +14,7 @@ import type {
   RunCreateRequest,
   RunCreateResult,
   RunRead,
+  ScrapeFilter,
   ScrapeJobCreate,
   ScrapeJobRead,
   ScrapePageContentRead,
@@ -74,9 +75,10 @@ export async function listCompanies(
   offset = 0,
   decisionFilter: DecisionFilter = 'all',
   includeTotal = false,
+  scrapeFilter: ScrapeFilter = 'all',
 ): Promise<CompanyList> {
   return request<CompanyList>(
-    `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&include_total=${includeTotal}`,
+    `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&include_total=${includeTotal}`,
   )
 }
 

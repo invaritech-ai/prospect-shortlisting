@@ -256,6 +256,7 @@ def list_companies(
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     decision_filter: str = Query(default="all"),
+    scrape_filter: str = Query(default="all"),
     include_total: bool = Query(default=False),
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
@@ -275,6 +276,10 @@ def list_companies(
     allowed_filters = {"all", "unlabeled", "possible", "unknown", "crap"}
     if normalized_filter not in allowed_filters:
         raise HTTPException(status_code=422, detail="Invalid decision_filter.")
+    normalized_scrape_filter = scrape_filter.strip().lower()
+    allowed_scrape_filters = {"all", "done", "failed", "none"}
+    if normalized_scrape_filter not in allowed_scrape_filters:
+        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
     statement = (
         select(
             Company.id,
@@ -304,6 +309,12 @@ def list_companies(
         statement = statement.where(decision_lower == "")
     elif normalized_filter in {"possible", "unknown", "crap"}:
         statement = statement.where(decision_lower == normalized_filter)
+    if normalized_scrape_filter == "done":
+        statement = statement.where(latest_scrape.c.status == "completed")
+    elif normalized_scrape_filter == "failed":
+        statement = statement.where(latest_scrape.c.status == "failed")
+    elif normalized_scrape_filter == "none":
+        statement = statement.where(latest_scrape.c.job_id.is_(None))
 
     rows = list(
         session.exec(
@@ -324,11 +335,18 @@ def list_companies(
             select(func.count())
             .select_from(Company)
             .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+            .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         )
         if normalized_filter == "unlabeled":
             total_stmt = total_stmt.where(decision_lower == "")
         elif normalized_filter in {"possible", "unknown", "crap"}:
             total_stmt = total_stmt.where(decision_lower == normalized_filter)
+        if normalized_scrape_filter == "done":
+            total_stmt = total_stmt.where(latest_scrape.c.status == "completed")
+        elif normalized_scrape_filter == "failed":
+            total_stmt = total_stmt.where(latest_scrape.c.status == "failed")
+        elif normalized_scrape_filter == "none":
+            total_stmt = total_stmt.where(latest_scrape.c.job_id.is_(None))
         total = session.exec(total_stmt).one()
     items = [
         CompanyListItem(

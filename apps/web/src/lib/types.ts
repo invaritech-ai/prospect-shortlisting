@@ -67,6 +67,7 @@ export type CompanyList = {
 }
 
 export type DecisionFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap'
+export type ScrapeFilter = 'all' | 'done' | 'failed' | 'none'
 
 export type CompanyDeleteResult = {
   requested_count: number
