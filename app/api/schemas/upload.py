@@ -106,3 +106,8 @@ class CompanyScrapeResult(BaseModel):
     queued_count: int
     queued_job_ids: list[UUID]
     failed_company_ids: list[UUID]
+
+
+class CompanyIdsResult(BaseModel):
+    ids: list[UUID]
+    total: int

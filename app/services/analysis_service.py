@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import ssl
+import traceback
 from datetime import datetime, timezone
 from typing import Any
 from urllib.request import Request, urlopen
 from uuid import UUID
 
-from sqlalchemy import case, update
 from sqlmodel import Session, col, func, select
 
 from app.core.config import settings
+from app.core.logging import log_event
 from app.models import (
     AnalysisJob,
     ClassificationResult,
@@ -26,6 +28,8 @@ from app.models import (
 )
 from app.models.pipeline import AnalysisJobState, CrawlJobState, PredictedLabel, RunStatus
 
+
+logger = logging.getLogger(__name__)
 
 ANALYSIS_PAGE_ORDER = ("home", "about", "products")
 MAX_CHARS_PER_PAGE = 12000
@@ -347,7 +351,11 @@ class AnalysisService:
             with urlopen(request, context=ssl.create_default_context(), timeout=120) as response:  # noqa: S310
                 raw = response.read().decode("utf-8", errors="ignore")
             decoded = json.loads(raw)
-            content = decoded["choices"][0]["message"]["content"]
+            choices = decoded.get("choices") or []
+            if not choices:
+                log_event(logger, "analysis_llm_empty_choices", model=model, raw_response=raw[:500])
+                return "", "analysis_llm_failed"
+            content = choices[0]["message"]["content"]
             if isinstance(content, list):
                 text_parts: list[str] = []
                 for item in content:
@@ -355,7 +363,8 @@ class AnalysisService:
                         text_parts.append(str(item.get("text", "")))
                 return "\n".join(part for part in text_parts if part).strip(), ""
             return str(content or "").strip(), ""
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "analysis_llm_error", model=model, error=str(exc), traceback=traceback.format_exc())
             return "", "analysis_llm_failed"
 
     def _ensure_crawl_adapter(self, *, session: Session, company: Company, scrape_job: ScrapeJob) -> CrawlArtifact:
@@ -441,56 +450,41 @@ class AnalysisService:
         if not run or run.total_jobs == 0:
             return
 
-        # All counts are evaluated as scalar subqueries inside a single UPDATE.
-        # This eliminates the read-compute-write race: concurrent workers computing
-        # these values at SELECT time can overwrite each other with stale data.
-        # With inline subqueries, every UPDATE sees the current DB state at the
-        # moment it executes, so the last writer always produces the correct result.
-        succeeded_sub = (
+        # Use separate COUNT queries + ORM assignment. The correlated-subquery
+        # UPDATE approach fails silently in SQLite due to expression type coercion.
+        succeeded = session.exec(
             select(func.count())
             .select_from(AnalysisJob)
             .where(
                 (col(AnalysisJob.run_id) == run_id)
                 & (col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED)
             )
-            .scalar_subquery()
-        )
-        failed_sub = (
+        ).one() or 0
+        failed = session.exec(
             select(func.count())
             .select_from(AnalysisJob)
             .where(
                 (col(AnalysisJob.run_id) == run_id)
                 & col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD])
             )
-            .scalar_subquery()
-        )
-        terminal_sub = (
+        ).one() or 0
+        terminal = session.exec(
             select(func.count())
             .select_from(AnalysisJob)
             .where(
                 (col(AnalysisJob.run_id) == run_id)
-                & col(AnalysisJob.terminal_state)
+                & col(AnalysisJob.terminal_state).is_(True)
             )
-            .scalar_subquery()
-        )
+        ).one() or 0
 
-        is_done = terminal_sub >= run.total_jobs
-        session.execute(
-            update(Run)
-            .where(Run.id == run_id)
-            .values(
-                completed_jobs=succeeded_sub,
-                failed_jobs=failed_sub,
-                status=case(
-                    (is_done & (failed_sub > 0), RunStatus.FAILED),
-                    (is_done, RunStatus.COMPLETED),
-                    else_=RunStatus.RUNNING,
-                ),
-                # Preserve existing finished_at if the run is not yet done.
-                finished_at=case(
-                    (is_done, utcnow()),
-                    else_=Run.__table__.c.finished_at,
-                ),
-            )
-        )
+        run.completed_jobs = succeeded
+        run.failed_jobs = failed
+        is_done = terminal >= run.total_jobs
+        if is_done:
+            run.status = RunStatus.FAILED if failed > 0 else RunStatus.COMPLETED
+            if not run.finished_at:
+                run.finished_at = utcnow()
+        else:
+            run.status = RunStatus.RUNNING
+        session.add(run)
         session.commit()

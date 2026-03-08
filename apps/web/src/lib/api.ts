@@ -2,6 +2,7 @@ import type {
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
   CompanyDeleteResult,
+  CompanyIdsResult,
   CompanyList,
   CompanyScrapeResult,
   DecisionFilter,
@@ -190,4 +191,13 @@ export async function resetStuckJobs(): Promise<ResetStuckResult> {
 
 export function getCompaniesExportUrl(): string {
   return `${API_BASE_URL}/v1/companies/export.csv`
+}
+
+export async function listCompanyIds(
+  decisionFilter: DecisionFilter = 'all',
+  scrapeFilter: ScrapeFilter = 'all',
+): Promise<CompanyIdsResult> {
+  return request<CompanyIdsResult>(
+    `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`,
+  )
 }

@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import ssl
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -196,12 +197,17 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
         with urlopen(request, context=ssl.create_default_context(), timeout=60) as response:  # noqa: S310
             raw = response.read().decode("utf-8", errors="ignore")
         decoded = json.loads(raw)
-        content = decoded["choices"][0]["message"]["content"]
+        choices = decoded.get("choices") or []
+        if not choices:
+            log_event(logger, "scrape_llm_empty_choices", model=model, raw_response=raw[:500])
+            return "", ""
+        content = choices[0]["message"]["content"]
         parsed = json.loads(content) if isinstance(content, str) else {}
         about = str(parsed.get("best_about", "") or "").strip()
         products = str(parsed.get("best_products", "") or "").strip()
         return about, products
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        log_event(logger, "scrape_llm_error", model=model, error=str(exc), traceback=traceback.format_exc())
         return "", ""
 
 

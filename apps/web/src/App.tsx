@@ -14,6 +14,7 @@ import {
   getCompaniesExportUrl,
   getStats,
   listCompanies,
+  listCompanyIds,
   listPrompts,
   listRunJobs,
   listRuns,
@@ -75,8 +76,11 @@ const SCRAPE_FILTERS: Array<{ value: ScrapeFilter; label: string }> = [
   { value: 'none', label: 'Not scraped' },
 ]
 
+const MAX_POLL_FAILURES = 3
+
 function App() {
   const companyCacheRef = useRef<Record<string, CompanyList>>({})
+  const pollFailuresRef = useRef(0)
   const [file, setFile] = useState<File | null>(null)
   const [companies, setCompanies] = useState<CompanyList | null>(null)
   const [companyOffset, setCompanyOffset] = useState(0)
@@ -133,6 +137,7 @@ function App() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
+  const [isSelectingAll, setIsSelectingAll] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -188,10 +193,11 @@ function App() {
       nextLimit = pageSize,
       nextDecisionFilter: DecisionFilter = decisionFilter,
       nextScrapeFilter: ScrapeFilter = scrapeFilter,
+      forceRefresh = false,
     ) => {
       const key = cacheKeyFor(offset, nextLimit, nextDecisionFilter, nextScrapeFilter)
       const cached = companyCacheRef.current[key]
-      if (cached) {
+      if (cached && !forceRefresh) {
         setCompanies(cached)
         setCompanyOffset(offset)
         void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter, nextScrapeFilter)
@@ -204,6 +210,7 @@ function App() {
         companyCacheRef.current[key] = response
         setCompanies(response)
         setCompanyOffset(offset)
+        pollFailuresRef.current = 0
         if (response.has_more) {
           void prefetchCompanies(offset + nextLimit, nextLimit, nextDecisionFilter, nextScrapeFilter)
         }
@@ -316,16 +323,20 @@ function App() {
   )
 
   const loadStats = useCallback(async () => {
+    if (pollFailuresRef.current >= MAX_POLL_FAILURES) return
     try {
       const data = await getStats()
       setStats(data)
+      pollFailuresRef.current = 0
     } catch {
-      // Stats panel failure should not interrupt main flow.
+      pollFailuresRef.current += 1
     }
   }, [])
 
   useEffect(() => {
     setSelectedCompanyIds([])
+    setCompanyOffset(0)
+    companyCacheRef.current = {}
     void loadCompanies(0, pageSize, decisionFilter, scrapeFilter)
   }, [decisionFilter, scrapeFilter, loadCompanies, pageSize])
 
@@ -348,6 +359,18 @@ function App() {
   }, [loadStats])
 
   useEffect(() => {
+    if (!error) return
+    const timer = window.setTimeout(() => setError(''), 5000)
+    return () => window.clearTimeout(timer)
+  }, [error])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 5000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  useEffect(() => {
     const hasActiveJobs = scrapeJobs.some((job) => !job.terminal_state)
     if (!hasActiveJobs) {
       return
@@ -364,8 +387,9 @@ function App() {
       return
     }
     const timer = window.setInterval(() => {
+      if (pollFailuresRef.current >= MAX_POLL_FAILURES) return
       void loadRuns(runsOffset, runsPageSize)
-      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter)
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
     }, 4000)
     return () => window.clearInterval(timer)
   }, [companyOffset, decisionFilter, scrapeFilter, loadCompanies, loadRuns, pageSize, runs, runsOffset, runsPageSize])
@@ -477,6 +501,18 @@ function App() {
       }
       return Array.from(new Set([...current, ...visibleIds]))
     })
+  }
+
+  const onSelectAllFiltered = async () => {
+    setIsSelectingAll(true)
+    try {
+      const result = await listCompanyIds(decisionFilter, scrapeFilter)
+      setSelectedCompanyIds(result.ids)
+    } catch (err) {
+      setError(parseError(err))
+    } finally {
+      setIsSelectingAll(false)
+    }
   }
 
   const onDeleteSelected = async () => {
@@ -1182,6 +1218,14 @@ function App() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => void onSelectAllFiltered()}
+                        disabled={isSelectingAll}
+                        className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-slate-500 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isSelectingAll ? 'Selecting…' : 'Select all matching'}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void onScrapeSelected()}
                         disabled={selectedCompanyIds.length === 0 || isScrapingSelected}
                         className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -1473,6 +1517,7 @@ function App() {
                           <th>Status</th>
                           <th>Stage 1</th>
                           <th>Stage 2</th>
+                          <th>Pages</th>
                           <th>Error</th>
                           <th>Updated</th>
                           <th>View</th>
@@ -1496,6 +1541,18 @@ function App() {
                               </td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{job.stage1_status}</td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{job.stage2_status}</td>
+                              <td className="text-[12px] tabular-nums text-[var(--oc-muted)]">
+                                {job.pages_fetched_count > 0 ? (
+                                  <span title={`${job.pages_fetched_count} fetched, ${job.markdown_pages_count} with markdown`}>
+                                    <span className={job.markdown_pages_count > 0 ? 'font-semibold text-[var(--oc-text)]' : ''}>
+                                      {job.markdown_pages_count}
+                                    </span>
+                                    <span className="text-[var(--oc-border)]">/{job.pages_fetched_count}</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[var(--oc-border)]">—</span>
+                                )}
+                              </td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{job.last_error_code ?? '-'}</td>
                               <td className="text-[12px] text-[var(--oc-muted)]">{new Date(job.updated_at).toLocaleString()}</td>
                               <td>

@@ -12,6 +12,7 @@ from sqlmodel import Session, col, delete, select
 from app.api.schemas.upload import (
     CompanyDeleteRequest,
     CompanyDeleteResult,
+    CompanyIdsResult,
     CompanyList,
     CompanyListItem,
     CompanyRead,
@@ -371,6 +372,47 @@ def list_companies(
         for row in page_rows
     ]
     return CompanyList(total=total, has_more=has_more, limit=limit, offset=offset, items=items)
+
+
+@router.get("/companies/ids", response_model=CompanyIdsResult)
+def list_company_ids(
+    session: Session = Depends(get_session),
+    decision_filter: str = Query(default="all"),
+    scrape_filter: str = Query(default="all"),
+) -> CompanyIdsResult:
+    """Return all company IDs matching the given filters (no pagination) for bulk selection."""
+    latest_classification = _latest_classification_subquery()
+    latest_scrape = _latest_scrape_subquery()
+    latest_decision_text = latest_classification.c.predicted_label
+    decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
+
+    normalized_filter = decision_filter.strip().lower()
+    allowed_filters = {"all", "unlabeled", "possible", "unknown", "crap"}
+    if normalized_filter not in allowed_filters:
+        raise HTTPException(status_code=422, detail="Invalid decision_filter.")
+    normalized_scrape_filter = scrape_filter.strip().lower()
+    allowed_scrape_filters = {"all", "done", "failed", "none"}
+    if normalized_scrape_filter not in allowed_scrape_filters:
+        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
+
+    statement = (
+        select(Company.id)
+        .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+    )
+    if normalized_filter == "unlabeled":
+        statement = statement.where(decision_lower == "")
+    elif normalized_filter in {"possible", "unknown", "crap"}:
+        statement = statement.where(decision_lower == normalized_filter)
+    if normalized_scrape_filter == "done":
+        statement = statement.where(latest_scrape.c.status == "completed")
+    elif normalized_scrape_filter == "failed":
+        statement = statement.where(latest_scrape.c.status == "failed")
+    elif normalized_scrape_filter == "none":
+        statement = statement.where(latest_scrape.c.job_id.is_(None))
+
+    ids = list(session.exec(statement))
+    return CompanyIdsResult(ids=ids, total=len(ids))
 
 
 @router.get("/companies/export.csv")
