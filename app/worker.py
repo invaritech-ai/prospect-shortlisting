@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import multiprocessing
 import signal
 import time
 from uuid import UUID
@@ -22,13 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 class Worker:
-    def __init__(self) -> None:
+    def __init__(self, *, cleanup_enabled: bool = True) -> None:
         self._running = True
         self._queue = QueueService()
         self._scrape_service = ScrapeService()
         self._analysis_service = AnalysisService()
         self._cleanup_service = ArtifactCleanupService()
         self._last_cleanup_at = 0.0
+        self._cleanup_enabled = cleanup_enabled
 
     def stop(self, *_: object) -> None:
         self._running = False
@@ -58,6 +60,8 @@ class Worker:
         return 0
 
     def _maybe_cleanup(self) -> None:
+        if not self._cleanup_enabled:
+            return
         now = time.monotonic()
         if now - self._last_cleanup_at < settings.worker_cleanup_interval_sec:
             return
@@ -181,8 +185,65 @@ class Worker:
 
 def main() -> int:
     configure_logging()
-    worker = Worker()
+    concurrency = max(1, settings.worker_concurrency)
+    if concurrency == 1:
+        return Worker().run()
+    return WorkerSupervisor(concurrency=concurrency).run()
+
+
+def _run_worker_process(slot: int, *, cleanup_enabled: bool) -> int:
+    configure_logging()
+    log_event(logger, "worker_process_started", slot=slot, cleanup_enabled=cleanup_enabled)
+    worker = Worker(cleanup_enabled=cleanup_enabled)
     return worker.run()
+
+
+class WorkerSupervisor:
+    def __init__(self, *, concurrency: int) -> None:
+        self._concurrency = concurrency
+        self._running = True
+        self._children: dict[int, multiprocessing.Process] = {}
+
+    def stop(self, *_: object) -> None:
+        self._running = False
+
+    def run(self) -> int:
+        signal.signal(signal.SIGINT, self.stop)
+        signal.signal(signal.SIGTERM, self.stop)
+        log_event(logger, "worker_supervisor_started", concurrency=self._concurrency)
+
+        for slot in range(self._concurrency):
+            self._spawn(slot)
+
+        while self._running:
+            time.sleep(1)
+            for slot, process in list(self._children.items()):
+                if process.is_alive():
+                    continue
+                exit_code = process.exitcode
+                log_event(logger, "worker_process_exited", slot=slot, exit_code=exit_code)
+                if self._running:
+                    self._spawn(slot)
+
+        for process in self._children.values():
+            if process.is_alive():
+                process.terminate()
+        for process in self._children.values():
+            process.join(timeout=10)
+        log_event(logger, "worker_supervisor_stopped")
+        return 0
+
+    def _spawn(self, slot: int) -> None:
+        cleanup_enabled = slot == 0
+        process = multiprocessing.Process(
+            target=_run_worker_process,
+            args=(slot,),
+            kwargs={"cleanup_enabled": cleanup_enabled},
+            name=f"worker-{slot}",
+        )
+        process.start()
+        self._children[slot] = process
+        log_event(logger, "worker_process_spawned", slot=slot, pid=process.pid, cleanup_enabled=cleanup_enabled)
 
 
 if __name__ == "__main__":

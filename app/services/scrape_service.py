@@ -218,8 +218,8 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
             static_response = await AsyncFetcher.get(
                 attempt,
                 follow_redirects=True,
-                timeout=18,
-                retries=2,
+                timeout=settings.scrape_static_timeout_sec,
+                retries=settings.scrape_static_retries,
                 verify=False,
                 headers={"user-agent": USER_AGENT},
             )
@@ -245,12 +245,12 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                 dynamic_response = await DynamicFetcher.async_fetch(
                     attempt,
                     headless=True,
-                    timeout=25000,
-                    wait=400,
+                    timeout=settings.scrape_dynamic_timeout_ms,
+                    wait=settings.scrape_dynamic_wait_ms,
                     network_idle=False,
                     disable_resources=False,
                     load_dom=True,
-                    retries=1,
+                    retries=settings.scrape_dynamic_retries,
                     retry_delay=1,
                     extra_headers={"user-agent": USER_AGENT},
                 )
@@ -353,8 +353,8 @@ def capture_page_screenshot(url: str, path: Path) -> tuple[str, str]:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1400, "height": 2200})
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(1500)
+            page.goto(url, wait_until="domcontentloaded", timeout=settings.scrape_screenshot_timeout_ms)
+            page.wait_for_timeout(settings.scrape_screenshot_settle_ms)
             page.screenshot(path=str(path), full_page=True)
             browser.close()
         return str(path), ""
