@@ -84,6 +84,8 @@ const MAX_POLL_FAILURES = 3
 function App() {
   const companyCacheRef = useRef<Record<string, CompanyList>>({})
   const pollFailuresRef = useRef(0)
+  const editingPromptIdRef = useRef<string | null>(null)
+  const selectedPromptIdRef = useRef('')
   const [file, setFile] = useState<File | null>(null)
   const [companies, setCompanies] = useState<CompanyList | null>(null)
   const [companyOffset, setCompanyOffset] = useState(0)
@@ -107,8 +109,10 @@ function App() {
   const [utilitiesOpen, setUtilitiesOpen] = useState(false)
   const [promptSheetOpen, setPromptSheetOpen] = useState(false)
   const [prompts, setPrompts] = useState<PromptRead[]>([])
-  const [selectedPromptId, setSelectedPromptId] = useState('')
-  const [editingPromptId, setEditingPromptId] = useState<string | null>(null)
+  const [selectedPromptId, setSelectedPromptIdState] = useState('')
+  const setSelectedPromptId = (v: string) => { selectedPromptIdRef.current = v; setSelectedPromptIdState(v) }
+  const [editingPromptId, setEditingPromptIdState] = useState<string | null>(null)
+  const setEditingPromptId = (v: string | null) => { editingPromptIdRef.current = v; setEditingPromptIdState(v) }
   const [promptName, setPromptName] = useState('')
   const [promptText, setPromptText] = useState('')
   const [promptEnabled, setPromptEnabled] = useState(true)
@@ -290,7 +294,7 @@ function App() {
         const storedPromptId = window.localStorage.getItem(PROMPT_SELECTION_KEY) ?? ''
         const preferredEnabledId =
           (preferredPromptId && rows.find((item) => item.id === preferredPromptId && item.enabled)?.id) ||
-          (selectedPromptId && rows.find((item) => item.id === selectedPromptId && item.enabled)?.id) ||
+          (selectedPromptIdRef.current && rows.find((item) => item.id === selectedPromptIdRef.current && item.enabled)?.id) ||
           rows.find((item) => item.id === storedPromptId && item.enabled)?.id ||
           rows.find((item) => item.enabled)?.id ||
           rows[0]?.id ||
@@ -305,7 +309,7 @@ function App() {
 
         if (!preserveEditor) {
           const promptForEditor =
-            rows.find((item) => item.id === (preferredPromptId || editingPromptId || preferredEnabledId)) ?? rows[0] ?? null
+            rows.find((item) => item.id === (preferredPromptId || editingPromptIdRef.current || preferredEnabledId)) ?? rows[0] ?? null
           if (promptForEditor) {
             setEditingPromptId(promptForEditor.id)
             setPromptName(promptForEditor.name)
@@ -324,7 +328,7 @@ function App() {
         setIsPromptsLoading(false)
       }
     },
-    [editingPromptId, selectedPromptId],
+    [], // stable — reads editingPromptIdRef/selectedPromptIdRef via refs, never re-created
   )
 
   const loadStats = useCallback(async () => {
