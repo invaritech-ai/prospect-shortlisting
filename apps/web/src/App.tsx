@@ -21,6 +21,7 @@ import {
   listScrapeJobPageContents,
   listScrapeJobs,
   resetStuckJobs,
+  resetStuckAnalysisJobs,
   scrapeAllCompanies,
   scrapeSelectedCompanies,
   updatePrompt,
@@ -137,6 +138,7 @@ function App() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
+  const [isResettingStuckAnalysis, setIsResettingStuckAnalysis] = useState(false)
   const [isSelectingAll, setIsSelectingAll] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -653,6 +655,7 @@ function App() {
   }
 
   const onClassify = async (company: CompanyListItem) => {
+    setAnalysisActionState((current) => ({ ...current, [company.id]: 'Queuing…' }))
     await startClassification('selected', [company.id])
   }
 
@@ -660,6 +663,11 @@ function App() {
     if (selectedCompanyIds.length === 0) {
       return
     }
+    setAnalysisActionState((current) => {
+      const next = { ...current }
+      for (const id of selectedCompanyIds) next[id] = 'Queuing…'
+      return next
+    })
     await startClassification('selected', selectedCompanyIds)
   }
 
@@ -855,11 +863,30 @@ function App() {
     try {
       const result = await resetStuckJobs()
       await Promise.all([loadScrapeJobs(0, jobsPageSize), loadStats()])
-      setNotice(`Reset and re-queued ${result.reset_count.toLocaleString()} stuck jobs.`)
+      setNotice(`Reset and re-queued ${result.reset_count.toLocaleString()} stuck scrape jobs.`)
     } catch (err) {
       setError(parseError(err))
     } finally {
       setIsResettingStuck(false)
+    }
+  }
+
+  const onResetStuckAnalysis = async () => {
+    setError('')
+    setNotice('')
+    setIsResettingStuckAnalysis(true)
+    try {
+      const result = await resetStuckAnalysisJobs()
+      await Promise.all([
+        loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true),
+        loadRuns(0, runsPageSize),
+        loadStats(),
+      ])
+      setNotice(`Reset and re-queued ${result.reset_count.toLocaleString()} stuck analysis jobs.`)
+    } catch (err) {
+      setError(parseError(err))
+    } finally {
+      setIsResettingStuckAnalysis(false)
     }
   }
 
@@ -1146,7 +1173,15 @@ function App() {
                   disabled={isResettingStuck || stats.scrape.running === 0}
                   className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isResettingStuck ? 'Resetting…' : `Reset Stuck (${stats.scrape.running.toLocaleString()})`}
+                  {isResettingStuck ? 'Resetting…' : `Reset Stuck Scrape (${stats.scrape.running.toLocaleString()})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onResetStuckAnalysis()}
+                  disabled={isResettingStuckAnalysis || stats.analysis.running === 0}
+                  className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isResettingStuckAnalysis ? 'Resetting…' : `Reset Stuck Analysis (${stats.analysis.running.toLocaleString()})`}
                 </button>
                 <button
                   type="button"
