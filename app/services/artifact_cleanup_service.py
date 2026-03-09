@@ -38,9 +38,13 @@ class ArtifactCleanupService:
         cutoff = _utcnow() - timedelta(hours=ttl_hours)
         stats = CleanupStats()
 
+        # Select only ScrapePage — joining ScrapeJob only for the filter condition.
+        # Avoid fetching ScrapeJob columns (and the large ScrapePage text columns are
+        # loaded lazily on write). Fetching both full ORM objects was returning tens of
+        # MB per run and killing the DB connection.
         pages = list(
             session.exec(
-                select(ScrapePage, ScrapeJob)
+                select(ScrapePage)
                 .join(ScrapeJob, ScrapeJob.id == ScrapePage.job_id)
                 .where(
                     (col(ScrapeJob.terminal_state).is_(True))
@@ -49,7 +53,7 @@ class ArtifactCleanupService:
             )
         )
 
-        for page, _job in pages:
+        for page in pages:
             stats.pages_scanned += 1
 
             if page.html_snapshot:

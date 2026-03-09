@@ -623,7 +623,7 @@ function App() {
         company_ids: scope === 'selected' ? companyIds : undefined,
       })
       await loadRuns(0, runsPageSize)
-      await loadCompanies(companyOffset, pageSize, decisionFilter)
+      await loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
       const runCount = result.runs.length
       const message = `Created ${runCount} run${runCount === 1 ? '' : 's'} and queued ${result.queued_count}/${result.requested_count} classifications.`
       if (result.skipped_company_ids.length > 0) {
