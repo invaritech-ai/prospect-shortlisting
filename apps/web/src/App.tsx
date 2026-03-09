@@ -560,6 +560,7 @@ function App() {
         companies && companies.items.length === selectedCompanyIds.length && companyOffset > 0
           ? Math.max(companyOffset - currentLimit, 0)
           : companyOffset
+      setSelectedCompanyIds([])
       await loadCompanies(nextOffset, pageSize, decisionFilter)
       void loadCompanyCounts()
       setNotice(`Deleted ${selectedCompanyIds.length} companies.`)
@@ -1204,10 +1205,10 @@ function App() {
                 <button
                   type="button"
                   onClick={() => void onResetStuckAnalysis()}
-                  disabled={isResettingStuckAnalysis || stats.analysis.running === 0}
+                  disabled={isResettingStuckAnalysis || (stats.analysis.running === 0 && stats.analysis.queued === 0)}
                   className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isResettingStuckAnalysis ? 'Resetting…' : `Reset Stuck Analysis (${stats.analysis.running.toLocaleString()})`}
+                  {isResettingStuckAnalysis ? 'Resetting…' : `Reset Stuck Analysis (${(stats.analysis.running + stats.analysis.queued).toLocaleString()})`}
                 </button>
                 <button
                   type="button"

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 
+import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
 
@@ -12,6 +13,19 @@ def utcnow() -> datetime:
 
 
 class ScrapeJob(SQLModel, table=True):
+    __table_args__ = (
+        # Partial unique index: only one active (non-terminal) job per URL.
+        # Mirrors the Alembic migration so create_all() on a fresh DB also
+        # creates the constraint (not just migrated databases).
+        sa.Index(
+            "uq_scrapejob_active_normalized_url",
+            "normalized_url",
+            unique=True,
+            postgresql_where=sa.text("terminal_state = false"),
+            sqlite_where=sa.text("terminal_state = 0"),
+        ),
+    )
+
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     website_url: str
     normalized_url: str

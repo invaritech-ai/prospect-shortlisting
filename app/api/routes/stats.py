@@ -204,19 +204,34 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
     if drained:
         redis.delete(queue_key)
 
-    # Mark ScrapeJob records still in "created" state as cancelled
-    queued_jobs = list(
+    # Cancel ScrapeJob records still in "created" state
+    queued_scrape = list(
         session.exec(select(ScrapeJob).where(col(ScrapeJob.status) == "created"))
     )
-    for job in queued_jobs:
+    for job in queued_scrape:
         job.status = "cancelled"
         job.terminal_state = True
         session.add(job)
+
+    # Cancel AnalysisJob records still in QUEUED state (stranded when queue was drained)
+    queued_analysis = list(
+        session.exec(
+            select(AnalysisJob).where(
+                col(AnalysisJob.terminal_state).is_(False)
+                & (col(AnalysisJob.state) == AnalysisJobState.QUEUED)
+            )
+        )
+    )
+    for job in queued_analysis:
+        job.state = AnalysisJobState.DEAD
+        job.terminal_state = True
+        session.add(job)
+
     session.commit()
 
     return DrainQueueResult(
         drained=int(drained),
-        cancelled_db_jobs=len(queued_jobs),
+        cancelled_db_jobs=len(queued_scrape) + len(queued_analysis),
         queue_key=queue_key,
     )
 

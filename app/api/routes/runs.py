@@ -8,7 +8,8 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.db.session import get_session
-from app.models import Company, Prompt, Run
+from app.models import AnalysisJob, Company, Prompt, Run
+from app.models.pipeline import AnalysisJobState
 from app.services.analysis_service import AnalysisService
 from app.services.queue_service import QueueService
 
@@ -64,8 +65,23 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    enqueue_failed: list[AnalysisJob] = []
     for job in jobs:
-        queue_service.enqueue(task_type="analysis_job", payload={"analysis_job_id": str(job.id)})
+        try:
+            queue_service.enqueue(task_type="analysis_job", payload={"analysis_job_id": str(job.id)})
+        except Exception:  # noqa: BLE001
+            enqueue_failed.append(job)
+
+    if enqueue_failed:
+        failed_ids = {j.id for j in enqueue_failed}
+        for job in enqueue_failed:
+            job.state = AnalysisJobState.DEAD
+            job.terminal_state = True
+            job.last_error_code = "enqueue_failed"
+            job.last_error_message = "Failed to enqueue analysis task; marked terminal."
+            session.add(job)
+        session.commit()
+        jobs = [j for j in jobs if j.id not in failed_ids]
 
     return RunCreateResult(
         requested_count=len(companies),

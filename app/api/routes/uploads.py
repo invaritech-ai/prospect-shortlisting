@@ -107,6 +107,7 @@ def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]
     queued_job_ids: list[UUID] = []
     failed_company_ids: list[UUID] = []
     for company in companies:
+        job = None
         try:
             job = scrape_service.create_job(
                 session=session,
@@ -125,6 +126,15 @@ def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]
             queued_job_ids.append(job.id)
         except Exception:  # noqa: BLE001
             failed_company_ids.append(company.id)
+            # If the DB job was committed but Redis enqueue failed, mark it
+            # terminal so it doesn't block future scrapes for the same URL.
+            if job is not None:
+                job.status = "failed"
+                job.terminal_state = True
+                job.last_error_code = "enqueue_failed"
+                job.last_error_message = "Failed to enqueue scrape task; marked terminal."
+                session.add(job)
+                session.commit()
     return CompanyScrapeResult(
         requested_count=len(companies),
         queued_count=len(queued_job_ids),
@@ -314,7 +324,7 @@ def list_companies(
     if normalized_scrape_filter == "done":
         statement = statement.where(latest_scrape.c.status == "completed")
     elif normalized_scrape_filter == "failed":
-        statement = statement.where(latest_scrape.c.status == "failed")
+        statement = statement.where(latest_scrape.c.status.like("%failed%"))
     elif normalized_scrape_filter == "none":
         statement = statement.where(latest_scrape.c.job_id.is_(None))
 
@@ -346,7 +356,7 @@ def list_companies(
         if normalized_scrape_filter == "done":
             total_stmt = total_stmt.where(latest_scrape.c.status == "completed")
         elif normalized_scrape_filter == "failed":
-            total_stmt = total_stmt.where(latest_scrape.c.status == "failed")
+            total_stmt = total_stmt.where(latest_scrape.c.status.like("%failed%"))
         elif normalized_scrape_filter == "none":
             total_stmt = total_stmt.where(latest_scrape.c.job_id.is_(None))
         total = session.exec(total_stmt).one()
@@ -408,7 +418,7 @@ def list_company_ids(
     if normalized_scrape_filter == "done":
         statement = statement.where(latest_scrape.c.status == "completed")
     elif normalized_scrape_filter == "failed":
-        statement = statement.where(latest_scrape.c.status == "failed")
+        statement = statement.where(latest_scrape.c.status.like("%failed%"))
     elif normalized_scrape_filter == "none":
         statement = statement.where(latest_scrape.c.job_id.is_(None))
 
