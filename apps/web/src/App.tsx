@@ -12,6 +12,7 @@ import {
   enqueueRunAll,
   getAnalysisJobDetail,
   getCompaniesExportUrl,
+  getCompanyCounts,
   getStats,
   listCompanies,
   listCompanyIds,
@@ -30,6 +31,7 @@ import {
 import type {
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
+  CompanyCounts,
   CompanyList,
   CompanyListItem,
   DecisionFilter,
@@ -136,6 +138,7 @@ function App() {
   const [markdownError, setMarkdownError] = useState('')
   const [markdownCopyState, setMarkdownCopyState] = useState('')
   const [stats, setStats] = useState<StatsResponse | null>(null)
+  const [companyCounts, setCompanyCounts] = useState<CompanyCounts | null>(null)
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
   const [isResettingStuckAnalysis, setIsResettingStuckAnalysis] = useState(false)
@@ -335,6 +338,15 @@ function App() {
     }
   }, [])
 
+  const loadCompanyCounts = useCallback(async () => {
+    try {
+      const data = await getCompanyCounts()
+      setCompanyCounts(data)
+    } catch {
+      // non-critical — counts will just be absent
+    }
+  }, [])
+
   useEffect(() => {
     setSelectedCompanyIds([])
     setCompanyOffset(0)
@@ -356,9 +368,13 @@ function App() {
 
   useEffect(() => {
     void loadStats()
-    const timer = window.setInterval(() => void loadStats(), 10000)
+    void loadCompanyCounts()
+    const timer = window.setInterval(() => {
+      void loadStats()
+      void loadCompanyCounts()
+    }, 10000)
     return () => window.clearInterval(timer)
-  }, [loadStats])
+  }, [loadStats, loadCompanyCounts])
 
   useEffect(() => {
     if (!error) return
@@ -435,6 +451,7 @@ function App() {
       setFile(null)
       setSelectedCompanyIds([])
       await loadCompanies(0, pageSize, decisionFilter)
+      void loadCompanyCounts()
       setNotice('Upload parsed and companies refreshed.')
     } catch (err) {
       setError(parseError(err))
@@ -540,6 +557,7 @@ function App() {
           ? Math.max(companyOffset - currentLimit, 0)
           : companyOffset
       await loadCompanies(nextOffset, pageSize, decisionFilter)
+      void loadCompanyCounts()
       setNotice(`Deleted ${selectedCompanyIds.length} companies.`)
     } catch (err) {
       setError(parseError(err))
@@ -590,6 +608,7 @@ function App() {
       companyCacheRef.current = {}
       await loadCompanies(0, pageSize, decisionFilter)
       await loadScrapeJobs(0, jobsPageSize)
+      void loadCompanyCounts()
       setSelectedCompanyIds([])
       const message = `Queued ${result.queued_count}/${result.requested_count} companies for scraping.`
       if (result.failed_company_ids.length > 0) {
@@ -626,6 +645,7 @@ function App() {
       })
       await loadRuns(0, runsPageSize)
       await loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+      void loadCompanyCounts()
       const runCount = result.runs.length
       const message = `Created ${runCount} run${runCount === 1 ? '' : 's'} and queued ${result.queued_count}/${result.requested_count} classifications.`
       if (result.skipped_company_ids.length > 0) {
@@ -935,9 +955,11 @@ function App() {
     </div>
   )
 
+  const effectiveTotal: number | null =
+    (companies?.total ?? null) !== null ? companies!.total : companyCounts?.total ?? null
   const rangeLabel =
-    companies && companies.total !== null && companies.total > 0
-      ? `${Math.min(companies.offset + 1, companies.total)}-${Math.min(companies.offset + companies.items.length, companies.total)} of ${companies.total}`
+    companies && effectiveTotal !== null && effectiveTotal > 0
+      ? `${Math.min(companies.offset + 1, effectiveTotal)}-${Math.min(companies.offset + companies.items.length, effectiveTotal)} of ${effectiveTotal.toLocaleString()}`
       : companies && companies.items.length > 0
         ? `${companies.offset + 1}-${companies.offset + companies.items.length}`
       : '0 of 0'
@@ -1302,35 +1324,64 @@ function App() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {DECISION_FILTERS.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        onClick={() => setDecisionFilter(item.value)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                          decisionFilter === item.value
-                            ? 'bg-[var(--oc-accent)] text-white'
-                            : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
-                        }`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
+                    {DECISION_FILTERS.map((item) => {
+                      const countMap: Record<string, number | undefined> = {
+                        all: companyCounts?.total,
+                        unlabeled: companyCounts?.unlabeled,
+                        possible: companyCounts?.possible,
+                        unknown: companyCounts?.unknown,
+                        crap: companyCounts?.crap,
+                      }
+                      const count = countMap[item.value]
+                      return (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => setDecisionFilter(item.value)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                            decisionFilter === item.value
+                              ? 'bg-[var(--oc-accent)] text-white'
+                              : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
+                          }`}
+                        >
+                          {item.label}
+                          {count !== undefined && (
+                            <span className={`ml-1.5 rounded px-1 py-0.5 text-[10px] font-semibold ${decisionFilter === item.value ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                              {count.toLocaleString()}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
                     <span className="text-[var(--oc-border)]">|</span>
-                    {SCRAPE_FILTERS.map((item) => (
-                      <button
-                        key={item.value}
-                        type="button"
-                        onClick={() => setScrapeFilter(item.value)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                          scrapeFilter === item.value
-                            ? 'bg-slate-700 text-white'
-                            : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
-                        }`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
+                    {SCRAPE_FILTERS.map((item) => {
+                      const countMap: Record<string, number | undefined> = {
+                        all: companyCounts?.total,
+                        done: companyCounts?.scrape_done,
+                        failed: companyCounts?.scrape_failed,
+                        none: companyCounts?.not_scraped,
+                      }
+                      const count = countMap[item.value]
+                      return (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => setScrapeFilter(item.value)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                            scrapeFilter === item.value
+                              ? 'bg-slate-700 text-white'
+                              : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
+                          }`}
+                        >
+                          {item.label}
+                          {count !== undefined && (
+                            <span className={`ml-1.5 rounded px-1 py-0.5 text-[10px] font-semibold ${scrapeFilter === item.value ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                              {count.toLocaleString()}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
                   </div>
 
                   {utilitiesOpen && (
