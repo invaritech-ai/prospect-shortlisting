@@ -10,6 +10,7 @@ from sqlalchemy import String, case, cast, func
 from sqlmodel import Session, col, delete, select
 
 from app.api.schemas.upload import (
+    CompanyCounts,
     CompanyDeleteRequest,
     CompanyDeleteResult,
     CompanyIdsResult,
@@ -413,6 +414,42 @@ def list_company_ids(
 
     ids = list(session.exec(statement))
     return CompanyIdsResult(ids=ids, total=len(ids))
+
+
+@router.get("/companies/counts", response_model=CompanyCounts)
+def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts:
+    """Return all filter counts in a single query for display in the UI."""
+    latest_classification = _latest_classification_subquery()
+    latest_scrape = _latest_scrape_subquery()
+    decision_lower = func.lower(func.coalesce(latest_classification.c.predicted_label, ""))
+    scrape_status = latest_scrape.c.status
+
+    row = session.exec(
+        select(
+            func.count().label("total"),
+            func.sum(case((decision_lower == "", 1), else_=0)).label("unlabeled"),
+            func.sum(case((decision_lower == "possible", 1), else_=0)).label("possible"),
+            func.sum(case((decision_lower == "unknown", 1), else_=0)).label("unknown"),
+            func.sum(case((decision_lower == "crap", 1), else_=0)).label("crap"),
+            func.sum(case((scrape_status == "completed", 1), else_=0)).label("scrape_done"),
+            func.sum(case((scrape_status.like("%failed%"), 1), else_=0)).label("scrape_failed"),
+            func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("not_scraped"),
+        )
+        .select_from(Company)
+        .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+    ).one()
+
+    return CompanyCounts(
+        total=row[0] or 0,
+        unlabeled=row[1] or 0,
+        possible=row[2] or 0,
+        unknown=row[3] or 0,
+        crap=row[4] or 0,
+        scrape_done=row[5] or 0,
+        scrape_failed=row[6] or 0,
+        not_scraped=row[7] or 0,
+    )
 
 
 @router.get("/companies/export.csv")

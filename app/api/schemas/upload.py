@@ -111,3 +111,14 @@ class CompanyScrapeResult(BaseModel):
 class CompanyIdsResult(BaseModel):
     ids: list[UUID]
     total: int
+
+
+class CompanyCounts(BaseModel):
+    total: int
+    unlabeled: int
+    possible: int
+    unknown: int
+    crap: int
+    scrape_done: int
+    scrape_failed: int
+    not_scraped: int

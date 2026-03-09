@@ -260,6 +260,17 @@ export type DrainQueueResult = {
   queue_key: string
 }
 
+export type CompanyCounts = {
+  total: number
+  unlabeled: number
+  possible: number
+  unknown: number
+  crap: number
+  scrape_done: number
+  scrape_failed: number
+  not_scraped: number
+}
+
 export type ResetStuckResult = {
   reset_count: number
 }

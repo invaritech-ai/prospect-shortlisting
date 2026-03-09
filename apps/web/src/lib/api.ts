@@ -1,6 +1,7 @@
 import type {
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
+  CompanyCounts,
   CompanyDeleteResult,
   CompanyIdsResult,
   CompanyList,
@@ -191,6 +192,10 @@ export async function resetStuckJobs(): Promise<ResetStuckResult> {
 
 export async function resetStuckAnalysisJobs(): Promise<ResetStuckResult> {
   return request<ResetStuckResult>('/v1/analysis-jobs/reset-stuck', { method: 'POST' })
+}
+
+export async function getCompanyCounts(): Promise<CompanyCounts> {
+  return request<CompanyCounts>('/v1/companies/counts')
 }
 
 export function getCompaniesExportUrl(): string {
