@@ -75,6 +75,8 @@ CREATE INDEX ix_job_outbox_pending ON job_outbox (created_at)
     WHERE published_at IS NULL;
 
 -- Idempotency: one pending entry per (job_id, task_type)
+-- NOTE: use op.create_index(..., unique=True, postgresql_where=...) in Alembic.
+-- op.create_unique_constraint does NOT support postgresql_where.
 CREATE UNIQUE INDEX uq_job_outbox_pending
     ON job_outbox (job_id, task_type)
     WHERE published_at IS NULL;
@@ -85,6 +87,8 @@ CREATE UNIQUE INDEX uq_job_outbox_pending
 2. `INSERT INTO job_outbox (id, job_id, task_type, payload_json) VALUES (...)`  — app generates UUID to avoid `gen_random_uuid()` / `pgcrypto` dependency.
 
 The unique partial index prevents duplicate outbox rows if the API endpoint is retried before the dispatcher runs.
+
+**Retention cleanup:** The outbox dispatcher only marks rows `published_at = now()`; it never deletes. The slot-0 `_maybe_cleanup` periodic job should also call `OutboxService.delete_published(ttl_days=7)` to prune old rows and keep the table bounded.
 
 ---
 
@@ -120,7 +124,9 @@ XREADGROUP GROUP workers CONSUMER worker-{slot}
 ```
 XACK jobs:stream workers <message_id>
 ```
-ACK is called after the task handler returns without an unhandled exception — this includes both success and graceful failure (job marked terminal in DB). Only unhandled exceptions skip the ACK, leaving the message in PEL for redelivery.
+ACK is called only when the task handler returns a success signal. `_handle_task` must return `True` on success (including graceful terminal failure) and `False` on unhandled exception. The main worker loop ACKs only on `True`. Unhandled exceptions leave the message in PEL for redelivery.
+
+> **Critical:** `_handle_task` currently swallows all exceptions with a bare `except`. It must be changed to return `bool` — `True` on clean exit, `False` (after logging) on exception — so the caller can decide whether to ACK.
 
 **Group creation (at startup, idempotent):**
 ```
@@ -128,8 +134,10 @@ XGROUP CREATE jobs:stream workers 0 MKSTREAM
 ```
 Start ID `0` consumes any backlog. Use `$` only when starting fresh with no existing messages.
 
+**Stream retention:** No active `MAXLEN` trimming — trimming can orphan PEL references. If storage becomes a concern later, use `XTRIM MINID <id>` where `<id>` is the lowest stream entry ID still referenced in the PEL (confirm with `XPENDING`).
+
 **List → stream migration (one-time, at startup):**
-A migration thread reads all entries from the old `jobs:queue` list and XADDs them to the stream, then deletes the list key. Safe to run every startup because the unique partial index on `job_outbox` prevents duplicates if the outbox also republishes them.
+Runs in the `WorkerSupervisor` process before any children are spawned, or in `main()` for single-worker mode. Guard with a Redis `SETNX` lock (`jobs:list_migration_done`) so it runs exactly once across restarts. Reads all entries from the old `jobs:queue` list, XADDs them to the stream, then deletes the list key.
 
 ---
 
@@ -139,27 +147,37 @@ Runs as a `threading.Thread` in the slot-0 worker process. Loop interval: 1 seco
 
 ```
 LOOP every 1s:
-  BEGIN TRANSACTION
+  # Step A: read pending rows (FOR UPDATE SKIP LOCKED — no other dispatcher can touch these)
+  BEGIN TRANSACTION (read)
     SELECT id, task_type, payload_json
     FROM job_outbox
     WHERE published_at IS NULL
     ORDER BY created_at
     LIMIT 100
     FOR UPDATE SKIP LOCKED
-  → release DB lock (commit empty tx or use advisory lock)
+  COMMIT (releases row locks)
 
+  # Step B: for each row, enqueue then mark published
   FOR each row:
-    stream_id = XADD jobs:stream * task_type <t> payload_json <json>  ← enqueue FIRST
-    UPDATE job_outbox
-      SET published_at = now(), stream_id = <stream_id>,
-          publish_attempts = publish_attempts + 1
-      WHERE id = row.id
-  COMMIT
+    stream_id = XADD jobs:stream * task_type <t> payload_json <json>   ← enqueue FIRST
+    if XADD succeeds:
+      UPDATE job_outbox
+        SET published_at = now(), stream_id = <stream_id>,
+            publish_attempts = publish_attempts + 1
+        WHERE id = row.id
+      COMMIT
+    else:
+      increment publish_attempts only, leave published_at NULL, COMMIT
+      (row retries next loop)
 ```
 
-**Ordering matters:** XADD before marking published. If the DB update fails, the stream message already exists — harmless because the worker's CAS will deduplicate at the job level. If XADD fails, the row stays `published_at IS NULL` and retries next loop.
+**Ordering matters:** XADD before marking published.
+- XADD succeeds, DB update fails → stream message exists, outbox retries → duplicate stream entry → CAS deduplicates at job level. Safe.
+- XADD fails → row stays pending, retries next loop. Safe.
 
-**Caution:** Do not hold the DB transaction open during Redis I/O. The flow above closes the read transaction before calling XADD. If contention becomes an issue later, add a `claimed_at` column to release the row-level lock before Redis I/O.
+**`stream_id` and `publish_attempts` are updated only when XADD succeeds.** If XADD fails, only `publish_attempts` is incremented (for alerting).
+
+**Do not hold the DB transaction open during Redis I/O.** The FOR UPDATE lock is released at the end of Step A. Step B opens a separate per-row transaction. This keeps lock hold time short and avoids DB connection exhaustion.
 
 ---
 
