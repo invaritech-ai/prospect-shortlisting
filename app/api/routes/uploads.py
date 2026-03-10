@@ -39,7 +39,7 @@ from app.models import (
     ScrapeJob,
     Upload,
 )
-from app.services.queue_service import QueueService
+from app.services.outbox_service import OutboxService
 from app.services.scrape_service import ScrapeService
 from app.services.upload_service import UploadIssue, UploadService
 
@@ -47,7 +47,7 @@ from app.services.upload_service import UploadIssue, UploadService
 router = APIRouter(prefix="/v1", tags=["uploads"])
 upload_service = UploadService()
 scrape_service = ScrapeService()
-queue_service = QueueService()
+outbox_service = OutboxService()
 SCRAPE_DEFAULTS = {
     "max_pages": 60,
     "max_depth": 3,
@@ -107,10 +107,15 @@ def _latest_analysis_subquery():
 
 
 def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]) -> CompanyScrapeResult:
+    """Create scrape jobs and atomically write outbox rows.
+
+    ``scrape_service.create_job`` flushes (not commits) the job row.
+    We then add the outbox row to the same session and commit both together,
+    ensuring the job and its delivery guarantee are created atomically.
+    """
     queued_job_ids: list[UUID] = []
     failed_company_ids: list[UUID] = []
     for company in companies:
-        job = None
         try:
             job = scrape_service.create_job(
                 session=session,
@@ -125,19 +130,17 @@ def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]
                 enable_ocr=SCRAPE_DEFAULTS["enable_ocr"],
                 max_images_per_page=SCRAPE_DEFAULTS["max_images_per_page"],
             )
-            queue_service.enqueue(task_type="scrape_run_all", payload={"job_id": str(job.id)})
+            outbox_service.write(
+                session=session,
+                job_id=job.id,
+                task_type="scrape_run_all",
+                payload={"job_id": str(job.id)},
+            )
+            session.commit()
             queued_job_ids.append(job.id)
         except Exception:  # noqa: BLE001
+            session.rollback()
             failed_company_ids.append(company.id)
-            # If the DB job was committed but Redis enqueue failed, mark it
-            # terminal so it doesn't block future scrapes for the same URL.
-            if job is not None:
-                job.status = "failed"
-                job.terminal_state = True
-                job.last_error_code = "enqueue_failed"
-                job.last_error_message = "Failed to enqueue scrape task; marked terminal."
-                session.add(job)
-                session.commit()
     return CompanyScrapeResult(
         requested_count=len(companies),
         queued_count=len(queued_job_ids),

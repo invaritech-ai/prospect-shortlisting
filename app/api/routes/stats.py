@@ -251,6 +251,8 @@ def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResul
     for job in stuck_jobs:
         job.status = "created"
         job.terminal_state = False
+        job.lock_token = None
+        job.lock_expires_at = None
         session.add(job)
     session.commit()
 
@@ -305,6 +307,8 @@ def reset_stuck_analysis_jobs(session: Session = Depends(get_session)) -> ResetS
     for job in stuck:
         job.state = AnalysisJobState.QUEUED
         job.started_at = None
+        job.lock_token = None
+        job.lock_expires_at = None
         session.add(job)
     session.commit()
 

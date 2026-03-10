@@ -8,15 +8,14 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.db.session import get_session
-from app.models import AnalysisJob, Company, Prompt, Run
-from app.models.pipeline import AnalysisJobState
+from app.models import Company, Prompt, Run
 from app.services.analysis_service import AnalysisService
-from app.services.queue_service import QueueService
+from app.services.outbox_service import OutboxService
 
 
 router = APIRouter(prefix="/v1", tags=["runs"])
 analysis_service = AnalysisService()
-queue_service = QueueService()
+outbox_service = OutboxService()
 
 
 def _as_run_read(run: Run, prompt_name: str) -> RunRead:
@@ -65,23 +64,16 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    enqueue_failed: list[AnalysisJob] = []
+    # Write outbox rows for all jobs in the same transaction as the runs/jobs,
+    # then commit everything atomically. analysis_service.create_runs only flushes.
     for job in jobs:
-        try:
-            queue_service.enqueue(task_type="analysis_job", payload={"analysis_job_id": str(job.id)})
-        except Exception:  # noqa: BLE001
-            enqueue_failed.append(job)
-
-    if enqueue_failed:
-        failed_ids = {j.id for j in enqueue_failed}
-        for job in enqueue_failed:
-            job.state = AnalysisJobState.DEAD
-            job.terminal_state = True
-            job.last_error_code = "enqueue_failed"
-            job.last_error_message = "Failed to enqueue analysis task; marked terminal."
-            session.add(job)
-        session.commit()
-        jobs = [j for j in jobs if j.id not in failed_ids]
+        outbox_service.write(
+            session=session,
+            job_id=job.id,
+            task_type="analysis_job",
+            payload={"analysis_job_id": str(job.id)},
+        )
+    session.commit()
 
     return RunCreateResult(
         requested_count=len(companies),

@@ -7,6 +7,7 @@ from app.models.pipeline import (
     CrawlArtifact,
     CrawlJob,
     JobEvent,
+    JobOutbox,
     Prompt,
     Run,
     Upload,
@@ -25,4 +26,5 @@ __all__ = [
     "AnalysisJob",
     "ClassificationResult",
     "JobEvent",
+    "JobOutbox",
 ]

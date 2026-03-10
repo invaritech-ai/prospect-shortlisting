@@ -6,11 +6,13 @@ import logging
 import os
 import ssl
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.request import Request, urlopen
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from sqlalchemy import or_
+from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, func, select
 
 from app.core.config import settings
@@ -153,7 +155,9 @@ class AnalysisService:
             run.total_jobs = sum(1 for job in queued_jobs if job.run_id == run.id)
             queued_runs.append(run)
 
-        session.commit()
+        # Flush (not commit) so the caller can atomically add outbox rows in
+        # the same transaction before committing.
+        session.flush()
         for run in queued_runs:
             session.refresh(run)
         for job in queued_jobs:
@@ -169,10 +173,43 @@ class AnalysisService:
         "analysis_context_empty",
     })
 
-    def run_analysis_job(self, *, session: Session, analysis_job_id: UUID) -> AnalysisJob:
+    def run_analysis_job(self, *, session: Session, analysis_job_id: UUID) -> AnalysisJob | None:
+        # Phase 1: CAS-claim the job atomically. Only one worker wins.
+        _ANALYSIS_LOCK_TTL = timedelta(minutes=15)
+        now = utcnow()
+        lock_token = str(uuid4())
+        session.execute(
+            sa_update(AnalysisJob)
+            .where(
+                col(AnalysisJob.id) == analysis_job_id,
+                col(AnalysisJob.terminal_state).is_(False),
+                col(AnalysisJob.state).in_([AnalysisJobState.QUEUED, AnalysisJobState.RUNNING]),
+                or_(
+                    col(AnalysisJob.lock_token).is_(None),
+                    col(AnalysisJob.lock_expires_at) < now,
+                ),
+            )
+            .values(
+                state=AnalysisJobState.RUNNING,
+                attempt_count=col(AnalysisJob.attempt_count) + 1,
+                lock_token=lock_token,
+                lock_expires_at=now + _ANALYSIS_LOCK_TTL,
+                last_error_code=None,
+                last_error_message=None,
+                updated_at=now,
+            )
+        )
+        session.commit()
         analysis_job = session.get(AnalysisJob, analysis_job_id)
-        if not analysis_job:
-            raise ValueError("Analysis job not found.")
+        if not analysis_job or analysis_job.lock_token != lock_token:
+            log_event(logger, "analysis_skipped_not_owner", analysis_job_id=str(analysis_job_id))
+            return None
+
+        # Set started_at only on the first attempt (CAS may fire multiple times on retry).
+        if not analysis_job.started_at:
+            analysis_job.started_at = now
+            session.add(analysis_job)
+            session.commit()
 
         run = session.get(Run, analysis_job.run_id)
         prompt = session.get(Prompt, run.prompt_id) if run else None
@@ -188,14 +225,6 @@ class AnalysisService:
             self._refresh_run_status(session=session, run_id=analysis_job.run_id)
             return analysis_job
 
-        analysis_job.attempt_count += 1
-        analysis_job.state = AnalysisJobState.RUNNING
-        analysis_job.started_at = analysis_job.started_at or utcnow()
-        analysis_job.last_error_code = None
-        analysis_job.last_error_message = None
-        session.add(analysis_job)
-        session.commit()
-
         latest_scrape = self._latest_completed_scrape_job(session=session, normalized_url=company.normalized_url)
         if latest_scrape is None:
             return self._fail_job(
@@ -203,6 +232,7 @@ class AnalysisService:
                 analysis_job=analysis_job,
                 error_code="scrape_missing",
                 error_message="No completed scrape job found for company.",
+                lock_token=lock_token,
             )
 
         pages = self._analysis_pages_for_job(session=session, job_id=latest_scrape.id)
@@ -213,6 +243,7 @@ class AnalysisService:
                 analysis_job=analysis_job,
                 error_code="analysis_context_empty",
                 error_message="No markdown content found for analysis.",
+                lock_token=lock_token,
             )
 
         rendered_prompt = self._render_prompt(
@@ -227,6 +258,7 @@ class AnalysisService:
                 analysis_job=analysis_job,
                 error_code=llm_error or "analysis_llm_failed",
                 error_message="Classification model returned no response.",
+                lock_token=lock_token,
             )
 
         payload = extract_json_object(raw_response)
@@ -239,6 +271,12 @@ class AnalysisService:
             "raw_response": raw_response,
         }
         evidence = payload.get("evidence")
+
+        # Re-verify ownership before persisting (guards against lock TTL expiry during LLM call).
+        session.refresh(analysis_job)
+        if analysis_job.lock_token != lock_token:
+            log_event(logger, "analysis_results_skipped_not_owner", analysis_job_id=str(analysis_job_id))
+            return None
 
         existing_result = session.exec(
             select(ClassificationResult).where(col(ClassificationResult.analysis_job_id) == analysis_job.id)
@@ -418,7 +456,22 @@ class AnalysisService:
         session.flush()
         return artifact
 
-    def _fail_job(self, *, session: Session, analysis_job: AnalysisJob, error_code: str, error_message: str) -> AnalysisJob:
+    def _fail_job(
+        self,
+        *,
+        session: Session,
+        analysis_job: AnalysisJob,
+        error_code: str,
+        error_message: str,
+        lock_token: str | None = None,
+    ) -> AnalysisJob:
+        # Re-verify ownership before writing (guards against lock TTL expiry mid-run).
+        if lock_token is not None:
+            session.refresh(analysis_job)
+            if analysis_job.lock_token != lock_token:
+                log_event(logger, "analysis_fail_skipped_not_owner", analysis_job_id=str(analysis_job.id))
+                return analysis_job
+
         is_permanent = error_code in self._PERMANENT_ERROR_CODES
         attempts_exhausted = analysis_job.attempt_count >= analysis_job.max_attempts
 
@@ -428,10 +481,12 @@ class AnalysisService:
             analysis_job.terminal_state = True
             analysis_job.finished_at = utcnow()
         else:
-            # Transient failure with retries remaining: put back to QUEUED.
-            # The worker will re-enqueue this job for another attempt.
+            # Transient failure with retries remaining: put back to QUEUED and clear the
+            # lock so the next worker can claim it immediately without waiting for TTL expiry.
             analysis_job.state = AnalysisJobState.QUEUED
             analysis_job.terminal_state = False
+            analysis_job.lock_token = None
+            analysis_job.lock_expires_at = None
 
         analysis_job.last_error_code = error_code
         analysis_job.last_error_message = error_message

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import multiprocessing
 import signal
 import time
 import traceback
 from urllib.parse import urlparse, urlunparse
-from uuid import UUID
+from uuid import UUID, uuid4
+
+from redis import Redis
 
 from sqlmodel import Session, col, select
 
@@ -18,8 +21,11 @@ from app.models import AnalysisJob, ScrapeJob
 from app.models.pipeline import AnalysisJobState
 from app.services.analysis_service import AnalysisService
 from app.services.artifact_cleanup_service import ArtifactCleanupService
+from app.services.outbox_dispatcher import OutboxDispatcher
+from app.services.outbox_service import OutboxService
 from app.services.queue_service import QueueService, QueueTask
 from app.services.scrape_service import ScrapeService
+from app.services.watchdog import WatchdogThread
 
 
 logger = logging.getLogger(__name__)
@@ -40,27 +46,41 @@ def _redact_url(url: str) -> str:
 
 
 class Worker:
-    def __init__(self, *, cleanup_enabled: bool = True) -> None:
+    def __init__(self, *, consumer_name: str = "worker-standalone", cleanup_enabled: bool = True) -> None:
         self._running = True
-        self._queue = QueueService()
+        self._queue = QueueService(consumer_name=consumer_name)
         self._scrape_service = ScrapeService()
         self._analysis_service = AnalysisService()
         self._cleanup_service = ArtifactCleanupService()
+        self._outbox_service = OutboxService()
         self._last_cleanup_at = 0.0
         self._cleanup_enabled = cleanup_enabled
+        self._outbox_dispatcher: OutboxDispatcher | None = None
+        self._watchdog: WatchdogThread | None = None
 
     def stop(self, *_: object) -> None:
         self._running = False
+        if self._outbox_dispatcher is not None:
+            self._outbox_dispatcher.stop()
+        if self._watchdog is not None:
+            self._watchdog.stop()
 
     def run(self) -> int:
         signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
 
+        if self._cleanup_enabled:
+            self._outbox_dispatcher = OutboxDispatcher(engine=engine)
+            self._outbox_dispatcher.start()
+            self._watchdog = WatchdogThread()
+            self._watchdog.start()
+
         log_event(
             logger,
             "worker_started",
-            queue_key=self._queue.queue_key,
+            stream_key=self._queue.queue_key,
             redis_url=_redact_url(settings.redis_url),
+            cleanup_enabled=self._cleanup_enabled,
         )
         while self._running:
             self._maybe_cleanup()
@@ -72,7 +92,9 @@ class Worker:
                 continue
             if task is None:
                 continue
-            self._handle_task(task)
+            success = self._handle_task(task)
+            if success and task._stream_msg_id:
+                self._queue.ack(task._stream_msg_id)
         log_event(logger, "worker_stopped")
         return 0
 
@@ -100,8 +122,21 @@ class Worker:
             )
         except Exception as exc:  # noqa: BLE001
             log_event(logger, "worker_artifact_cleanup_failed", error=str(exc))
+        try:
+            with Session(engine) as session:
+                deleted = self._outbox_service.delete_published(session=session, ttl_days=7)
+            if deleted:
+                log_event(logger, "worker_outbox_cleanup_done", deleted=deleted)
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "worker_outbox_cleanup_failed", error=str(exc))
 
-    def _handle_task(self, task: QueueTask) -> None:
+    def _handle_task(self, task: QueueTask) -> bool:
+        """Dispatch task to the appropriate handler.
+
+        Returns ``True`` on clean exit (success or graceful terminal failure),
+        ``False`` on an unhandled exception.  The caller ACKs only on ``True``,
+        leaving failed messages in the PEL for PEL reaper redelivery.
+        """
         try:
             if task.task_type == "scrape_step1":
                 self._run_step1(task)
@@ -113,6 +148,7 @@ class Worker:
                 self._run_analysis_job(task)
             else:
                 log_event(logger, "worker_task_unknown", task_id=task.task_id, task_type=task.task_type)
+            return True
         except Exception as exc:  # noqa: BLE001
             log_event(
                 logger,
@@ -123,6 +159,7 @@ class Worker:
                 error=str(exc),
                 traceback=traceback.format_exc(),
             )
+            return False
 
     def _run_step1(self, task: QueueTask) -> None:
         job_id = self._payload_job_id(task)
@@ -186,6 +223,10 @@ class Worker:
                 log_event(logger, "worker_job_missing", task_id=task.task_id, analysis_job_id=str(analysis_job_id))
                 return
             result = self._analysis_service.run_analysis_job(session=session, analysis_job_id=analysis_job_id)
+            if result is None:
+                # CAS miss: another worker owns this job; do not re-enqueue.
+                log_event(logger, "worker_analysis_skipped_not_owner", task_id=task.task_id, analysis_job_id=str(analysis_job_id))
+                return
             log_event(
                 logger,
                 "worker_analysis_done",
@@ -230,8 +271,10 @@ def main() -> int:
     configure_logging()
     concurrency = max(1, settings.worker_concurrency)
     if concurrency == 1:
-        _recover_stuck_jobs(QueueService())
-        return Worker().run()
+        queue = QueueService(consumer_name="worker-0")
+        _migrate_list_to_stream(queue)
+        _recover_stuck_jobs(queue)
+        return Worker(consumer_name="worker-0", cleanup_enabled=True).run()
     return WorkerSupervisor(concurrency=concurrency).run()
 
 
@@ -242,8 +285,9 @@ def _run_worker_process(slot: int, *, cleanup_enabled: bool) -> int:
     # must establish its own connections. close=False avoids closing sockets
     # that the parent process still owns.
     engine.dispose(close=False)
-    log_event(logger, "worker_process_started", slot=slot, cleanup_enabled=cleanup_enabled)
-    worker = Worker(cleanup_enabled=cleanup_enabled)
+    consumer_name = f"worker-{slot}"
+    log_event(logger, "worker_process_started", slot=slot, cleanup_enabled=cleanup_enabled, consumer_name=consumer_name)
+    worker = Worker(consumer_name=consumer_name, cleanup_enabled=cleanup_enabled)
     return worker.run()
 
 
@@ -270,6 +314,8 @@ def _recover_stuck_jobs(queue: QueueService) -> None:
         for job in stuck_scrape:
             job.status = "created"
             job.terminal_state = False
+            job.lock_token = None
+            job.lock_expires_at = None
             session.add(job)
         # Collect IDs before commit expires the objects
         stuck_scrape_ids = [str(job.id) for job in stuck_scrape]
@@ -289,6 +335,8 @@ def _recover_stuck_jobs(queue: QueueService) -> None:
         for job in stuck_analysis:
             job.state = AnalysisJobState.QUEUED
             job.started_at = None
+            job.lock_token = None
+            job.lock_expires_at = None
             session.add(job)
         # Collect IDs before commit expires the objects
         stuck_analysis_ids = [str(job.id) for job in stuck_analysis]
@@ -308,12 +356,49 @@ def _recover_stuck_jobs(queue: QueueService) -> None:
     )
 
 
+def _migrate_list_to_stream(queue: QueueService) -> None:
+    """One-time migration: drain the old Redis list (jobs:queue) into the stream.
+
+    Guarded by a Redis SETNX key so it runs exactly once across restarts.
+    Safe to call on every startup — the guard makes it a no-op after the first run.
+    """
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    lock_key = "jobs:list_migration_done"
+    acquired = redis.setnx(lock_key, "1")
+    if not acquired:
+        return  # already migrated
+
+    old_key = settings.redis_queue_key
+    migrated = 0
+    errors = 0
+    while True:
+        raw = redis.lpop(old_key)
+        if raw is None:
+            break
+        try:
+            data = json.loads(raw)
+            redis.xadd(
+                queue._stream_key,  # noqa: SLF001
+                {
+                    "task_id": data.get("task_id") or str(uuid4()),
+                    "task_type": data.get("task_type", ""),
+                    "payload_json": json.dumps(data.get("payload", {}), ensure_ascii=True),
+                },
+            )
+            migrated += 1
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "list_migration_entry_error", error=str(exc), raw=str(raw)[:200])
+            errors += 1
+
+    log_event(logger, "list_to_stream_migrated", migrated=migrated, errors=errors)
+
+
 class WorkerSupervisor:
     def __init__(self, *, concurrency: int) -> None:
         self._concurrency = concurrency
         self._running = True
         self._children: dict[int, multiprocessing.Process] = {}
-        self._queue = QueueService()
+        self._queue = QueueService(consumer_name="worker-supervisor")
 
     def stop(self, *_: object) -> None:
         self._running = False
@@ -323,6 +408,7 @@ class WorkerSupervisor:
         signal.signal(signal.SIGTERM, self.stop)
         log_event(logger, "worker_supervisor_started", concurrency=self._concurrency)
 
+        _migrate_list_to_stream(self._queue)
         _recover_stuck_jobs(self._queue)
 
         for slot in range(self._concurrency):

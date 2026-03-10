@@ -6,7 +6,9 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Numeric, Text, UniqueConstraint
+from sqlalchemy import Index, JSON, Column, Numeric, Text, UniqueConstraint
+from sqlalchemy import text as sa_text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 
@@ -172,6 +174,11 @@ class AnalysisJob(SQLModel, table=True):
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
 
+    # Idempotency / ownership lock — set atomically at job-start; guards against
+    # duplicate workers writing results when the same task is delivered twice.
+    lock_token: str | None = Field(default=None, max_length=64)
+    lock_expires_at: datetime | None = Field(default=None)
+
     created_at: datetime = Field(default_factory=utcnow, index=True)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -199,6 +206,33 @@ class CompanyFeedback(SQLModel, table=True):
     comment: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class JobOutbox(SQLModel, table=True):
+    __tablename__ = "job_outbox"
+    __table_args__ = (
+        Index(
+            "ix_job_outbox_pending",
+            "created_at",
+            postgresql_where=sa_text("published_at IS NULL"),
+        ),
+        Index(
+            "uq_job_outbox_pending",
+            "job_id",
+            "task_type",
+            unique=True,
+            postgresql_where=sa_text("published_at IS NULL"),
+        ),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    job_id: UUID = Field(nullable=False)
+    task_type: str = Field(max_length=128, nullable=False)
+    payload_json: dict[str, Any] = Field(sa_column=Column(JSONB, nullable=False))
+    created_at: datetime = Field(default_factory=utcnow, nullable=False)
+    published_at: datetime | None = Field(default=None)
+    stream_id: str | None = Field(default=None, max_length=128)
+    publish_attempts: int = Field(default=0, nullable=False)
 
 
 class JobEvent(SQLModel, table=True):

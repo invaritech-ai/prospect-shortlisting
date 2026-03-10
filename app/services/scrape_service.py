@@ -9,14 +9,17 @@ import socket
 import ssl
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from playwright.sync_api import sync_playwright
 from scrapling import AsyncFetcher, DynamicFetcher, Selector
+from sqlalchemy import or_
+from sqlalchemy import update as sa_update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
@@ -444,7 +447,9 @@ class ScrapeService:
         )
         session.add(job)
         try:
-            session.commit()
+            # Flush (not commit) so the caller can atomically add an outbox row
+            # in the same transaction before committing.
+            session.flush()
         except IntegrityError:
             session.rollback()
             # A concurrent request won the race and created an active job for
@@ -466,29 +471,50 @@ class ScrapeService:
         return job
 
     async def run_step1(self, *, engine: Engine, job_id: Any) -> None:
-        # Phase 1: mark running — short session, released before any I/O.
+        # Phase 1: CAS-claim the job atomically — short session, released before any I/O.
+        # Only one worker wins; the loser finds its token absent and exits.
+        _STEP1_LOCK_TTL = timedelta(minutes=30)
+        now = utcnow()
+        lock_token = str(uuid4())
         with Session(engine) as session:
+            session.execute(
+                sa_update(ScrapeJob)
+                .where(
+                    col(ScrapeJob.id) == job_id,
+                    col(ScrapeJob.terminal_state).is_(False),
+                    col(ScrapeJob.status).in_(["created", "running_step1"]),
+                    or_(
+                        col(ScrapeJob.lock_token).is_(None),
+                        col(ScrapeJob.lock_expires_at) < now,
+                    ),
+                )
+                .values(
+                    status="running_step1",
+                    stage1_status="running",
+                    terminal_state=False,
+                    step1_started_at=now,
+                    lock_token=lock_token,
+                    lock_expires_at=now + _STEP1_LOCK_TTL,
+                    updated_at=now,
+                )
+            )
+            session.commit()
+            # Verify we won the CAS: only our worker sets this exact token.
             job = session.get(ScrapeJob, job_id)
-            if not job:
+            if not job or job.lock_token != lock_token:
+                log_event(logger, "step1_skipped_not_owner", job_id=str(job_id))
                 return
             domain = job.domain
             normalized_url = job.normalized_url
             js_fallback = job.js_fallback
             include_sitemap = job.include_sitemap
             classify_model = job.classify_model
-            job.status = "running_step1"
-            job.stage1_status = "running"
-            job.terminal_state = False
-            job.step1_started_at = utcnow()
-            job.updated_at = utcnow()
-            session.add(job)
-            session.commit()
 
         # Phase 2: DNS check — no DB connection held.
         if not await resolve_domain(domain):
             with Session(engine) as session:
                 job = session.get(ScrapeJob, job_id)
-                if job:
+                if job and job.lock_token == lock_token:
                     job.status = "step1_failed"
                     job.stage1_status = "failed"
                     job.stage2_status = "skipped"
@@ -575,7 +601,8 @@ class ScrapeService:
         # Phase 5: write all results — short session.
         with Session(engine) as session:
             job = session.get(ScrapeJob, job_id)
-            if not job:
+            if not job or job.lock_token != lock_token:
+                log_event(logger, "step1_results_skipped_not_owner", job_id=str(job_id))
                 return
             for page_data in fetched_pages:
                 if page_data["success"]:
@@ -639,21 +666,40 @@ class ScrapeService:
             )
 
     def run_step2(self, *, engine: Engine, job_id: Any) -> None:
-        # Phase 1: mark running + load page data — short session, released before I/O.
+        # Phase 1: CAS-claim the job atomically — short session, released before any I/O.
+        _STEP2_LOCK_TTL = timedelta(minutes=30)
+        now = utcnow()
+        lock_token = str(uuid4())
         with Session(engine) as session:
+            session.execute(
+                sa_update(ScrapeJob)
+                .where(
+                    col(ScrapeJob.id) == job_id,
+                    col(ScrapeJob.terminal_state).is_(False),
+                    col(ScrapeJob.status).in_(["step1_completed", "running_step2"]),
+                    or_(
+                        col(ScrapeJob.lock_token).is_(None),
+                        col(ScrapeJob.lock_expires_at) < now,
+                    ),
+                )
+                .values(
+                    status="running_step2",
+                    stage2_status="running",
+                    step2_started_at=now,
+                    lock_token=lock_token,
+                    lock_expires_at=now + _STEP2_LOCK_TTL,
+                    updated_at=now,
+                )
+            )
+            session.commit()
             job = session.get(ScrapeJob, job_id)
-            if not job:
+            if not job or job.lock_token != lock_token:
+                log_event(logger, "step2_skipped_not_owner", job_id=str(job_id))
                 return
             domain = job.domain
             enable_ocr = job.enable_ocr
             ocr_model = job.ocr_model
             general_model = job.general_model
-            job.status = "running_step2"
-            job.stage2_status = "running"
-            job.step2_started_at = utcnow()
-            job.updated_at = utcnow()
-            session.add(job)
-            session.commit()
 
             # Read all page data while the session is still open.
             pages_raw = list(
@@ -740,6 +786,10 @@ class ScrapeService:
         # Phase 3: write all results — short session.
         with Session(engine) as session:
             now = utcnow()
+            job = session.get(ScrapeJob, job_id)
+            if not job or job.lock_token != lock_token:
+                log_event(logger, "step2_results_skipped_not_owner", job_id=str(job_id))
+                return
             for update_data in page_updates:
                 page = session.get(ScrapePage, update_data["id"])
                 if page:
@@ -747,10 +797,6 @@ class ScrapeService:
                     page.markdown_content = update_data["markdown_content"]
                     page.updated_at = now
                     session.add(page)
-
-            job = session.get(ScrapeJob, job_id)
-            if not job:
-                return
             job.markdown_pages_count = markdown_pages
             job.ocr_images_processed_count = ocr_images
             job.llm_used_count = llm_used

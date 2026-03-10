@@ -58,6 +58,11 @@ class ScrapeJob(SQLModel, table=True):
     last_error_code: Optional[str] = Field(default=None)
     last_error_message: Optional[str] = Field(default=None)
 
+    # Idempotency / ownership lock — set atomically at job-start; guards against
+    # duplicate workers writing results when the same task is delivered twice.
+    lock_token: Optional[str] = Field(default=None, max_length=64)
+    lock_expires_at: Optional[datetime] = Field(default=None)
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     step1_started_at: Optional[datetime] = Field(default=None)
