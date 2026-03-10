@@ -54,8 +54,22 @@ export type CompanyListItem = {
   latest_scrape_stage1_status: string | null
   latest_scrape_stage2_status: string | null
   latest_analysis_run_id: string | null
+  latest_analysis_job_id: string | null
   latest_analysis_status: string | null
   latest_analysis_terminal: boolean | null
+  feedback_thumbs: 'up' | 'down' | null
+  feedback_comment: string | null
+}
+
+export type FeedbackUpsert = {
+  thumbs: 'up' | 'down' | null
+  comment?: string | null
+}
+
+export type FeedbackRead = {
+  thumbs: 'up' | 'down' | null
+  comment: string | null
+  updated_at: string
 }
 
 export type CompanyList = {

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.analysis import router as analysis_router
+from app.api.routes.companies import router as companies_router
 from app.api.routes.prompts import router as prompts_router
 from app.api.routes.runs import router as runs_router
 from app.api.routes.scrape_jobs import router as scrape_jobs_router
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
         return {"status": "ready"}
 
     app.include_router(analysis_router)
+    app.include_router(companies_router)
     app.include_router(prompts_router)
     app.include_router(runs_router)
     app.include_router(scrape_jobs_router)

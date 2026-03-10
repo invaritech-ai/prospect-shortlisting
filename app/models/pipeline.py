@@ -191,6 +191,16 @@ class ClassificationResult(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class CompanyFeedback(SQLModel, table=True):
+    __tablename__ = "company_feedback"
+
+    company_id: UUID = Field(foreign_key="companies.id", primary_key=True)
+    thumbs: str | None = Field(default=None, max_length=8)  # 'up' | 'down'
+    comment: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class JobEvent(SQLModel, table=True):
     __tablename__ = "job_events"
 

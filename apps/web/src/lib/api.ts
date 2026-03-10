@@ -8,6 +8,8 @@ import type {
   CompanyScrapeResult,
   DecisionFilter,
   DrainQueueResult,
+  FeedbackRead,
+  FeedbackUpsert,
   JobEnqueueResult,
   PromptCreate,
   PromptRead,
@@ -200,6 +202,14 @@ export async function getCompanyCounts(): Promise<CompanyCounts> {
 
 export function getCompaniesExportUrl(): string {
   return `${API_BASE_URL}/v1/companies/export.csv`
+}
+
+export async function upsertCompanyFeedback(companyId: string, payload: FeedbackUpsert): Promise<FeedbackRead> {
+  return request<FeedbackRead>(`/v1/companies/${companyId}/feedback`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function listCompanyIds(

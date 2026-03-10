@@ -165,3 +165,29 @@ export function IconArrowLeft({ className = '', size = 20 }: IconProps) {
     </svg>
   )
 }
+
+export function IconThumbUp({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M7 9l3-6a2 2 0 0 1 2 2v3h4a1 1 0 0 1 1 1.1l-1 5a1 1 0 0 1-1 .9H7V9z" />
+      <rect x="3" y="9" width="4" height="8" rx="1" />
+    </svg>
+  )
+}
+
+export function IconThumbDown({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M13 11l-3 6a2 2 0 0 1-2-2v-3H4a1 1 0 0 1-1-1.1l1-5A1 1 0 0 1 5 5h8v6z" />
+      <rect x="13" y="3" width="4" height="8" rx="1" />
+    </svg>
+  )
+}
+
+export function IconExternalLink({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M11 3h6v6M17 3l-8 8M8 5H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-4" />
+    </svg>
+  )
+}

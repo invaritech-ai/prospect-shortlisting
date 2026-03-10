@@ -25,6 +25,7 @@ import {
   scrapeSelectedCompanies,
   updatePrompt,
   uploadFile,
+  upsertCompanyFeedback,
 } from './lib/api'
 import type {
   AnalysisJobDetailRead,
@@ -51,6 +52,7 @@ import { AnalysisRunsView } from './components/views/AnalysisRunsView'
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
 import { PromptLibraryPanel } from './components/panels/PromptLibraryPanel'
 import { AnalysisDetailPanel } from './components/panels/AnalysisDetailPanel'
+import { CompanyReviewPanel } from './components/panels/CompanyReviewPanel'
 
 // UI
 import { Toast } from './components/ui/Toast'
@@ -127,6 +129,13 @@ function App() {
   const [analysisDetail, setAnalysisDetail] = useState<AnalysisJobDetailRead | null>(null)
   const [isAnalysisDetailLoading, setIsAnalysisDetailLoading] = useState(false)
   const [analysisDetailError, setAnalysisDetailError] = useState('')
+
+  // ── Company review panel ──────────────────────────────────────────────────
+  const [reviewedCompany, setReviewedCompany] = useState<CompanyListItem | null>(null)
+  const [companyReviewDetail, setCompanyReviewDetail] = useState<AnalysisJobDetailRead | null>(null)
+  const [isCompanyReviewLoading, setIsCompanyReviewLoading] = useState(false)
+  const [companyReviewError, setCompanyReviewError] = useState('')
+  const [isFeedbackSaving, setIsFeedbackSaving] = useState(false)
 
   // ── Markdown panel ───────────────────────────────────────────────────────
   const [markdownJob, setMarkdownJob] = useState<ScrapeJobRead | null>(null)
@@ -675,6 +684,40 @@ function App() {
     setRunJobsError(''); setAnalysisDetailError('')
   }
 
+  // Company review
+  const openCompanyReview = async (company: CompanyListItem) => {
+    setReviewedCompany(company)
+    setCompanyReviewDetail(null)
+    setCompanyReviewError('')
+    if (company.latest_analysis_job_id) {
+      setIsCompanyReviewLoading(true)
+      try {
+        const detail = await getAnalysisJobDetail(company.latest_analysis_job_id)
+        setCompanyReviewDetail(detail)
+      } catch (err) { setCompanyReviewError(parseError(err)) }
+      finally { setIsCompanyReviewLoading(false) }
+    }
+  }
+
+  const closeCompanyReview = () => {
+    setReviewedCompany(null)
+    setCompanyReviewDetail(null)
+    setCompanyReviewError('')
+  }
+
+  const saveFeedback = async (thumbs: 'up' | 'down' | null, comment: string) => {
+    if (!reviewedCompany) return
+    setIsFeedbackSaving(true)
+    try {
+      await upsertCompanyFeedback(reviewedCompany.id, { thumbs, comment: comment || null })
+      companyCacheRef.current = {}
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+      setReviewedCompany((prev) => prev ? { ...prev, feedback_thumbs: thumbs, feedback_comment: comment || null } : prev)
+      setNotice('Feedback saved.')
+    } catch (err) { setError(parseError(err)) }
+    finally { setIsFeedbackSaving(false) }
+  }
+
   const onDrainQueue = async () => {
     if (!window.confirm('Cancel all queued jobs? This removes them from Redis and marks them as cancelled.')) return
     setError(''); setNotice(''); setIsDrainingQueue(true)
@@ -768,6 +811,7 @@ function App() {
             onSetIsDragActive={setIsDragActive}
             onUpload={onUpload}
             onToggleUtilities={() => setUtilitiesOpen((v) => !v)}
+            onReviewCompany={(c) => void openCompanyReview(c)}
           />
         )}
 
@@ -887,6 +931,16 @@ function App() {
         onClose={closeRunDrawer}
         onInspectJob={(job) => void openAnalysisDetail(job)}
         onBackFromDetail={() => { setAnalysisDetail(null); setAnalysisDetailError('') }}
+      />
+
+      <CompanyReviewPanel
+        company={reviewedCompany}
+        detail={companyReviewDetail}
+        isLoading={isCompanyReviewLoading}
+        error={companyReviewError}
+        isSaving={isFeedbackSaving}
+        onClose={closeCompanyReview}
+        onSave={(thumbs, comment) => void saveFeedback(thumbs, comment)}
       />
 
       <Toast error={error} notice={notice} />

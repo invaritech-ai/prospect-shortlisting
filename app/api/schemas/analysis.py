@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class AnalysisRunJobRead(BaseModel):
@@ -21,6 +21,24 @@ class AnalysisRunJobRead(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class FeedbackUpsert(BaseModel):
+    thumbs: str | None = None  # 'up' | 'down' | None
+    comment: str | None = None
+
+    @field_validator("thumbs")
+    @classmethod
+    def validate_thumbs(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("up", "down"):
+            raise ValueError("thumbs must be 'up', 'down', or null")
+        return v
+
+
+class FeedbackRead(BaseModel):
+    thumbs: str | None = None
+    comment: str | None = None
+    updated_at: datetime
 
 
 class AnalysisJobDetailRead(BaseModel):

@@ -31,6 +31,7 @@ from app.models import (
     AnalysisJob,
     ClassificationResult,
     Company,
+    CompanyFeedback,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
@@ -93,6 +94,7 @@ def _latest_analysis_subquery():
     return (
         select(
             AnalysisJob.company_id.label("company_id"),
+            AnalysisJob.id.label("analysis_job_id"),
             AnalysisJob.run_id.label("run_id"),
             cast(AnalysisJob.state, String()).label("state"),
             AnalysisJob.terminal_state.label("terminal_state"),
@@ -311,11 +313,15 @@ def list_companies(
             latest_analysis.c.run_id,
             latest_analysis.c.state,
             latest_analysis.c.terminal_state,
+            latest_analysis.c.analysis_job_id,
+            CompanyFeedback.thumbs,
+            CompanyFeedback.comment,
         )
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
+        .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
     if normalized_filter == "unlabeled":
         statement = statement.where(decision_lower == "")
@@ -379,6 +385,9 @@ def list_companies(
             latest_analysis_run_id=row[14],
             latest_analysis_status=str(row[15]) if row[15] is not None else None,
             latest_analysis_terminal=row[16],
+            latest_analysis_job_id=row[17],
+            feedback_thumbs=str(row[18]) if row[18] is not None else None,
+            feedback_comment=str(row[19]) if row[19] is not None else None,
         )
         for row in page_rows
     ]

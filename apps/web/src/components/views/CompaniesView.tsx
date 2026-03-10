@@ -17,6 +17,10 @@ import {
   IconUpload,
   IconGlobe,
   IconZap,
+  IconEye,
+  IconThumbUp,
+  IconThumbDown,
+  IconExternalLink,
 } from '../ui/icons'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -63,6 +67,7 @@ interface CompaniesViewProps {
   onSetIsDragActive: (active: boolean) => void
   onUpload: (event: FormEvent<HTMLFormElement>) => void
   onToggleUtilities: () => void
+  onReviewCompany: (company: CompanyListItem) => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -296,12 +301,26 @@ function IngestPanel({
 
 // ── Mobile card ────────────────────────────────────────────────────────────
 
+function FeedbackBadge({ thumbs }: { thumbs: 'up' | 'down' | null }) {
+  if (!thumbs) return null
+  return thumbs === 'up' ? (
+    <span className="flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600">
+      <IconThumbUp size={10} />
+    </span>
+  ) : (
+    <span className="flex items-center gap-0.5 rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">
+      <IconThumbDown size={10} />
+    </span>
+  )
+}
+
 function CompanyCard({
   item,
   isSelected,
   onToggle,
   onScrape,
   onClassify,
+  onReview,
   actionState,
   analysisActionState,
   selectedPrompt,
@@ -311,6 +330,7 @@ function CompanyCard({
   onToggle: () => void
   onScrape: () => void
   onClassify: () => void
+  onReview: () => void
   actionState: string
   analysisActionState: string
   selectedPrompt: PromptRead | null
@@ -321,21 +341,28 @@ function CompanyCard({
   const canClassify = !!selectedPrompt?.enabled && item.latest_scrape_status === 'completed' && !isAnalysing
 
   return (
-    <div className={`oc-company-card ${isSelected ? 'ring-1 ring-[var(--oc-accent)]' : ''}`}>
+    <div className={`oc-company-card ${isSelected ? 'ring-1 ring-(--oc-accent)' : ''}`}>
       <div className="flex items-start gap-2.5">
         <input
           type="checkbox"
           checked={isSelected}
           onChange={onToggle}
-          className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-[var(--oc-border)] accent-[var(--oc-accent)]"
+          className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-(--oc-border) accent-(--oc-accent)"
         />
         <div className="min-w-0 flex-1">
-          <p
-            className="truncate font-semibold text-[var(--oc-accent-ink)]"
-            title={item.domain}
-          >
-            {item.domain}
-          </p>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <a
+              href={`https://${item.domain}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="truncate font-semibold text-(--oc-accent-ink) hover:underline"
+              title={item.domain}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {item.domain}
+            </a>
+            <IconExternalLink size={11} className="shrink-0 text-(--oc-muted) opacity-50" />
+          </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {item.latest_decision ? (
               <span className={`oc-badge ${decisionBgClass(item.latest_decision)}`}>
@@ -344,20 +371,16 @@ function CompanyCard({
             ) : (
               <Badge variant="neutral">No decision</Badge>
             )}
+            <FeedbackBadge thumbs={item.feedback_thumbs} />
             <Badge variant={scrapeBadge.variant} title={scrapeBadge.title}>{scrapeBadge.label}</Badge>
             {(actionState || analysisActionState) && (
-              <span className="text-[11px] text-[var(--oc-muted)]">{analysisActionState || actionState}</span>
+              <span className="text-[11px] text-(--oc-muted)">{analysisActionState || actionState}</span>
             )}
           </div>
         </div>
       </div>
       <div className="mt-2.5 flex items-center gap-2">
-        <Button
-          variant="primary"
-          size="xs"
-          onClick={onScrape}
-          disabled={isScraping}
-        >
+        <Button variant="primary" size="xs" onClick={onScrape} disabled={isScraping}>
           <IconGlobe size={13} />
           {isScraping ? 'Scraping…' : 'Scrape'}
         </Button>
@@ -370,6 +393,10 @@ function CompanyCard({
         >
           <IconZap size={13} />
           {isAnalysing ? 'Classifying…' : 'Classify'}
+        </Button>
+        <Button variant="ghost" size="xs" onClick={onReview} title="Review AI analysis & give feedback">
+          <IconEye size={13} />
+          Review
         </Button>
       </div>
     </div>
@@ -420,6 +447,7 @@ export function CompaniesView({
   onSetIsDragActive,
   onUpload,
   onToggleUtilities,
+  onReviewCompany,
 }: CompaniesViewProps) {
   // Derived state
   const effectiveTotal = companies?.total ?? companyCounts?.total ?? null
@@ -561,6 +589,7 @@ export function CompaniesView({
                 onToggle={() => onToggleCompanySelection(item.id)}
                 onScrape={() => onScrape(item)}
                 onClassify={() => onClassify(item)}
+                onReview={() => onReviewCompany(item)}
                 actionState={actionState[item.id] ?? ''}
                 analysisActionState={analysisActionState[item.id] ?? ''}
                 selectedPrompt={selectedPrompt}
@@ -569,8 +598,8 @@ export function CompaniesView({
           </div>
 
           {/* Desktop: table */}
-          <div className="hidden md:block overflow-x-auto rounded-2xl border border-[var(--oc-border)] bg-white">
-            <table className="oc-compact-table min-w-[880px]">
+          <div className="hidden md:block overflow-x-auto rounded-2xl border border-(--oc-border) bg-white">
+            <table className="oc-compact-table min-w-240">
               <thead>
                 <tr>
                   <th className="w-10">
@@ -578,13 +607,13 @@ export function CompaniesView({
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={onToggleVisibleSelection}
-                      className="h-4 w-4 rounded border-[var(--oc-border)] accent-[var(--oc-accent)]"
+                      className="h-4 w-4 rounded border-(--oc-border) accent-(--oc-accent)"
                     />
                   </th>
                   <th>Domain</th>
                   <th>Decision</th>
                   <th>Scrape</th>
-                  <th className="w-[240px]">Actions</th>
+                  <th className="w-70">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -601,22 +630,33 @@ export function CompaniesView({
                           type="checkbox"
                           checked={selectedCompanyIds.includes(item.id)}
                           onChange={() => onToggleCompanySelection(item.id)}
-                          className="h-4 w-4 rounded border-[var(--oc-border)] accent-[var(--oc-accent)]"
+                          className="h-4 w-4 rounded border-(--oc-border) accent-(--oc-accent)"
                         />
                       </td>
                       <td title={`${item.domain}\n${item.raw_url}\n${item.normalized_url}`}>
-                        <span className="block max-w-[360px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)]">
-                          {item.domain}
-                        </span>
+                        <div className="flex items-center gap-1.5 max-w-90">
+                          <a
+                            href={`https://${item.domain}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="truncate font-semibold text-(--oc-accent-ink) hover:underline"
+                          >
+                            {item.domain}
+                          </a>
+                          <IconExternalLink size={11} className="shrink-0 text-(--oc-muted) opacity-40" />
+                        </div>
                       </td>
                       <td>
-                        {item.latest_decision ? (
-                          <span className={`oc-badge ${decisionBgClass(item.latest_decision)}`}>
-                            {item.latest_decision}
-                          </span>
-                        ) : (
-                          <Badge variant="neutral">No decision</Badge>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {item.latest_decision ? (
+                            <span className={`oc-badge ${decisionBgClass(item.latest_decision)}`}>
+                              {item.latest_decision}
+                            </span>
+                          ) : (
+                            <Badge variant="neutral">No decision</Badge>
+                          )}
+                          <FeedbackBadge thumbs={item.feedback_thumbs} />
+                        </div>
                       </td>
                       <td title={scrapeBadge.title}>
                         <Badge variant={scrapeBadge.variant}>{scrapeBadge.label}</Badge>
@@ -639,9 +679,18 @@ export function CompaniesView({
                           >
                             {isAnalysing ? 'Classifying…' : 'Classify'}
                           </Button>
-                          <span className="text-[11px] text-[var(--oc-muted)]">
+                          <span className="text-[11px] text-(--oc-muted)">
                             {analysisActionState[item.id] || actionState[item.id] || ''}
                           </span>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => onReviewCompany(item)}
+                            title="Review AI analysis & give feedback"
+                          >
+                            <IconEye size={13} />
+                            Review
+                          </Button>
                         </div>
                       </td>
                     </tr>
