@@ -11,6 +11,7 @@ import {
   getAnalysisJobDetail,
   getCompaniesExportUrl,
   getCompanyCounts,
+  getLetterCounts,
   getStats,
   listCompanies,
   listCompanyIds,
@@ -86,6 +87,8 @@ function App() {
   const [pageSize, setPageSize] = useState(DEFAULT_COMPANY_PAGE_SIZE)
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('all')
   const [scrapeFilter, setScrapeFilter] = useState<ScrapeFilter>('all')
+  const [letterFilter, setLetterFilter] = useState<string | null>(null)
+  const [letterCounts, setLetterCounts] = useState<Record<string, number>>({})
   const [isCompaniesLoading, setIsCompaniesLoading] = useState(false)
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([])
   const [companyCounts, setCompanyCounts] = useState<CompanyCounts | null>(null)
@@ -192,17 +195,17 @@ function App() {
   // ── Company loading ────────────────────────────────────────────────────
 
   const cacheKeyFor = useCallback(
-    (offset: number, limit: number, df: DecisionFilter, sf: ScrapeFilter) =>
-      `${df}:${sf}:${limit}:${offset}`,
+    (offset: number, limit: number, df: DecisionFilter, sf: ScrapeFilter, lf: string | null = null) =>
+      `${df}:${sf}:${lf ?? ''}:${limit}:${offset}`,
     [],
   )
 
   const prefetchCompanies = useCallback(
-    async (offset: number, limit: number, df: DecisionFilter, sf: ScrapeFilter) => {
-      const key = cacheKeyFor(offset, limit, df, sf)
+    async (offset: number, limit: number, df: DecisionFilter, sf: ScrapeFilter, lf: string | null = null) => {
+      const key = cacheKeyFor(offset, limit, df, sf, lf)
       if (companyCacheRef.current[key]) return
       try {
-        const response = await listCompanies(limit, offset, df, false, sf)
+        const response = await listCompanies(limit, offset, df, false, sf, lf)
         companyCacheRef.current[key] = response
       } catch { /* silent */ }
     },
@@ -216,30 +219,31 @@ function App() {
       df: DecisionFilter = decisionFilter,
       sf: ScrapeFilter = scrapeFilter,
       forceRefresh = false,
+      lf: string | null = letterFilter,
     ) => {
-      const key = cacheKeyFor(offset, nextLimit, df, sf)
+      const key = cacheKeyFor(offset, nextLimit, df, sf, lf)
       const cached = companyCacheRef.current[key]
       if (cached && !forceRefresh) {
         setCompanies(cached)
         setCompanyOffset(offset)
-        void prefetchCompanies(offset + nextLimit, nextLimit, df, sf)
+        void prefetchCompanies(offset + nextLimit, nextLimit, df, sf, lf)
         return
       }
       setIsCompaniesLoading(true)
       try {
-        const response = await listCompanies(nextLimit, offset, df, false, sf)
+        const response = await listCompanies(nextLimit, offset, df, false, sf, lf)
         companyCacheRef.current[key] = response
         setCompanies(response)
         setCompanyOffset(offset)
         pollFailuresRef.current = 0
-        if (response.has_more) void prefetchCompanies(offset + nextLimit, nextLimit, df, sf)
+        if (response.has_more) void prefetchCompanies(offset + nextLimit, nextLimit, df, sf, lf)
       } catch (err) {
         setError(parseError(err))
       } finally {
         setIsCompaniesLoading(false)
       }
     },
-    [cacheKeyFor, decisionFilter, scrapeFilter, pageSize, prefetchCompanies],
+    [cacheKeyFor, decisionFilter, scrapeFilter, letterFilter, pageSize, prefetchCompanies],
   )
 
   const loadScrapeJobs = useCallback(
@@ -354,6 +358,13 @@ function App() {
     } catch { /* non-critical */ }
   }, [])
 
+  const loadLetterCounts = useCallback(async (df: DecisionFilter, sf: ScrapeFilter) => {
+    try {
+      const data = await getLetterCounts(df, sf)
+      setLetterCounts(data.counts)
+    } catch { /* non-critical */ }
+  }, [])
+
   // ── Effects ────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -361,7 +372,11 @@ function App() {
     setCompanyOffset(0)
     companyCacheRef.current = {}
     void loadCompanies(0, pageSize, decisionFilter, scrapeFilter)
-  }, [decisionFilter, scrapeFilter, loadCompanies, pageSize])
+  }, [decisionFilter, scrapeFilter, letterFilter, loadCompanies, pageSize])
+
+  useEffect(() => {
+    void loadLetterCounts(decisionFilter, scrapeFilter)
+  }, [decisionFilter, scrapeFilter, loadLetterCounts])
 
   useEffect(() => { void loadScrapeJobs(0, jobsPageSize) }, [jobsFilter, jobsPageSize, loadScrapeJobs])
   useEffect(() => { void loadRuns(0, runsPageSize) }, [runsPageSize, loadRuns])
@@ -469,7 +484,7 @@ function App() {
   const onSelectAllFiltered = async () => {
     setIsSelectingAll(true)
     try {
-      const result = await listCompanyIds(decisionFilter, scrapeFilter)
+      const result = await listCompanyIds(decisionFilter, scrapeFilter, letterFilter)
       setSelectedCompanyIds(result.ids)
     } catch (err) { setError(parseError(err)) }
     finally { setIsSelectingAll(false) }
@@ -791,6 +806,9 @@ function App() {
             file={file}
             selectedPrompt={selectedPrompt}
             utilitiesOpen={utilitiesOpen}
+            letterFilter={letterFilter}
+            letterCounts={letterCounts}
+            onSetLetterFilter={(lf) => { setLetterFilter(lf); setCompanyOffset(0); companyCacheRef.current = {} }}
             onSetDecisionFilter={(f) => { setDecisionFilter(f); setCompanyOffset(0); companyCacheRef.current = {} }}
             onSetScrapeFilter={(f) => { setScrapeFilter(f); setCompanyOffset(0); companyCacheRef.current = {} }}
             onSetPageSize={(s) => { setPageSize(s); setCompanyOffset(0); companyCacheRef.current = {} }}

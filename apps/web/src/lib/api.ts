@@ -11,6 +11,7 @@ import type {
   FeedbackRead,
   FeedbackUpsert,
   JobEnqueueResult,
+  LetterCounts,
   PromptCreate,
   PromptRead,
   PromptUpdate,
@@ -80,10 +81,11 @@ export async function listCompanies(
   decisionFilter: DecisionFilter = 'all',
   includeTotal = false,
   scrapeFilter: ScrapeFilter = 'all',
+  letter: string | null = null,
 ): Promise<CompanyList> {
-  return request<CompanyList>(
-    `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&include_total=${includeTotal}`,
-  )
+  let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&include_total=${includeTotal}`
+  if (letter) url += `&letter=${encodeURIComponent(letter)}`
+  return request<CompanyList>(url)
 }
 
 export async function deleteCompanies(companyIds: string[]): Promise<CompanyDeleteResult> {
@@ -215,8 +217,18 @@ export async function upsertCompanyFeedback(companyId: string, payload: Feedback
 export async function listCompanyIds(
   decisionFilter: DecisionFilter = 'all',
   scrapeFilter: ScrapeFilter = 'all',
+  letter: string | null = null,
 ): Promise<CompanyIdsResult> {
-  return request<CompanyIdsResult>(
-    `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`,
+  let url = `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`
+  if (letter) url += `&letter=${encodeURIComponent(letter)}`
+  return request<CompanyIdsResult>(url)
+}
+
+export async function getLetterCounts(
+  decisionFilter: DecisionFilter = 'all',
+  scrapeFilter: ScrapeFilter = 'all',
+): Promise<LetterCounts> {
+  return request<LetterCounts>(
+    `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`,
   )
 }

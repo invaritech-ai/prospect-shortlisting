@@ -10,6 +10,7 @@ import type {
 import { Badge, decisionBgClass } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { BulkActionBar } from '../ui/BulkActionBar'
+import { LetterStrip } from '../ui/LetterStrip'
 import { SkeletonRows } from '../ui/Skeleton'
 import {
   IconChevronLeft,
@@ -47,6 +48,9 @@ interface CompaniesViewProps {
   file: File | null
   selectedPrompt: PromptRead | null
   utilitiesOpen: boolean
+  letterFilter: string | null
+  letterCounts: Record<string, number>
+  onSetLetterFilter: (letter: string | null) => void
   onSetDecisionFilter: (f: DecisionFilter) => void
   onSetScrapeFilter: (f: ScrapeFilter) => void
   onSetPageSize: (size: number) => void
@@ -427,6 +431,9 @@ export function CompaniesView({
   file,
   selectedPrompt,
   utilitiesOpen,
+  letterFilter,
+  letterCounts,
+  onSetLetterFilter,
   onSetDecisionFilter,
   onSetScrapeFilter,
   onSetPageSize,
@@ -507,6 +514,9 @@ export function CompaniesView({
             </Button>
           </div>
         </div>
+
+        {/* A–Z letter strip */}
+        <LetterStrip active={letterFilter} counts={letterCounts} onChange={onSetLetterFilter} />
 
         {/* Filters */}
         <FilterBar

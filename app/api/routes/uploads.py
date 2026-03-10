@@ -19,6 +19,7 @@ from app.api.schemas.upload import (
     CompanyRead,
     CompanyScrapeRequest,
     CompanyScrapeResult,
+    LetterCounts,
     UploadCompanyList,
     UploadCreateResult,
     UploadDetail,
@@ -272,6 +273,7 @@ def list_companies(
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     include_total: bool = Query(default=False),
+    letter: str | None = Query(default=None, min_length=1, max_length=1),
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -333,14 +335,21 @@ def list_companies(
         statement = statement.where(latest_scrape.c.status.like("%failed%"))
     elif normalized_scrape_filter == "none":
         statement = statement.where(latest_scrape.c.job_id.is_(None))
+    if letter is not None:
+        statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
+
+    if letter is not None:
+        order = statement.order_by(col(Company.domain).asc())
+    else:
+        order = statement.order_by(
+            decision_rank.asc(),
+            col(Company.created_at).desc(),
+            col(Company.domain).asc(),
+        )
 
     rows = list(
         session.exec(
-            statement.order_by(
-                decision_rank.asc(),
-                col(Company.created_at).desc(),
-                col(Company.domain).asc(),
-            )
+            order
             .offset(offset)
             .limit(limit + 1)
         )
@@ -365,6 +374,8 @@ def list_companies(
             total_stmt = total_stmt.where(latest_scrape.c.status.like("%failed%"))
         elif normalized_scrape_filter == "none":
             total_stmt = total_stmt.where(latest_scrape.c.job_id.is_(None))
+        if letter is not None:
+            total_stmt = total_stmt.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
         total = session.exec(total_stmt).one()
     items = [
         CompanyListItem(
@@ -399,6 +410,7 @@ def list_company_ids(
     session: Session = Depends(get_session),
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
+    letter: str | None = Query(default=None, min_length=1, max_length=1),
 ) -> CompanyIdsResult:
     """Return all company IDs matching the given filters (no pagination) for bulk selection."""
     latest_classification = _latest_classification_subquery()
@@ -430,9 +442,60 @@ def list_company_ids(
         statement = statement.where(latest_scrape.c.status.like("%failed%"))
     elif normalized_scrape_filter == "none":
         statement = statement.where(latest_scrape.c.job_id.is_(None))
+    if letter is not None:
+        statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
 
     ids = list(session.exec(statement))
     return CompanyIdsResult(ids=ids, total=len(ids))
+
+
+@router.get("/companies/letter-counts", response_model=LetterCounts)
+def get_letter_counts(
+    session: Session = Depends(get_session),
+    decision_filter: str = Query(default="all"),
+    scrape_filter: str = Query(default="all"),
+) -> LetterCounts:
+    """Return per-letter company counts for the A–Z navigation strip."""
+    latest_classification = _latest_classification_subquery()
+    latest_scrape = _latest_scrape_subquery()
+    latest_decision_text = latest_classification.c.predicted_label
+    decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
+
+    normalized_filter = decision_filter.strip().lower()
+    allowed_filters = {"all", "unlabeled", "possible", "unknown", "crap"}
+    if normalized_filter not in allowed_filters:
+        raise HTTPException(status_code=422, detail="Invalid decision_filter.")
+    normalized_scrape_filter = scrape_filter.strip().lower()
+    allowed_scrape_filters = {"all", "done", "failed", "none"}
+    if normalized_scrape_filter not in allowed_scrape_filters:
+        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
+
+    letter_expr = func.lower(func.left(Company.domain, 1))
+    stmt = (
+        select(letter_expr.label("letter"), func.count().label("cnt"))
+        .select_from(Company)
+        .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .where(letter_expr.between("a", "z"))
+        .group_by(letter_expr)
+    )
+    if normalized_filter == "unlabeled":
+        stmt = stmt.where(decision_lower == "")
+    elif normalized_filter in {"possible", "unknown", "crap"}:
+        stmt = stmt.where(decision_lower == normalized_filter)
+    if normalized_scrape_filter == "done":
+        stmt = stmt.where(latest_scrape.c.status == "completed")
+    elif normalized_scrape_filter == "failed":
+        stmt = stmt.where(latest_scrape.c.status.like("%failed%"))
+    elif normalized_scrape_filter == "none":
+        stmt = stmt.where(latest_scrape.c.job_id.is_(None))
+
+    rows = session.exec(stmt).all()
+    counts: dict[str, int] = {chr(ord("a") + i): 0 for i in range(26)}
+    for ltr, cnt in rows:
+        if ltr in counts:
+            counts[ltr] = int(cnt)
+    return LetterCounts(counts=counts)
 
 
 @router.get("/companies/counts", response_model=CompanyCounts)

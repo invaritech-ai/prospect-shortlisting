@@ -125,3 +125,7 @@ class CompanyCounts(BaseModel):
     scrape_done: int
     scrape_failed: int
     not_scraped: int
+
+
+class LetterCounts(BaseModel):
+    counts: dict[str, int]  # 26 entries, 'a'..'z', zeros included

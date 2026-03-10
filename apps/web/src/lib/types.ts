@@ -289,6 +289,10 @@ export type ResetStuckResult = {
   reset_count: number
 }
 
+export type LetterCounts = {
+  counts: Record<string, number>
+}
+
 export type AnalysisJobDetailRead = {
   analysis_job_id: string
   run_id: string
