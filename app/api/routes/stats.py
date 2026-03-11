@@ -15,7 +15,7 @@ from app.models.pipeline import AnalysisJobState, Run, RunStatus
 from app.services.queue_service import QueueService
 
 
-queue_service = QueueService()
+queue_service = QueueService(consumer_name="worker-stats")
 
 
 router = APIRouter(prefix="/v1", tags=["stats"])
@@ -238,29 +238,54 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
 
 @router.post("/jobs/reset-stuck", response_model=ResetStuckResult)
 def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResult:
-    """Re-queue scrape jobs that are stuck in a running state (e.g. worker crashed)."""
-    stuck_statuses = ["running_step1", "running_step2", "step1_completed"]
-    stuck_jobs = list(
+    """Re-queue scrape jobs that are stuck in a running or incomplete state.
+
+    Jobs in ``step1_completed`` only need their lock cleared — step1 already
+    succeeded and ``scrape_run_all`` will skip directly to step2.
+    Jobs in ``running_step1`` / ``running_step2`` are reset to ``created``
+    so the full pipeline reruns.
+    """
+    # Jobs where step1 completed but step2 never started (lock not cleared).
+    # Just clear the lock; keep status so step2 can claim immediately.
+    step1_done_stuck = list(
         session.exec(
             select(ScrapeJob).where(
                 col(ScrapeJob.terminal_state).is_(False)
-                & col(ScrapeJob.status).in_(stuck_statuses)
+                & (col(ScrapeJob.status) == "step1_completed")
             )
         )
     )
-    for job in stuck_jobs:
+    for job in step1_done_stuck:
+        job.lock_token = None
+        job.lock_expires_at = None
+        session.add(job)
+
+    # Jobs genuinely stuck mid-run — reset to start so step1 reruns cleanly.
+    running_stuck = list(
+        session.exec(
+            select(ScrapeJob).where(
+                col(ScrapeJob.terminal_state).is_(False)
+                & col(ScrapeJob.status).in_(["running_step1", "running_step2"])
+            )
+        )
+    )
+    for job in running_stuck:
         job.status = "created"
         job.terminal_state = False
         job.lock_token = None
         job.lock_expires_at = None
         session.add(job)
+
     session.commit()
 
-    # Re-enqueue them
-    for job in stuck_jobs:
+    # Re-enqueue all: scrape_run_all handles both cases correctly.
+    # For step1_completed jobs: run_step1 CAS-misses (status wrong), then
+    # _run_all checks stage1_status == "completed" and proceeds to step2.
+    all_stuck = step1_done_stuck + running_stuck
+    for job in all_stuck:
         queue_service.enqueue(task_type="scrape_run_all", payload={"job_id": str(job.id)})
 
-    return ResetStuckResult(reset_count=len(stuck_jobs))
+    return ResetStuckResult(reset_count=len(all_stuck))
 
 
 class MarkFailedResult(BaseModel):

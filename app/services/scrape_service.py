@@ -645,6 +645,9 @@ class ScrapeService:
             job.last_error_message = None
             job.step1_finished_at = utcnow()
             job.updated_at = utcnow()
+            # Clear the step1 lock so run_step2's CAS claim can proceed immediately.
+            job.lock_token = None
+            job.lock_expires_at = None
             if pages_fetched_count == 0:
                 job.status = "step1_failed"
                 job.stage1_status = "failed"
