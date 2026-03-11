@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import ssl
+import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
@@ -353,9 +355,24 @@ class AnalysisService:
         rendered = rendered.replace("{context}", context)
         return rendered
 
+    # Retry config for 429 rate-limit errors.
+    _LLM_MAX_RETRIES = 3
+    _LLM_BACKOFF_BASE_SEC = 2.0  # 2s, 8s, 32s
+    _LLM_BACKOFF_FACTOR = 4.0
+    # Throttle: minimum gap between successive LLM calls (per worker process).
+    _LLM_MIN_INTERVAL_SEC = 0.5
+
+    _last_llm_call_at: float = 0.0  # monotonic timestamp of last call
+
     def _call_openrouter(self, *, model: str, user_prompt: str) -> tuple[str, str]:
         if not self._openrouter_key:
             return "", "analysis_api_key_missing"
+
+        # Throttle: ensure minimum gap between calls within this process.
+        elapsed = time.monotonic() - self._last_llm_call_at
+        if elapsed < self._LLM_MIN_INTERVAL_SEC:
+            time.sleep(self._LLM_MIN_INTERVAL_SEC - elapsed)
+
         payload = {
             "model": model,
             "messages": [
@@ -371,36 +388,62 @@ class AnalysisService:
             "temperature": 0.0,
             "response_format": {"type": "json_object"},
         }
-        request = Request(
-            url=f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self._openrouter_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": settings.openrouter_site_url,
-                "X-Title": settings.openrouter_app_name,
-            },
-        )
-        try:
-            with urlopen(request, context=ssl.create_default_context(), timeout=120) as response:  # noqa: S310
-                raw = response.read().decode("utf-8", errors="ignore")
-            decoded = json.loads(raw)
-            choices = decoded.get("choices") or []
-            if not choices:
-                log_event(logger, "analysis_llm_empty_choices", model=model, raw_response=raw[:500])
+
+        last_exc: Exception | None = None
+        for attempt in range(self._LLM_MAX_RETRIES + 1):
+            req = Request(
+                url=f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._openrouter_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": settings.openrouter_site_url,
+                    "X-Title": settings.openrouter_app_name,
+                },
+            )
+            try:
+                with urlopen(req, context=ssl.create_default_context(), timeout=120) as response:  # noqa: S310
+                    raw = response.read().decode("utf-8", errors="ignore")
+                self.__class__._last_llm_call_at = time.monotonic()
+                decoded = json.loads(raw)
+                choices = decoded.get("choices") or []
+                if not choices:
+                    log_event(logger, "analysis_llm_empty_choices", model=model, raw_response=raw[:500])
+                    return "", "analysis_llm_failed"
+                content = choices[0]["message"]["content"]
+                if isinstance(content, list):
+                    text_parts: list[str] = []
+                    for item in content:
+                        if isinstance(item, dict) and str(item.get("type", "")) == "text":
+                            text_parts.append(str(item.get("text", "")))
+                    return "\n".join(part for part in text_parts if part).strip(), ""
+                return str(content or "").strip(), ""
+            except HTTPError as exc:
+                last_exc = exc
+                if exc.code == 429 and attempt < self._LLM_MAX_RETRIES:
+                    # Respect Retry-After header if present, otherwise exponential backoff.
+                    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                    if retry_after and retry_after.isdigit():
+                        delay = float(retry_after)
+                    else:
+                        delay = self._LLM_BACKOFF_BASE_SEC * (self._LLM_BACKOFF_FACTOR ** attempt)
+                    log_event(
+                        logger, "analysis_llm_429_retry",
+                        model=model, attempt=attempt + 1, delay_sec=round(delay, 1),
+                    )
+                    time.sleep(delay)
+                    continue
+                log_event(logger, "analysis_llm_error", model=model, error=str(exc), traceback=traceback.format_exc())
                 return "", "analysis_llm_failed"
-            content = choices[0]["message"]["content"]
-            if isinstance(content, list):
-                text_parts: list[str] = []
-                for item in content:
-                    if isinstance(item, dict) and str(item.get("type", "")) == "text":
-                        text_parts.append(str(item.get("text", "")))
-                return "\n".join(part for part in text_parts if part).strip(), ""
-            return str(content or "").strip(), ""
-        except Exception as exc:  # noqa: BLE001
-            log_event(logger, "analysis_llm_error", model=model, error=str(exc), traceback=traceback.format_exc())
-            return "", "analysis_llm_failed"
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                log_event(logger, "analysis_llm_error", model=model, error=str(exc), traceback=traceback.format_exc())
+                return "", "analysis_llm_failed"
+
+        # Exhausted all retries (should only reach here on 429).
+        log_event(logger, "analysis_llm_429_exhausted", model=model, error=str(last_exc))
+        return "", "analysis_llm_failed"
 
     def _ensure_crawl_adapter(self, *, session: Session, company: Company, scrape_job: ScrapeJob) -> CrawlArtifact:
         # Derive the actual crawl state from the scrape job outcome.
