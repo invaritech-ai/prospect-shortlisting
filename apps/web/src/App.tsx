@@ -877,10 +877,10 @@ function App() {
             <button
               type="button"
               onClick={() => void onResetStuck()}
-              disabled={isResettingStuck || stats.scrape.running === 0}
+              disabled={isResettingStuck || stats.scrape.stuck_count === 0}
               className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isResettingStuck ? 'Resetting…' : `Reset Stuck Scrape (${stats.scrape.running})`}
+              {isResettingStuck ? 'Resetting…' : `Reset Stuck Scrape (${stats.scrape.stuck_count})`}
             </button>
             <button
               type="button"

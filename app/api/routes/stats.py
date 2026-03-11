@@ -11,11 +11,17 @@ from sqlmodel import Session, col, func, select
 from app.core.config import settings
 from app.db.session import get_session
 from app.models import AnalysisJob, ScrapeJob
-from app.models.pipeline import AnalysisJobState, Run, RunStatus
+from app.models.pipeline import AnalysisJobState, JobOutbox, Run, RunStatus
+from app.services.outbox_service import OutboxService
 from app.services.queue_service import QueueService
 
 
 queue_service = QueueService(consumer_name="worker-stats")
+outbox_service = OutboxService()
+
+# A job sitting in step1_completed longer than this is considered stuck.
+# In normal flow, step2 follows step1 immediately in the same worker task.
+SCRAPE_STEP1_COMPLETED_STUCK_GRACE_SEC = 300
 
 
 router = APIRouter(prefix="/v1", tags=["stats"])
@@ -29,6 +35,7 @@ class PipelineStageStats(BaseModel):
     failed: int
     running: int
     queued: int
+    stuck_count: int
     pct_done: float
     avg_job_sec: float | None
     eta_seconds: float | None
@@ -46,6 +53,7 @@ def _utcnow() -> datetime:
 
 
 def _scrape_stats(session: Session) -> PipelineStageStats:
+    now = _utcnow()
     total = session.exec(select(func.count()).select_from(ScrapeJob)).one() or 0
     completed = session.exec(
         select(func.count()).select_from(ScrapeJob).where(col(ScrapeJob.status) == "completed")
@@ -58,12 +66,32 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
     running = session.exec(
         select(func.count()).select_from(ScrapeJob).where(
             col(ScrapeJob.terminal_state).is_(False)
-            & col(ScrapeJob.status).in_(["running_step1", "running_step2", "step1_completed"])
+            & col(ScrapeJob.status).in_(["running_step1", "running_step2"])
         )
     ).one() or 0
     queued = session.exec(
         select(func.count()).select_from(ScrapeJob).where(col(ScrapeJob.status) == "created")
     ).one() or 0
+
+    # Stuck = running with expired lock OR step1_completed past grace window.
+    stuck_running = session.exec(
+        select(func.count()).select_from(ScrapeJob).where(
+            col(ScrapeJob.terminal_state).is_(False)
+            & col(ScrapeJob.status).in_(["running_step1", "running_step2"])
+            & col(ScrapeJob.lock_expires_at).is_not(None)
+            & (col(ScrapeJob.lock_expires_at) < now)
+        )
+    ).one() or 0
+    grace_cutoff = now - timedelta(seconds=SCRAPE_STEP1_COMPLETED_STUCK_GRACE_SEC)
+    stuck_step1 = session.exec(
+        select(func.count()).select_from(ScrapeJob).where(
+            col(ScrapeJob.terminal_state).is_(False)
+            & (col(ScrapeJob.status) == "step1_completed")
+            & (col(ScrapeJob.step1_finished_at).is_not(None))
+            & (col(ScrapeJob.step1_finished_at) < grace_cutoff)
+        )
+    ).one() or 0
+    stuck_count = stuck_running + stuck_step1
 
     # Average full-pipeline duration from recent completions (step1 start → step2 finish).
     recent = list(
@@ -92,7 +120,7 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
     eta_at: datetime | None = None
     if avg_job_sec and remaining > 0:
         eta_seconds = remaining * avg_job_sec
-        eta_at = datetime.fromtimestamp(_utcnow().timestamp() + eta_seconds, tz=timezone.utc)
+        eta_at = datetime.fromtimestamp(now.timestamp() + eta_seconds, tz=timezone.utc)
 
     return PipelineStageStats(
         total=total,
@@ -100,6 +128,7 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
         failed=failed,
         running=running,
         queued=queued,
+        stuck_count=stuck_count,
         pct_done=round(pct_done * 100, 1),
         avg_job_sec=round(avg_job_sec, 1) if avg_job_sec else None,
         eta_seconds=round(eta_seconds, 0) if eta_seconds else None,
@@ -108,6 +137,7 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
 
 
 def _analysis_stats(session: Session) -> PipelineStageStats:
+    now = _utcnow()
     total = session.exec(select(func.count()).select_from(AnalysisJob)).one() or 0
     completed = session.exec(
         select(func.count()).select_from(AnalysisJob).where(
@@ -127,6 +157,16 @@ def _analysis_stats(session: Session) -> PipelineStageStats:
     queued = session.exec(
         select(func.count()).select_from(AnalysisJob).where(
             col(AnalysisJob.state) == AnalysisJobState.QUEUED
+        )
+    ).one() or 0
+
+    # Stuck = RUNNING with expired lock.
+    stuck_count = session.exec(
+        select(func.count()).select_from(AnalysisJob).where(
+            col(AnalysisJob.terminal_state).is_(False)
+            & (col(AnalysisJob.state) == AnalysisJobState.RUNNING)
+            & col(AnalysisJob.lock_expires_at).is_not(None)
+            & (col(AnalysisJob.lock_expires_at) < now)
         )
     ).one() or 0
 
@@ -154,7 +194,7 @@ def _analysis_stats(session: Session) -> PipelineStageStats:
     eta_at: datetime | None = None
     if avg_job_sec and remaining > 0:
         eta_seconds = remaining * avg_job_sec
-        eta_at = datetime.fromtimestamp(_utcnow().timestamp() + eta_seconds, tz=timezone.utc)
+        eta_at = datetime.fromtimestamp(now.timestamp() + eta_seconds, tz=timezone.utc)
 
     return PipelineStageStats(
         total=total,
@@ -162,6 +202,7 @@ def _analysis_stats(session: Session) -> PipelineStageStats:
         failed=failed,
         running=running,
         queued=queued,
+        stuck_count=stuck_count,
         pct_done=round(pct_done * 100, 1),
         avg_job_sec=round(avg_job_sec, 1) if avg_job_sec else None,
         eta_seconds=round(eta_seconds, 0) if eta_seconds else None,
@@ -195,16 +236,10 @@ class ResetStuckResult(BaseModel):
 
 @router.post("/queue/drain", response_model=DrainQueueResult)
 def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
-    """Delete all pending tasks from the Redis queue and mark queued DB jobs as cancelled."""
-    redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    queue_key = settings.redis_queue_key
+    """Cancel all queued work: DB jobs, pending outbox rows. Workers will no-op any
+    remaining stream entries because the DB state is no longer claimable."""
 
-    # Count items before deleting
-    drained = redis.llen(queue_key)
-    if drained:
-        redis.delete(queue_key)
-
-    # Cancel ScrapeJob records still in "created" state
+    # Cancel ScrapeJob records still in "created" state.
     queued_scrape = list(
         session.exec(select(ScrapeJob).where(col(ScrapeJob.status) == "created"))
     )
@@ -213,7 +248,8 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
         job.terminal_state = True
         session.add(job)
 
-    # Cancel AnalysisJob records still in QUEUED state (stranded when queue was drained)
+    # Cancel AnalysisJob records still in QUEUED state — DEAD, not FAILED,
+    # because the worker never ran them.
     queued_analysis = list(
         session.exec(
             select(AnalysisJob).where(
@@ -227,12 +263,22 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
         job.terminal_state = True
         session.add(job)
 
+    # Delete pending (unpublished) outbox rows so they never reach the stream.
+    pending_outbox = list(
+        session.exec(
+            select(JobOutbox).where(col(JobOutbox.published_at).is_(None))
+        )
+    )
+    for row in pending_outbox:
+        session.delete(row)
+
     session.commit()
 
+    cancelled_db = len(queued_scrape) + len(queued_analysis)
     return DrainQueueResult(
-        drained=int(drained),
-        cancelled_db_jobs=len(queued_scrape) + len(queued_analysis),
-        queue_key=queue_key,
+        drained=len(pending_outbox),
+        cancelled_db_jobs=cancelled_db,
+        queue_key="outbox+stream",
     )
 
 

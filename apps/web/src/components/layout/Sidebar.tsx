@@ -74,6 +74,11 @@ function PipelineMini({ stats }: { stats: StatsResponse | null }) {
                 {s.failed > 0 && <span className="text-[var(--oc-fail-text)]"> · {s.failed} failed</span>}
               </p>
             )}
+            {s.eta_seconds != null && s.eta_seconds > 0 && (
+              <p className="mt-0.5 text-[10px] text-[var(--oc-muted)]">
+                ETA: {Math.floor(s.eta_seconds / 60)}m {Math.round(s.eta_seconds % 60)}s
+              </p>
+            )}
           </div>
         ))}
       </div>

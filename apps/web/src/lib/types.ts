@@ -256,6 +256,7 @@ export type PipelineStageStats = {
   failed: number
   running: number
   queued: number
+  stuck_count: number
   pct_done: number
   avg_job_sec: number | null
   eta_seconds: number | null
