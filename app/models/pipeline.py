@@ -6,9 +6,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Index, JSON, Column, Numeric, Text, UniqueConstraint
-from sqlalchemy import text as sa_text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, Column, Numeric, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -145,7 +143,6 @@ class Run(SQLModel, table=True):
     prompt_id: UUID = Field(foreign_key="prompts.id", index=True)
     general_model: str = Field(max_length=128)
     classify_model: str = Field(max_length=128)
-    ocr_model: str = Field(max_length=128)
     status: RunStatus = Field(default=RunStatus.CREATED, index=True)
     total_jobs: int = Field(default=0, ge=0)
     completed_jobs: int = Field(default=0, ge=0)
@@ -207,32 +204,6 @@ class CompanyFeedback(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
-
-class JobOutbox(SQLModel, table=True):
-    __tablename__ = "job_outbox"
-    __table_args__ = (
-        Index(
-            "ix_job_outbox_pending",
-            "created_at",
-            postgresql_where=sa_text("published_at IS NULL"),
-        ),
-        Index(
-            "uq_job_outbox_pending",
-            "job_id",
-            "task_type",
-            unique=True,
-            postgresql_where=sa_text("published_at IS NULL"),
-        ),
-    )
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    job_id: UUID = Field(nullable=False)
-    task_type: str = Field(max_length=128, nullable=False)
-    payload_json: dict[str, Any] = Field(sa_column=Column(JSONB, nullable=False))
-    created_at: datetime = Field(default_factory=utcnow, nullable=False)
-    published_at: datetime | None = Field(default=None)
-    stream_id: str | None = Field(default=None, max_length=128)
-    publish_attempts: int = Field(default=0, nullable=False)
 
 
 class JobEvent(SQLModel, table=True):

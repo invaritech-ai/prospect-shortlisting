@@ -7,8 +7,10 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.14.0",
     "browserforge>=1.2.4",
+    "celery[redis]>=5.3.0,<5.5",
     "curl-cffi>=0.14.0",
     "fastapi>=0.118.0",
+    "html2text>=2024.2.26",
     "msgspec>=0.20.0",
     "openai>=2.7.0",
     "openpyxl>=3.1.5",

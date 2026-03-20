@@ -39,25 +39,19 @@ from app.models import (
     ScrapeJob,
     Upload,
 )
-from app.services.outbox_service import OutboxService
 from app.services.scrape_service import ScrapeService
 from app.services.upload_service import UploadIssue, UploadService
+from app.tasks.scrape import scrape_website
 
 
 router = APIRouter(prefix="/v1", tags=["uploads"])
 upload_service = UploadService()
 scrape_service = ScrapeService()
-outbox_service = OutboxService()
 SCRAPE_DEFAULTS = {
-    "max_pages": 60,
-    "max_depth": 3,
     "js_fallback": True,
     "include_sitemap": True,
     "general_model": "openai/gpt-5-nano",
     "classify_model": "inception/mercury-2",
-    "ocr_model": "google/gemini-3.1-flash-lite-preview",
-    "enable_ocr": True,
-    "max_images_per_page": 8,
 }
 
 
@@ -82,8 +76,6 @@ def _latest_scrape_subquery():
             ScrapeJob.id.label("job_id"),
             ScrapeJob.status.label("status"),
             ScrapeJob.terminal_state.label("terminal_state"),
-            ScrapeJob.stage1_status.label("stage1_status"),
-            ScrapeJob.stage2_status.label("stage2_status"),
         )
         .distinct(ScrapeJob.normalized_url)
         .order_by(ScrapeJob.normalized_url, ScrapeJob.created_at.desc())
@@ -107,12 +99,6 @@ def _latest_analysis_subquery():
 
 
 def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]) -> CompanyScrapeResult:
-    """Create scrape jobs and atomically write outbox rows.
-
-    ``scrape_service.create_job`` flushes (not commits) the job row.
-    We then add the outbox row to the same session and commit both together,
-    ensuring the job and its delivery guarantee are created atomically.
-    """
     queued_job_ids: list[UUID] = []
     failed_company_ids: list[UUID] = []
     for company in companies:
@@ -120,23 +106,13 @@ def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]
             job = scrape_service.create_job(
                 session=session,
                 website_url=company.normalized_url,
-                max_pages=SCRAPE_DEFAULTS["max_pages"],
-                max_depth=SCRAPE_DEFAULTS["max_depth"],
                 js_fallback=SCRAPE_DEFAULTS["js_fallback"],
                 include_sitemap=SCRAPE_DEFAULTS["include_sitemap"],
                 general_model=SCRAPE_DEFAULTS["general_model"],
                 classify_model=SCRAPE_DEFAULTS["classify_model"],
-                ocr_model=SCRAPE_DEFAULTS["ocr_model"],
-                enable_ocr=SCRAPE_DEFAULTS["enable_ocr"],
-                max_images_per_page=SCRAPE_DEFAULTS["max_images_per_page"],
-            )
-            outbox_service.write(
-                session=session,
-                job_id=job.id,
-                task_type="scrape_run_all",
-                payload={"job_id": str(job.id)},
             )
             session.commit()
+            scrape_website.delay(str(job.id))
             queued_job_ids.append(job.id)
         except Exception:  # noqa: BLE001
             session.rollback()
@@ -313,8 +289,6 @@ def list_companies(
             latest_scrape.c.job_id,
             latest_scrape.c.status,
             latest_scrape.c.terminal_state,
-            latest_scrape.c.stage1_status,
-            latest_scrape.c.stage2_status,
             latest_analysis.c.run_id,
             latest_analysis.c.state,
             latest_analysis.c.terminal_state,
@@ -394,14 +368,12 @@ def list_companies(
             latest_scrape_job_id=row[9],
             latest_scrape_status=str(row[10]) if row[10] is not None else None,
             latest_scrape_terminal=row[11],
-            latest_scrape_stage1_status=str(row[12]) if row[12] is not None else None,
-            latest_scrape_stage2_status=str(row[13]) if row[13] is not None else None,
-            latest_analysis_run_id=row[14],
-            latest_analysis_status=str(row[15]) if row[15] is not None else None,
-            latest_analysis_terminal=row[16],
-            latest_analysis_job_id=row[17],
-            feedback_thumbs=str(row[18]) if row[18] is not None else None,
-            feedback_comment=str(row[19]) if row[19] is not None else None,
+            latest_analysis_run_id=row[12],
+            latest_analysis_status=str(row[13]) if row[13] is not None else None,
+            latest_analysis_terminal=row[14],
+            latest_analysis_job_id=row[15],
+            feedback_thumbs=str(row[16]) if row[16] is not None else None,
+            feedback_comment=str(row[17]) if row[17] is not None else None,
         )
         for row in page_rows
     ]

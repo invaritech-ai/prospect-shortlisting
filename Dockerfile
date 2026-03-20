@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
-# Required for screenshot capture in scrape step2.
+# Required for dynamic page rendering (CSR detection fallback).
 RUN uv run playwright install --with-deps chromium
 
 COPY . .

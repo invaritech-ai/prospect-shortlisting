@@ -15,8 +15,6 @@ def utcnow() -> datetime:
 class ScrapeJob(SQLModel, table=True):
     __table_args__ = (
         # Partial unique index: only one active (non-terminal) job per URL.
-        # Mirrors the Alembic migration so create_all() on a fresh DB also
-        # creates the constraint (not just migrated databases).
         sa.Index(
             "uq_scrapejob_active_normalized_url",
             "normalized_url",
@@ -31,44 +29,37 @@ class ScrapeJob(SQLModel, table=True):
     normalized_url: str
     domain: str
 
+    # Lifecycle: created → running → completed / failed
     status: str = Field(default="created", index=True)
-    stage1_status: str = Field(default="pending")
-    stage2_status: str = Field(default="pending")
     terminal_state: bool = Field(default=False)
 
-    max_pages: int = Field(default=60)
-    max_depth: int = Field(default=3)
+    # Per-job model config
     js_fallback: bool = Field(default=True)
     include_sitemap: bool = Field(default=True)
     general_model: str = Field(default="openai/gpt-5-nano")
     classify_model: str = Field(default="inception/mercury-2")
-    ocr_model: str = Field(default="google/gemini-3.1-flash-lite-preview")
-    enable_ocr: bool = Field(default=True)
-    max_images_per_page: int = Field(default=8)
 
+    # Counters
     discovered_urls_count: int = Field(default=0)
     pages_fetched_count: int = Field(default=0)
     fetch_failures_count: int = Field(default=0)
     markdown_pages_count: int = Field(default=0)
-    ocr_images_processed_count: int = Field(default=0)
-
     llm_used_count: int = Field(default=0)
     llm_failed_count: int = Field(default=0)
 
     last_error_code: Optional[str] = Field(default=None)
     last_error_message: Optional[str] = Field(default=None)
 
-    # Idempotency / ownership lock — set atomically at job-start; guards against
-    # duplicate workers writing results when the same task is delivered twice.
+    # Ownership lock — set atomically at task-start via CAS; cleared on finish.
+    # Guards against duplicate workers writing results when Celery re-delivers
+    # a task (e.g. after soft_time_limit expiry or worker respawn).
     lock_token: Optional[str] = Field(default=None, max_length=64)
     lock_expires_at: Optional[datetime] = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
-    step1_started_at: Optional[datetime] = Field(default=None)
-    step1_finished_at: Optional[datetime] = Field(default=None)
-    step2_started_at: Optional[datetime] = Field(default=None)
-    step2_finished_at: Optional[datetime] = Field(default=None)
+    started_at: Optional[datetime] = Field(default=None)
+    finished_at: Optional[datetime] = Field(default=None)
 
 
 class ScrapePage(SQLModel, table=True):
@@ -86,10 +77,7 @@ class ScrapePage(SQLModel, table=True):
     description: str = Field(default="")
     text_len: int = Field(default=0)
     raw_text: str = Field(default="")
-    html_snapshot: str = Field(default="")
 
-    image_urls_json: str = Field(default="[]")
-    ocr_text: str = Field(default="")
     markdown_content: str = Field(default="")
 
     fetch_error_code: str = Field(default="")

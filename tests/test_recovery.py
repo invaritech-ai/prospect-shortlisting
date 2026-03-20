@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
 from app.models import ScrapeJob
@@ -24,18 +23,13 @@ def _make_scrape_job(session: Session, *, url_suffix: str = "") -> ScrapeJob:
         website_url=url,
         normalized_url=normalized,
         domain=domain,
-        max_pages=5,
-        max_depth=1,
         js_fallback=False,
         include_sitemap=False,
         general_model="test",
         classify_model="test",
-        ocr_model="test",
-        enable_ocr=False,
-        max_images_per_page=0,
-        status="running_step1",
+        status="running",
         lock_token=str(uuid4()),
-        lock_expires_at=utcnow() + timedelta(minutes=30),
+        lock_expires_at=utcnow() + timedelta(minutes=35),
         terminal_state=False,
     )
     session.add(job)
@@ -51,12 +45,9 @@ class TestFailJobClearsLockOnQueued:
         from app.services.analysis_service import AnalysisService
         from app.models.pipeline import Prompt, Upload, Company, Run, CrawlArtifact, CrawlJob, CrawlJobState
 
-        # We test _fail_job directly via analysis_service since it has the
-        # clearest transient failure path with lock clearing.
         svc = AnalysisService()
 
-        # Create minimal DB objects needed for an AnalysisJob.
-        upload = Upload(filename="test.csv", valid_count=1, invalid_count=0)
+        upload = Upload(filename="test.csv", checksum="ck-recovery", valid_count=1, invalid_count=0)
         session.add(upload)
         session.flush()
 
@@ -93,7 +84,6 @@ class TestFailJobClearsLockOnQueued:
             prompt_id=prompt.id,
             general_model="test",
             classify_model="test",
-            ocr_model="test",
             status="running",
             total_jobs=1,
             completed_jobs=0,
@@ -120,7 +110,6 @@ class TestFailJobClearsLockOnQueued:
         session.commit()
         session.refresh(analysis_job)
 
-        # Call _fail_job with lock_token to simulate transient failure.
         svc._fail_job(
             session=session,
             analysis_job=analysis_job,
@@ -144,15 +133,13 @@ class TestResetStuckClearsLocks:
         job = _make_scrape_job(session, url_suffix="-reset")
         assert job.lock_token is not None
         assert job.lock_expires_at is not None
-        assert job.status == "running_step1"
+        assert job.status == "running"
 
-        # Simulate what the reset_stuck_jobs endpoint does.
-        stuck_statuses = ["running_step1", "running_step2", "step1_completed"]
         stuck_jobs = list(
             session.exec(
                 select(ScrapeJob).where(
                     col(ScrapeJob.terminal_state).is_(False)
-                    & col(ScrapeJob.status).in_(stuck_statuses)
+                    & (col(ScrapeJob.status) == "running")
                 )
             )
         )

@@ -10,12 +10,11 @@ from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.db.session import get_session
 from app.models import Company, Prompt, Run
 from app.services.analysis_service import AnalysisService
-from app.services.outbox_service import OutboxService
+from app.tasks.analysis import run_analysis_job
 
 
 router = APIRouter(prefix="/v1", tags=["runs"])
 analysis_service = AnalysisService()
-outbox_service = OutboxService()
 
 
 def _as_run_read(run: Run, prompt_name: str) -> RunRead:
@@ -26,7 +25,6 @@ def _as_run_read(run: Run, prompt_name: str) -> RunRead:
         prompt_name=prompt_name,
         general_model=run.general_model,
         classify_model=run.classify_model,
-        ocr_model=run.ocr_model,
         status=run.status,
         total_jobs=run.total_jobs,
         completed_jobs=run.completed_jobs,
@@ -59,21 +57,15 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
             prompt_id=payload.prompt_id,
             general_model=payload.general_model,
             classify_model=payload.classify_model,
-            ocr_model=payload.ocr_model,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # Write outbox rows for all jobs in the same transaction as the runs/jobs,
-    # then commit everything atomically. analysis_service.create_runs only flushes.
-    for job in jobs:
-        outbox_service.write(
-            session=session,
-            job_id=job.id,
-            task_type="analysis_job",
-            payload={"analysis_job_id": str(job.id)},
-        )
     session.commit()
+
+    # Enqueue analysis jobs after the DB transaction is committed.
+    for job in jobs:
+        run_analysis_job.delay(str(job.id))
 
     return RunCreateResult(
         requested_count=len(companies),

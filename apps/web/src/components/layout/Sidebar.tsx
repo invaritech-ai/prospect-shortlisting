@@ -66,12 +66,13 @@ function PipelineMini({ stats }: { stats: StatsResponse | null }) {
                 style={{ width: `${Math.min(s.pct_done, 100)}%` }}
               />
             </div>
-            {(s.running > 0 || s.queued > 0 || s.failed > 0) && (
+            {(s.running > 0 || s.queued > 0 || s.failed > 0 || s.site_unavailable > 0) && (
               <p className="mt-0.5 text-[10px] text-[var(--oc-muted)]">
                 {s.running > 0 && <span className="text-[var(--oc-info-text)]">{s.running} running</span>}
                 {s.running > 0 && s.queued > 0 && ' · '}
                 {s.queued > 0 && `${s.queued} queued`}
                 {s.failed > 0 && <span className="text-[var(--oc-fail-text)]"> · {s.failed} failed</span>}
+                {s.site_unavailable > 0 && ` · ${s.site_unavailable} down`}
               </p>
             )}
             {s.eta_seconds != null && s.eta_seconds > 0 && (

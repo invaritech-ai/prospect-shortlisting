@@ -89,7 +89,14 @@ function RunJobsTable({
               return (
                 <div key={job.analysis_job_id} className="rounded-xl border border-[var(--oc-border)] bg-white p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="truncate font-semibold text-[var(--oc-accent-ink)]">{job.domain}</p>
+                    <a
+                      href={`https://${job.domain}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate font-semibold text-[var(--oc-accent-ink)] hover:underline"
+                    >
+                      {job.domain}
+                    </a>
                     <Button variant="secondary" size="xs" onClick={() => onInspectJob(job)}>
                       <IconEye size={13} /> Detail
                     </Button>
@@ -128,9 +135,14 @@ function RunJobsTable({
                   return (
                     <tr key={job.analysis_job_id}>
                       <td>
-                        <span className="block max-w-[240px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)]">
+                        <a
+                          href={`https://${job.domain}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block max-w-[240px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)] hover:underline"
+                        >
                           {job.domain}
-                        </span>
+                        </a>
                       </td>
                       <td>
                         <Badge variant={decisionBadgeVariant(job.predicted_label)}>
@@ -206,10 +218,16 @@ function AnalysisDetail({ detail }: { detail: AnalysisJobDetailRead }) {
               Confidence {detail.confidence.toFixed(2)}
             </span>
           )}
-          <span className="ml-auto text-xs text-[var(--oc-muted)]">
-            Prompt: {detail.prompt_name}
-          </span>
+          <a
+            href={`https://${detail.domain}`}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto text-xs text-[var(--oc-accent-ink)] hover:underline"
+          >
+            {detail.domain} ↗
+          </a>
         </div>
+        <p className="mt-2 text-[11px] text-[var(--oc-muted)]">Prompt: {detail.prompt_name}</p>
         {detail.last_error_code && (
           <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
             {detail.last_error_code}: {detail.last_error_message || 'No detail'}

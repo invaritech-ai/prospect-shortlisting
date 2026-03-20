@@ -2,27 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from redis import Redis
-from sqlalchemy import case, update
 from sqlmodel import Session, col, func, select
 
-from app.core.config import settings
 from app.db.session import get_session
 from app.models import AnalysisJob, ScrapeJob
-from app.models.pipeline import AnalysisJobState, JobOutbox, Run, RunStatus
-from app.services.outbox_service import OutboxService
-from app.services.queue_service import QueueService
+from app.models.pipeline import AnalysisJobState, Run, RunStatus
 
 
-queue_service = QueueService(consumer_name="worker-stats")
-outbox_service = OutboxService()
-
-# A job sitting in step1_completed longer than this is considered stuck.
-# In normal flow, step2 follows step1 immediately in the same worker task.
-SCRAPE_STEP1_COMPLETED_STUCK_GRACE_SEC = 300
-
+# A running scrape job that hasn't updated in > 35 min is considered stuck
+# (matches the Beat reconciler threshold).
+SCRAPE_RUNNING_STUCK_MINUTES = 35
 
 router = APIRouter(prefix="/v1", tags=["stats"])
 
@@ -33,6 +24,7 @@ class PipelineStageStats(BaseModel):
     total: int
     completed: int
     failed: int
+    site_unavailable: int
     running: int
     queued: int
     stuck_count: int
@@ -58,49 +50,44 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
     completed = session.exec(
         select(func.count()).select_from(ScrapeJob).where(col(ScrapeJob.status) == "completed")
     ).one() or 0
+    site_unavailable = session.exec(
+        select(func.count()).select_from(ScrapeJob).where(
+            col(ScrapeJob.status) == "site_unavailable"
+        )
+    ).one() or 0
     failed = session.exec(
         select(func.count()).select_from(ScrapeJob).where(
-            col(ScrapeJob.terminal_state).is_(True) & (col(ScrapeJob.status) != "completed")
+            col(ScrapeJob.terminal_state).is_(True)
+            & (col(ScrapeJob.status) != "completed")
+            & (col(ScrapeJob.status) != "site_unavailable")
         )
     ).one() or 0
     running = session.exec(
         select(func.count()).select_from(ScrapeJob).where(
             col(ScrapeJob.terminal_state).is_(False)
-            & col(ScrapeJob.status).in_(["running_step1", "running_step2"])
+            & (col(ScrapeJob.status) == "running")
         )
     ).one() or 0
     queued = session.exec(
         select(func.count()).select_from(ScrapeJob).where(col(ScrapeJob.status) == "created")
     ).one() or 0
 
-    # Stuck = running with expired lock OR step1_completed past grace window.
-    stuck_running = session.exec(
+    # Stuck = running but not updated within the expected window.
+    stuck_cutoff = now - timedelta(minutes=SCRAPE_RUNNING_STUCK_MINUTES)
+    stuck_count = session.exec(
         select(func.count()).select_from(ScrapeJob).where(
             col(ScrapeJob.terminal_state).is_(False)
-            & col(ScrapeJob.status).in_(["running_step1", "running_step2"])
-            & col(ScrapeJob.lock_expires_at).is_not(None)
-            & (col(ScrapeJob.lock_expires_at) < now)
+            & (col(ScrapeJob.status) == "running")
+            & (col(ScrapeJob.updated_at) < stuck_cutoff)
         )
     ).one() or 0
-    grace_cutoff = now - timedelta(seconds=SCRAPE_STEP1_COMPLETED_STUCK_GRACE_SEC)
-    stuck_step1 = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(
-            col(ScrapeJob.terminal_state).is_(False)
-            & (col(ScrapeJob.status) == "step1_completed")
-            & (col(ScrapeJob.step1_finished_at).is_not(None))
-            & (col(ScrapeJob.step1_finished_at) < grace_cutoff)
-        )
-    ).one() or 0
-    stuck_count = stuck_running + stuck_step1
 
-    # Average full-pipeline duration from recent completions (step1 start → step2 finish).
+    # Average full-pipeline duration from recent completions.
     recent = list(
         session.exec(
-            select(ScrapeJob.step1_started_at, ScrapeJob.step2_finished_at)
-            .where(
-                col(ScrapeJob.status) == "completed"
-            )
-            .order_by(col(ScrapeJob.step2_finished_at).desc())
+            select(ScrapeJob.started_at, ScrapeJob.finished_at)
+            .where(col(ScrapeJob.status) == "completed")
+            .order_by(col(ScrapeJob.finished_at).desc())
             .limit(_SAMPLE_SIZE)
         )
     )
@@ -115,7 +102,7 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
             avg_job_sec = sum(durations) / len(durations)
 
     remaining = queued + running
-    pct_done = (completed + failed) / total if total else 0.0
+    pct_done = (completed + failed + site_unavailable) / total if total else 0.0
     eta_seconds: float | None = None
     eta_at: datetime | None = None
     if avg_job_sec and remaining > 0:
@@ -126,6 +113,7 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
         total=total,
         completed=completed,
         failed=failed,
+        site_unavailable=site_unavailable,
         running=running,
         queued=queued,
         stuck_count=stuck_count,
@@ -200,6 +188,7 @@ def _analysis_stats(session: Session) -> PipelineStageStats:
         total=total,
         completed=completed,
         failed=failed,
+        site_unavailable=0,  # not applicable to analysis jobs
         running=running,
         queued=queued,
         stuck_count=stuck_count,
@@ -225,9 +214,8 @@ def get_stats(session: Session = Depends(get_session)) -> StatsResponse:
 
 
 class DrainQueueResult(BaseModel):
-    drained: int
-    cancelled_db_jobs: int
-    queue_key: str
+    cancelled_scrape_jobs: int
+    cancelled_analysis_jobs: int
 
 
 class ResetStuckResult(BaseModel):
@@ -236,10 +224,8 @@ class ResetStuckResult(BaseModel):
 
 @router.post("/queue/drain", response_model=DrainQueueResult)
 def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
-    """Cancel all queued work: DB jobs, pending outbox rows. Workers will no-op any
-    remaining stream entries because the DB state is no longer claimable."""
-
-    # Cancel ScrapeJob records still in "created" state.
+    """Cancel all queued work. Workers will no-op any in-flight tasks because
+    the DB state will no longer be claimable."""
     queued_scrape = list(
         session.exec(select(ScrapeJob).where(col(ScrapeJob.status) == "created"))
     )
@@ -248,8 +234,6 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
         job.terminal_state = True
         session.add(job)
 
-    # Cancel AnalysisJob records still in QUEUED state — DEAD, not FAILED,
-    # because the worker never ran them.
     queued_analysis = list(
         session.exec(
             select(AnalysisJob).where(
@@ -263,75 +247,38 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
         job.terminal_state = True
         session.add(job)
 
-    # Delete pending (unpublished) outbox rows so they never reach the stream.
-    pending_outbox = list(
-        session.exec(
-            select(JobOutbox).where(col(JobOutbox.published_at).is_(None))
-        )
-    )
-    for row in pending_outbox:
-        session.delete(row)
-
     session.commit()
 
-    cancelled_db = len(queued_scrape) + len(queued_analysis)
     return DrainQueueResult(
-        drained=len(pending_outbox),
-        cancelled_db_jobs=cancelled_db,
-        queue_key="outbox+stream",
+        cancelled_scrape_jobs=len(queued_scrape),
+        cancelled_analysis_jobs=len(queued_analysis),
     )
 
 
 @router.post("/jobs/reset-stuck", response_model=ResetStuckResult)
 def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResult:
-    """Re-queue scrape jobs that are stuck in a running or incomplete state.
+    """Reset non-terminal scrape jobs stuck in running state and re-enqueue them."""
+    from app.tasks.scrape import scrape_website
 
-    Jobs in ``step1_completed`` only need their lock cleared — step1 already
-    succeeded and ``scrape_run_all`` will skip directly to step2.
-    Jobs in ``running_step1`` / ``running_step2`` are reset to ``created``
-    so the full pipeline reruns.
-    """
-    # Jobs where step1 completed but step2 never started (lock not cleared).
-    # Just clear the lock; keep status so step2 can claim immediately.
-    step1_done_stuck = list(
+    stuck = list(
         session.exec(
             select(ScrapeJob).where(
                 col(ScrapeJob.terminal_state).is_(False)
-                & (col(ScrapeJob.status) == "step1_completed")
+                & (col(ScrapeJob.status) == "running")
             )
         )
     )
-    for job in step1_done_stuck:
-        job.lock_token = None
-        job.lock_expires_at = None
-        session.add(job)
-
-    # Jobs genuinely stuck mid-run — reset to start so step1 reruns cleanly.
-    running_stuck = list(
-        session.exec(
-            select(ScrapeJob).where(
-                col(ScrapeJob.terminal_state).is_(False)
-                & col(ScrapeJob.status).in_(["running_step1", "running_step2"])
-            )
-        )
-    )
-    for job in running_stuck:
+    for job in stuck:
         job.status = "created"
-        job.terminal_state = False
         job.lock_token = None
         job.lock_expires_at = None
         session.add(job)
-
     session.commit()
 
-    # Re-enqueue all: scrape_run_all handles both cases correctly.
-    # For step1_completed jobs: run_step1 CAS-misses (status wrong), then
-    # _run_all checks stage1_status == "completed" and proceeds to step2.
-    all_stuck = step1_done_stuck + running_stuck
-    for job in all_stuck:
-        queue_service.enqueue(task_type="scrape_run_all", payload={"job_id": str(job.id)})
+    for job in stuck:
+        scrape_website.delay(str(job.id))
 
-    return ResetStuckResult(reset_count=len(all_stuck))
+    return ResetStuckResult(reset_count=len(stuck))
 
 
 class MarkFailedResult(BaseModel):
@@ -340,10 +287,7 @@ class MarkFailedResult(BaseModel):
 
 @router.post("/jobs/mark-non-completed-failed", response_model=MarkFailedResult)
 def mark_non_completed_failed(session: Session = Depends(get_session)) -> MarkFailedResult:
-    """Mark all non-completed scrape jobs (cancelled, stuck-running, etc.) as failed/terminal.
-
-    Use this to clean up DB state so the job list accurately reflects what actually ran.
-    """
+    """Mark all non-completed, non-failed scrape jobs as failed/terminal."""
     non_completed = list(
         session.exec(
             select(ScrapeJob).where(
@@ -366,7 +310,9 @@ class ResetStuckAnalysisResult(BaseModel):
 
 @router.post("/analysis-jobs/reset-stuck", response_model=ResetStuckAnalysisResult)
 def reset_stuck_analysis_jobs(session: Session = Depends(get_session)) -> ResetStuckAnalysisResult:
-    """Reset analysis jobs stuck in RUNNING or orphaned QUEUED state and re-enqueue them."""
+    """Reset analysis jobs stuck in RUNNING or QUEUED state and re-enqueue them."""
+    from app.tasks.analysis import run_analysis_job
+
     stuck = list(
         session.exec(
             select(AnalysisJob).where(
@@ -384,7 +330,7 @@ def reset_stuck_analysis_jobs(session: Session = Depends(get_session)) -> ResetS
     session.commit()
 
     for job in stuck:
-        queue_service.enqueue(task_type="analysis_job", payload={"analysis_job_id": str(job.id)})
+        run_analysis_job.delay(str(job.id))
 
     return ResetStuckAnalysisResult(reset_count=len(stuck))
 
@@ -395,10 +341,7 @@ class MarkEmptyCompletedResult(BaseModel):
 
 @router.post("/jobs/mark-empty-completed-failed", response_model=MarkEmptyCompletedResult)
 def mark_empty_completed_failed(session: Session = Depends(get_session)) -> MarkEmptyCompletedResult:
-    """Mark scrape jobs that are 'completed' but produced zero markdown pages as failed.
-
-    These are ghost completions — the job ran but extracted nothing classifiable.
-    """
+    """Mark scrape jobs that completed but produced zero markdown pages as failed."""
     empty = list(
         session.exec(
             select(ScrapeJob).where(

@@ -35,6 +35,9 @@ function badgeForJob(job: ScrapeJobRead): { variant: 'info' | 'success' | 'fail'
     const label = job.stage2_status === 'running' ? 'Stage 2' : job.stage1_status === 'running' ? 'Stage 1' : job.status
     return { variant: 'info', label }
   }
+  if (job.status === 'site_unavailable') {
+    return { variant: 'neutral', label: 'Site Down' }
+  }
   if (job.status.includes('failed') || job.stage1_status === 'failed' || job.stage2_status === 'failed' || !!job.last_error_code) {
     return { variant: 'fail', label: 'Failed' }
   }
@@ -47,7 +50,14 @@ function JobCard({ job, onViewMarkdown }: { job: ScrapeJobRead; onViewMarkdown: 
     <div className="rounded-2xl border border-[var(--oc-border)] bg-white p-3.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate font-semibold text-[var(--oc-accent-ink)]">{job.domain}</p>
+          <a
+            href={job.normalized_url || `https://${job.domain}`}
+            target="_blank"
+            rel="noreferrer"
+            className="truncate block font-semibold text-[var(--oc-accent-ink)] hover:underline"
+          >
+            {job.domain}
+          </a>
           <p className="mt-0.5 font-mono text-[10px] text-[var(--oc-muted)]">{job.id.slice(0, 8)}…</p>
         </div>
         <Badge variant={badge.variant}>{badge.label}</Badge>
@@ -209,10 +219,16 @@ export function ScrapeJobsView({
                       <td className="font-mono text-[11px] text-[var(--oc-muted)]" title={job.id}>
                         {job.id.slice(0, 8)}…
                       </td>
-                      <td title={job.normalized_url}>
-                        <span className="block max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)]">
+                      <td>
+                        <a
+                          href={job.normalized_url || `https://${job.domain}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--oc-accent-ink)] hover:underline"
+                          title={job.normalized_url}
+                        >
                           {job.domain}
-                        </span>
+                        </a>
                       </td>
                       <td>
                         <Badge variant={badge.variant}>{badge.label}</Badge>

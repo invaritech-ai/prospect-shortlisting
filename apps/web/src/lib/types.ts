@@ -254,6 +254,7 @@ export type PipelineStageStats = {
   total: number
   completed: number
   failed: number
+  site_unavailable: number
   running: number
   queued: number
   stuck_count: number

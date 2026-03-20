@@ -18,11 +18,38 @@ services:
       retries: 5
       start_period: 20s
 
-  worker:
+  worker-scrape:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
-    command: ["uv", "run", "python", "-m", "app.worker"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-c", "8", "--loglevel=info"]
     restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat", "-c", "8", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy

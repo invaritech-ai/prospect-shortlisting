@@ -27,7 +27,7 @@ from app.models.pipeline import (
 
 def _build_analysis_job(session: Session) -> AnalysisJob:
     """Create the full object graph needed for one AnalysisJob."""
-    upload = Upload(filename="dup-test.csv", valid_count=1, invalid_count=0)
+    upload = Upload(filename="dup-test.csv", checksum="ck-dup", valid_count=1, invalid_count=0)
     session.add(upload)
     session.flush()
 
@@ -64,7 +64,6 @@ def _build_analysis_job(session: Session) -> AnalysisJob:
         prompt_id=prompt.id,
         general_model="test",
         classify_model="test",
-        ocr_model="test",
         status="running",
         total_jobs=1,
         completed_jobs=0,

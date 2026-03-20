@@ -13,7 +13,6 @@ class RunCreateRequest(BaseModel):
     company_ids: list[UUID] | None = None
     general_model: str = Field(default="openai/gpt-5-nano", min_length=2, max_length=128)
     classify_model: str = Field(default="inception/mercury-2", min_length=2, max_length=128)
-    ocr_model: str = Field(default="google/gemini-3.1-flash-lite-preview", min_length=2, max_length=128)
 
     @model_validator(mode="after")
     def _validate_scope(self) -> "RunCreateRequest":
@@ -29,7 +28,6 @@ class RunRead(BaseModel):
     prompt_name: str
     general_model: str
     classify_model: str
-    ocr_model: str
     status: str
     total_jobs: int
     completed_jobs: int

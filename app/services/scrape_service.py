@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import re
 import socket
 import ssl
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from playwright.sync_api import sync_playwright
 from scrapling import AsyncFetcher, DynamicFetcher, Selector
 from sqlalchemy import or_
 from sqlalchemy import update as sa_update
@@ -24,16 +19,36 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
-from app.core.config import settings
 from app.core.logging import log_event
 from app.models import ScrapeJob, ScrapePage
+from app.services.llm_client import LLMClient
 from app.services.markdown_service import MarkdownService
-from app.services.ocr_service import OCRService
 from app.services.url_utils import absolute_url, canonical_internal_url, clean_text, domain_from_url, normalize_url
 
 
 logger = logging.getLogger(__name__)
 USER_AGENT = "ProspectShortlistingBot/1.0 (+https://example.com)"
+
+# Lock TTL covers the full single-pass scrape (DNS + fetches + markdown).
+# Set above the Celery soft_time_limit (30 min) so the lock outlives the task.
+_SCRAPE_LOCK_TTL = timedelta(minutes=35)
+
+# Error codes that indicate a permanent, unrecoverable website failure.
+# Jobs that fail only due to these codes get status="site_unavailable" rather
+# than status="failed", and are not re-enqueued by the reconciler.
+PERMANENT_SCRAPE_ERROR_CODES: frozenset[str] = frozenset({"dns_not_resolved", "tls_error"})
+
+# Page kinds discovered and fetched, in priority order.
+# "home" is always the seed URL; the rest are discovered via LLM/sitemap.
+_PAGE_KINDS = [
+    ("home", 0),
+    ("about", 1),
+    ("products", 1),
+    ("contact", 2),
+    ("team", 2),
+    ("leadership", 2),
+    ("pricing", 2),
+]
 
 SKIP_HINTS = (
     "/login",
@@ -152,66 +167,57 @@ def discover_internal_links(selector: Selector, base_url: str, domain: str) -> l
     return links
 
 
-def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -> tuple[str, str]:
-    api_key = (settings.openrouter_api_key or os.getenv("OPENROUTER_API_KEY", "")).strip()
-    if not api_key or not candidates:
-        return "", ""
+_classify_llm = LLMClient(purpose="classify_links", max_retries=2, default_timeout=60)
+
+_PAGE_KIND_KEYS = ("about", "products", "contact", "team", "leadership", "services")
+
+
+def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -> dict[str, str]:
+    """Ask an LLM to pick the best URL for each page kind from *candidates*.
+
+    Returns a dict with keys matching _PAGE_KIND_KEYS.
+    Missing or unmatched kinds are set to "".
+    """
+    if not candidates:
+        return {}
 
     links_block = "\n".join(f"- {url}" for url in candidates[:200])
-    payload = {
-        "model": model,
-        "messages": [
+    content, error = _classify_llm.chat(
+        model=model,
+        messages=[
             {
                 "role": "system",
                 "content": (
                     "Classify links for one company website. "
-                    "Return strict JSON with best_about and best_products only."
+                    "Return strict JSON with the best URL for each page type, or empty string if not found."
                 ),
             },
             {
                 "role": "user",
                 "content": (
                     f"Domain: {domain}\n"
-                    "Task:\n"
-                    "- Choose best_about URL (about/company/team)\n"
-                    "- Choose best_products URL (products/catalog/shop/linecard)\n"
-                    "- Ignore auth, legal, policy, cart, search, testimonial pages\n\n"
-                    "Links:\n"
-                    f"{links_block}\n\n"
-                    'Return JSON: {"best_about":"", "best_products":""}'
+                    "Find the best URL for each of these page types:\n"
+                    "- about: company overview/about-us/who-we-are page (best source for canonical company name, founded year, HQ)\n"
+                    "- products: products/services/solutions/catalog/linecard page\n"
+                    "- contact: contact/get-in-touch page (phone, email, address)\n"
+                    "- team: general team/people/staff page\n"
+                    "- leadership: executive team/leadership/management/board/C-suite page\n"
+                    "- services: services/capabilities/what-we-do page\n"
+                    "Ignore auth, legal, policy, cart, search, testimonial pages.\n\n"
+                    f"Links:\n{links_block}\n\n"
+                    'Return JSON: {"about":"","products":"","contact":"","team":"","leadership":"","services":""}'
                 ),
             },
         ],
-        "temperature": 0.0,
-        "response_format": {"type": "json_object"},
-    }
-    request = Request(
-        url=f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": settings.openrouter_site_url,
-            "X-Title": settings.openrouter_app_name,
-        },
+        response_format={"type": "json_object"},
     )
+    if error:
+        return {}
     try:
-        with urlopen(request, context=ssl.create_default_context(), timeout=60) as response:  # noqa: S310
-            raw = response.read().decode("utf-8", errors="ignore")
-        decoded = json.loads(raw)
-        choices = decoded.get("choices") or []
-        if not choices:
-            log_event(logger, "scrape_llm_empty_choices", model=model, raw_response=raw[:500])
-            return "", ""
-        content = choices[0]["message"]["content"]
-        parsed = json.loads(content) if isinstance(content, str) else {}
-        about = str(parsed.get("best_about", "") or "").strip()
-        products = str(parsed.get("best_products", "") or "").strip()
-        return about, products
-    except Exception as exc:  # noqa: BLE001
-        log_event(logger, "scrape_llm_error", model=model, error=str(exc), traceback=traceback.format_exc())
-        return "", ""
+        parsed = json.loads(content) if content else {}
+        return {k: str(parsed.get(k, "") or "").strip() for k in _PAGE_KIND_KEYS}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
@@ -263,7 +269,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                     headless=True,
                     timeout=settings.scrape_dynamic_timeout_ms,
                     wait=settings.scrape_dynamic_wait_ms,
-                    network_idle=True,   # wait for XHR/fetch calls to settle (critical for SPAs)
+                    network_idle=True,
                     disable_resources=False,
                     load_dom=True,
                     retries=settings.scrape_dynamic_retries,
@@ -328,9 +334,15 @@ async def discover_focus_targets(
     use_js_fallback: bool,
     classify_model: str,
 ) -> dict[str, str]:
+    """Return a mapping of page_kind → URL for pages worth scraping.
+
+    Always includes "home".  Attempts to discover about, products, contact,
+    team, and pricing by combining sitemap URLs and home-page link extraction,
+    then asking an LLM to pick the best match for each kind.
+    """
     home = canonical_internal_url(start_url, domain)
     if not home:
-        return {"home": "", "about": "", "products": ""}
+        return {"home": ""}
 
     candidates: list[str] = []
     if include_sitemap:
@@ -349,46 +361,22 @@ async def discover_focus_targets(
         seen.add(canonical)
         deduped.append(canonical)
 
-    about_raw, products_raw = classify_links_with_llm(
-        domain=domain,
-        candidates=deduped,
-        model=classify_model,
-    )
-    about = canonical_internal_url(about_raw, domain) if about_raw else ""
-    products = canonical_internal_url(products_raw, domain) if products_raw else ""
-    if not about:
-        about = canonical_internal_url(f"https://{domain}/about", domain) or ""
-    if not products:
-        products = canonical_internal_url(f"https://{domain}/products", domain) or ""
-    return {"home": home, "about": about, "products": products}
+    kind_urls = classify_links_with_llm(domain=domain, candidates=deduped, model=classify_model)
 
+    result: dict[str, str] = {"home": home}
+    for kind in ("about", "products", "contact", "team", "leadership", "pricing"):
+        raw_url = kind_urls.get(kind, "")
+        canonical_kind = canonical_internal_url(raw_url, domain) if raw_url else ""
+        if not canonical_kind and kind in ("about", "products"):
+            # Fallback guesses for the two most important kinds.
+            canonical_kind = canonical_internal_url(f"https://{domain}/{kind}", domain) or ""
+        result[kind] = canonical_kind
 
-def capture_page_screenshot(url: str, path: Path) -> tuple[str, str]:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 1400, "height": 2200})
-            page.goto(url, wait_until="domcontentloaded", timeout=settings.scrape_screenshot_timeout_ms)
-            page.wait_for_timeout(settings.scrape_screenshot_settle_ms)
-            page.screenshot(path=str(path), full_page=True)
-            browser.close()
-        return str(path), ""
-    except Exception as exc:  # noqa: BLE001
-        return "", str(exc)
-
-
-def should_convert_to_markdown(page: ScrapePage) -> bool:
-    if page.status_code >= 400:
-        return False
-    if page.text_len < 80:
-        return False
-    return True
+    return result
 
 
 class ScrapeService:
     def __init__(self) -> None:
-        self.ocr_service = OCRService()
         self.markdown_service = MarkdownService()
 
     def create_job(
@@ -396,15 +384,10 @@ class ScrapeService:
         *,
         session: Session,
         website_url: str,
-        max_pages: int,
-        max_depth: int,
         js_fallback: bool,
         include_sitemap: bool,
         general_model: str,
         classify_model: str,
-        ocr_model: str,
-        enable_ocr: bool,
-        max_images_per_page: int,
     ) -> ScrapeJob:
         normalized = normalize_url(website_url)
         if not normalized:
@@ -413,9 +396,7 @@ class ScrapeService:
         if not domain:
             raise ValueError("Could not derive domain from URL.")
 
-        # Fast-path check: surface existing job ID in the error message without
-        # waiting for the DB constraint to fire. Not a safety guarantee — the
-        # unique index below is the real guard against concurrent duplicates.
+        # Fast-path check for an existing active job.
         active_job = session.exec(
             select(ScrapeJob)
             .where(
@@ -435,25 +416,16 @@ class ScrapeService:
             website_url=website_url,
             normalized_url=normalized,
             domain=domain,
-            max_pages=max_pages,
-            max_depth=max_depth,
             js_fallback=js_fallback,
             include_sitemap=include_sitemap,
             general_model=general_model,
             classify_model=classify_model,
-            ocr_model=ocr_model,
-            enable_ocr=enable_ocr,
-            max_images_per_page=max_images_per_page,
         )
         session.add(job)
         try:
-            # Flush (not commit) so the caller can atomically add an outbox row
-            # in the same transaction before committing.
             session.flush()
         except IntegrityError:
             session.rollback()
-            # A concurrent request won the race and created an active job for
-            # this URL between our SELECT and INSERT. Find it and report it.
             conflicting = session.exec(
                 select(ScrapeJob)
                 .where(
@@ -470,70 +442,71 @@ class ScrapeService:
         session.refresh(job)
         return job
 
-    async def run_step1(self, *, engine: Engine, job_id: Any) -> None:
-        # Phase 1: CAS-claim the job atomically — short session, released before any I/O.
-        # Only one worker wins; the loser finds its token absent and exits.
-        _STEP1_LOCK_TTL = timedelta(minutes=30)
+    async def run_scrape(self, *, engine: Engine, job_id: Any) -> None:
+        """Single-pass scrape: DNS check → discover pages → fetch → markdown → write.
+
+        Uses a CAS lock so that if Celery re-delivers the task (e.g. after a
+        soft_time_limit restart) the second worker detects it lost the race and
+        exits without writing duplicate data.
+        """
         now = utcnow()
         lock_token = str(uuid4())
+
+        # ── Phase 1: CAS-claim ──────────────────────────────────────────────
         with Session(engine) as session:
             session.execute(
                 sa_update(ScrapeJob)
                 .where(
                     col(ScrapeJob.id) == job_id,
                     col(ScrapeJob.terminal_state).is_(False),
-                    col(ScrapeJob.status).in_(["created", "running_step1"]),
+                    col(ScrapeJob.status).in_(["created", "running"]),
                     or_(
                         col(ScrapeJob.lock_token).is_(None),
                         col(ScrapeJob.lock_expires_at) < now,
                     ),
                 )
                 .values(
-                    status="running_step1",
-                    stage1_status="running",
-                    terminal_state=False,
-                    step1_started_at=now,
+                    status="running",
+                    started_at=now,
                     lock_token=lock_token,
-                    lock_expires_at=now + _STEP1_LOCK_TTL,
+                    lock_expires_at=now + _SCRAPE_LOCK_TTL,
                     updated_at=now,
                 )
             )
             session.commit()
-            # Verify we won the CAS: only our worker sets this exact token.
             job = session.get(ScrapeJob, job_id)
             if not job or job.lock_token != lock_token:
-                log_event(logger, "step1_skipped_not_owner", job_id=str(job_id))
+                log_event(logger, "scrape_skipped_not_owner", job_id=str(job_id))
                 return
             domain = job.domain
             normalized_url = job.normalized_url
             js_fallback = job.js_fallback
             include_sitemap = job.include_sitemap
             classify_model = job.classify_model
+            general_model = job.general_model
 
-        # Phase 2: DNS check — no DB connection held.
+        # ── Phase 2: DNS check ──────────────────────────────────────────────
         if not await resolve_domain(domain):
             with Session(engine) as session:
                 job = session.get(ScrapeJob, job_id)
                 if job and job.lock_token == lock_token:
-                    job.status = "step1_failed"
-                    job.stage1_status = "failed"
-                    job.stage2_status = "skipped"
+                    job.status = "site_unavailable"
                     job.terminal_state = True
                     job.last_error_code = "dns_not_resolved"
                     job.last_error_message = f"{domain} :: dns_not_resolved"
                     job.fetch_failures_count = 1
-                    job.step1_finished_at = utcnow()
+                    job.finished_at = utcnow()
                     job.updated_at = utcnow()
                     session.add(job)
                     session.commit()
             return
 
-        # Phase 3: clear stale pages — short session.
+        # ── Phase 3: clear stale pages ──────────────────────────────────────
         with Session(engine) as session:
             session.exec(delete(ScrapePage).where(col(ScrapePage.job_id) == job_id))
             session.commit()
 
-        # Phase 4: all network I/O — no DB connection held for any of this.
+        # ── Phase 4: discover target URLs (sitemap + LLM) ───────────────────
         targets = await discover_focus_targets(
             start_url=normalized_url,
             domain=domain,
@@ -542,17 +515,17 @@ class ScrapeService:
             classify_model=classify_model,
         )
 
-        ordered_targets = [("home", 0), ("about", 1), ("products", 1)]
-        seen: set[str] = set()
+        seen_urls: set[str] = set()
         fetched_pages: list[dict[str, Any]] = []
         failure_count = 0
 
-        for kind, depth in ordered_targets:
+        # ── Phase 5: fetch each target page ─────────────────────────────────
+        for kind, depth in _PAGE_KINDS:
             target_url = targets.get(kind, "")
             canonical = canonical_internal_url(target_url, domain) if target_url else ""
-            if not canonical or canonical in seen:
+            if not canonical or canonical in seen_urls:
                 continue
-            seen.add(canonical)
+            seen_urls.add(canonical)
 
             fetch = await fetch_with_fallback(canonical, use_js=js_fallback)
             if fetch.selector is None:
@@ -572,15 +545,22 @@ class ScrapeService:
 
             selector = fetch.selector
             page_url = str(selector.url or canonical)
+
+            # Skip if the redirect landed on a login/auth page.
+            if should_skip_url(page_url):
+                log_event(logger, "scrape_skipped_login_redirect", kind=kind, url=canonical, final_url=page_url)
+                continue
+
+            # Skip if the redirect landed on a URL we already scraped (e.g. /about → /).
+            final_canonical = canonical_internal_url(page_url, domain) or page_url
+            if final_canonical != canonical and final_canonical in seen_urls:
+                log_event(logger, "scrape_skipped_redirect_duplicate", kind=kind, url=canonical, final_url=final_canonical)
+                continue
+            seen_urls.add(final_canonical)
+
             title = clean_text(str(selector.css("title::text").get(default="")))[:300]
             description = clean_text(str(selector.css("meta[name='description']::attr(content)").get(default="")))[:800]
             text = clean_text(str(selector.get_all_text(separator=" ")))
-            html_body = getattr(selector, "body", b"")
-            html_snapshot = (
-                html_body.decode("utf-8", errors="ignore")
-                if isinstance(html_body, (bytes, bytearray))
-                else str(html_body or "")
-            )
             fetched_pages.append({
                 "success": True,
                 "url": page_url,
@@ -593,239 +573,138 @@ class ScrapeService:
                 "description": description,
                 "text_len": len(text),
                 "raw_text": text[:40000],
-                "html_snapshot": html_snapshot[:200000],
             })
 
         pages_fetched_count = sum(1 for p in fetched_pages if p["success"])
 
-        # Phase 5: write all results — short session.
-        with Session(engine) as session:
-            job = session.get(ScrapeJob, job_id)
-            if not job or job.lock_token != lock_token:
-                log_event(logger, "step1_results_skipped_not_owner", job_id=str(job_id))
-                return
-            for page_data in fetched_pages:
-                if page_data["success"]:
-                    session.add(ScrapePage(
-                        job_id=job_id,
-                        url=page_data["url"],
-                        canonical_url=page_data["canonical_url"],
-                        depth=page_data["depth"],
-                        page_kind=page_data["page_kind"],
-                        fetch_mode=page_data["fetch_mode"],
-                        status_code=page_data["status_code"],
-                        title=page_data["title"],
-                        description=page_data["description"],
-                        text_len=page_data["text_len"],
-                        raw_text=page_data["raw_text"],
-                        html_snapshot=page_data["html_snapshot"],
-                        image_urls_json="[]",
-                        fetch_error_code="",
-                        fetch_error_message="",
-                    ))
-                else:
-                    session.add(ScrapePage(
-                        job_id=job_id,
-                        url=page_data["url"],
-                        canonical_url=page_data["canonical_url"],
-                        depth=page_data["depth"],
-                        page_kind=page_data["page_kind"],
-                        fetch_mode=page_data["fetch_mode"],
-                        status_code=page_data["status_code"],
-                        fetch_error_code=page_data["fetch_error_code"],
-                        fetch_error_message=page_data["fetch_error_message"],
-                    ))
+        if pages_fetched_count == 0:
+            with Session(engine) as session:
+                job = session.get(ScrapeJob, job_id)
+                if job and job.lock_token == lock_token:
+                    # Determine if all fetch failures were genuinely permanent
+                    # (DNS / TLS) vs transient (timeout, generic fetch error).
+                    failure_codes = [
+                        p.get("fetch_error_code", "")
+                        for p in fetched_pages
+                        if not p["success"]
+                    ]
+                    all_permanent = bool(failure_codes) and all(
+                        c in PERMANENT_SCRAPE_ERROR_CODES for c in failure_codes
+                    )
+                    if all_permanent:
+                        dominant = max(set(failure_codes), key=failure_codes.count)
+                        job.status = "site_unavailable"
+                        job.last_error_code = dominant
+                        job.last_error_message = f"All fetches failed with permanent error: {dominant}"
+                    else:
+                        job.status = "failed"
+                        job.last_error_code = "no_pages_fetched"
+                        job.last_error_message = "No pages could be fetched."
+                    job.terminal_state = True
+                    job.fetch_failures_count = failure_count
+                    job.discovered_urls_count = len(seen_urls)
+                    job.finished_at = utcnow()
+                    job.updated_at = utcnow()
+                    session.add(job)
+                    session.commit()
+            return
 
-            job.discovered_urls_count = len(seen)
-            job.fetch_failures_count = failure_count
-            job.pages_fetched_count = pages_fetched_count
-            job.stage1_status = "completed"
-            job.status = "step1_completed"
-            job.last_error_code = None
-            job.last_error_message = None
-            job.step1_finished_at = utcnow()
-            job.updated_at = utcnow()
-            # Clear the step1 lock so run_step2's CAS claim can proceed immediately.
-            job.lock_token = None
-            job.lock_expires_at = None
-            if pages_fetched_count == 0:
-                job.status = "step1_failed"
-                job.stage1_status = "failed"
-                job.stage2_status = "skipped"
-                job.terminal_state = True
-                job.last_error_code = "no_pages_fetched"
-                job.last_error_message = "No pages fetched in step1."
-            session.add(job)
-            session.commit()
-            session.refresh(job)
-
-            log_event(
-                logger,
-                "step1_completed",
-                job_id=str(job.id),
-                domain=domain,
-                pages_fetched=job.pages_fetched_count,
-                failures=job.fetch_failures_count,
-            )
-
-    def run_step2(self, *, engine: Engine, job_id: Any) -> None:
-        # Phase 1: CAS-claim the job atomically — short session, released before any I/O.
-        _STEP2_LOCK_TTL = timedelta(minutes=30)
-        now = utcnow()
-        lock_token = str(uuid4())
-        with Session(engine) as session:
-            session.execute(
-                sa_update(ScrapeJob)
-                .where(
-                    col(ScrapeJob.id) == job_id,
-                    col(ScrapeJob.terminal_state).is_(False),
-                    col(ScrapeJob.status).in_(["step1_completed", "running_step2"]),
-                    or_(
-                        col(ScrapeJob.lock_token).is_(None),
-                        col(ScrapeJob.lock_expires_at) < now,
-                    ),
-                )
-                .values(
-                    status="running_step2",
-                    stage2_status="running",
-                    step2_started_at=now,
-                    lock_token=lock_token,
-                    lock_expires_at=now + _STEP2_LOCK_TTL,
-                    updated_at=now,
-                )
-            )
-            session.commit()
-            job = session.get(ScrapeJob, job_id)
-            if not job or job.lock_token != lock_token:
-                log_event(logger, "step2_skipped_not_owner", job_id=str(job_id))
-                return
-            domain = job.domain
-            enable_ocr = job.enable_ocr
-            ocr_model = job.ocr_model
-            general_model = job.general_model
-
-            # Read all page data while the session is still open.
-            pages_raw = list(
-                session.exec(
-                    select(ScrapePage)
-                    .where(col(ScrapePage.job_id) == job_id)
-                    .order_by(col(ScrapePage.depth), col(ScrapePage.id))
-                )
-            )
-            # Snapshot the fields we need so we don't carry ORM objects across sessions.
-            page_snapshots = [
-                {
-                    "id": page.id,
-                    "url": page.url,
-                    "title": page.title,
-                    "raw_text": page.raw_text,
-                    "status_code": page.status_code,
-                    "text_len": page.text_len,
-                    "page_kind": page.page_kind,
-                    "needs_markdown": should_convert_to_markdown(page),
-                }
-                for page in pages_raw
-            ]
-
-        screenshot_dir = Path("data/scrape_screenshots") / str(job_id).replace("-", "")
-
-        # Phase 2: all I/O (screenshots, OCR, markdown LLM) — no DB connection held.
+        # ── Phase 6: markdown conversion (rule-based + LLM fallback) ────────
+        # Done outside any DB session — no connection held during LLM calls.
+        page_updates: list[dict[str, Any]] = []
         markdown_pages = 0
-        ocr_images = 0
         llm_used = 0
         llm_failed = 0
-        page_updates: list[dict[str, Any]] = []
 
-        for snap in page_snapshots:
-            if not snap["needs_markdown"]:
-                page_updates.append({"id": snap["id"], "markdown_content": "", "ocr_text": ""})
+        for snap in fetched_pages:
+            if not snap["success"] or snap["status_code"] >= 400 or snap.get("text_len", 0) < 80:
+                page_updates.append({"snap": snap, "markdown_content": ""})
                 continue
-
-            screenshot_path = ""
-            screenshot_error = ""
-            if snap["id"] is not None:
-                page_kind = snap["page_kind"]
-                screenshot_path, screenshot_error = capture_page_screenshot(
-                    snap["url"],
-                    screenshot_dir / f"{page_kind}_{snap['id']}.png",
-                )
-
-            ocr_text = ""
-            if enable_ocr and screenshot_path:
-                ocr_text, ocr_error = self.ocr_service.extract_text_from_file(
-                    screenshot_path,
-                    model=ocr_model,
-                )
-                if ocr_text:
-                    ocr_images += 1
-                elif ocr_error:
-                    screenshot_error = screenshot_error or ocr_error
-
-            ocr_payload = ocr_text.strip()
-            if screenshot_path:
-                prefix = f"[SCREENSHOT_PATH] {screenshot_path}"
-                ocr_payload = f"{prefix}\n\n{ocr_payload}" if ocr_payload else prefix
-            if screenshot_error:
-                ocr_payload = f"{ocr_payload}\n\n[SCREENSHOT_ERROR] {screenshot_error}".strip()
 
             markdown, used_llm, llm_error = self.markdown_service.to_markdown(
                 url=snap["url"],
-                title=snap["title"],
-                page_text=snap["raw_text"],
-                ocr_text=ocr_payload,
+                title=snap.get("title", ""),
+                page_text=snap.get("raw_text", ""),
                 model=general_model,
             )
-            page_updates.append({
-                "id": snap["id"],
-                "ocr_text": ocr_payload[:16000],
-                "markdown_content": markdown[:50000],
-            })
+            page_updates.append({"snap": snap, "markdown_content": markdown[:50000]})
             markdown_pages += 1
             if used_llm:
                 llm_used += 1
             if llm_error:
                 llm_failed += 1
 
-        # Phase 3: write all results — short session.
+        # ── Phase 7: write all results ───────────────────────────────────────
         with Session(engine) as session:
-            now = utcnow()
+            now_finish = utcnow()
             job = session.get(ScrapeJob, job_id)
             if not job or job.lock_token != lock_token:
-                log_event(logger, "step2_results_skipped_not_owner", job_id=str(job_id))
+                log_event(logger, "scrape_results_skipped_not_owner", job_id=str(job_id))
                 return
-            for update_data in page_updates:
-                page = session.get(ScrapePage, update_data["id"])
-                if page:
-                    page.ocr_text = update_data.get("ocr_text", "")
-                    page.markdown_content = update_data["markdown_content"]
-                    page.updated_at = now
-                    session.add(page)
+
+            for pu in page_updates:
+                snap = pu["snap"]
+                if snap["success"]:
+                    session.add(ScrapePage(
+                        job_id=job_id,
+                        url=snap["url"],
+                        canonical_url=snap["canonical_url"],
+                        depth=snap["depth"],
+                        page_kind=snap["page_kind"],
+                        fetch_mode=snap["fetch_mode"],
+                        status_code=snap["status_code"],
+                        title=snap.get("title", ""),
+                        description=snap.get("description", ""),
+                        text_len=snap.get("text_len", 0),
+                        raw_text=snap.get("raw_text", ""),
+                        fetch_error_code="",
+                        fetch_error_message="",
+                        markdown_content=pu["markdown_content"],
+                    ))
+                else:
+                    session.add(ScrapePage(
+                        job_id=job_id,
+                        url=snap["url"],
+                        canonical_url=snap["canonical_url"],
+                        depth=snap["depth"],
+                        page_kind=snap["page_kind"],
+                        fetch_mode=snap["fetch_mode"],
+                        status_code=snap["status_code"],
+                        fetch_error_code=snap["fetch_error_code"],
+                        fetch_error_message=snap["fetch_error_message"],
+                    ))
+
+            job.discovered_urls_count = len(seen_urls)
+            job.pages_fetched_count = pages_fetched_count
+            job.fetch_failures_count = failure_count
             job.markdown_pages_count = markdown_pages
-            job.ocr_images_processed_count = ocr_images
             job.llm_used_count = llm_used
             job.llm_failed_count = llm_failed
-            job.stage2_status = "completed"
             job.terminal_state = True
-            job.step2_finished_at = now
-            job.updated_at = now
+            job.finished_at = now_finish
+            job.updated_at = now_finish
+            job.lock_token = None
+            job.lock_expires_at = None
+
             if markdown_pages == 0:
                 job.status = "failed"
                 job.last_error_code = "no_markdown_produced"
-                job.last_error_message = "Step 2 completed but produced no markdown pages."
+                job.last_error_message = "Scrape completed but produced no markdown pages."
             else:
                 job.status = "completed"
                 job.last_error_code = None
                 job.last_error_message = None
+
             session.add(job)
             session.commit()
 
             log_event(
                 logger,
-                "step2_completed",
+                "scrape_completed",
                 job_id=str(job_id),
                 domain=domain,
+                pages_fetched=pages_fetched_count,
+                failures=failure_count,
                 markdown_pages=markdown_pages,
-                ocr_images=ocr_images,
                 llm_used=llm_used,
-                llm_failed=llm_failed,
             )
