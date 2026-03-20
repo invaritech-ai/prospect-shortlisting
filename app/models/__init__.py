@@ -4,11 +4,14 @@ from app.models.pipeline import (
     ClassificationResult,
     Company,
     CompanyFeedback,
+    ContactFetchJob,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
     Prompt,
+    ProspectContact,
     Run,
+    TitleMatchRule,
     Upload,
 )
 
@@ -25,4 +28,7 @@ __all__ = [
     "AnalysisJob",
     "ClassificationResult",
     "JobEvent",
+    "ContactFetchJob",
+    "ProspectContact",
+    "TitleMatchRule",
 ]

@@ -1,1 +1,1 @@
-export type ActiveView = 'companies' | 'jobs' | 'runs' | 'operations' | 'analytics'
+export type ActiveView = 'companies' | 'jobs' | 'runs' | 'operations' | 'analytics' | 'contacts'

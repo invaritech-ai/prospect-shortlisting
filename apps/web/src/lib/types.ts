@@ -59,6 +59,8 @@ export type CompanyListItem = {
   latest_analysis_terminal: boolean | null
   feedback_thumbs: 'up' | 'down' | null
   feedback_comment: string | null
+  contact_count: number
+  contact_fetch_status: string | null
 }
 
 export type FeedbackUpsert = {
@@ -326,6 +328,55 @@ export type OperationsEvent = {
   search_blob: string
   scrape_job: ScrapeJobRead | null
   run: RunRead | null
+}
+
+export type ProspectContactRead = {
+  id: string
+  company_id: string
+  contact_fetch_job_id: string
+  source: string
+  first_name: string
+  last_name: string
+  title: string | null
+  title_match: boolean
+  linkedin_url: string | null
+  email: string | null
+  email_status: string
+  snov_confidence: number | null
+  created_at: string
+  updated_at: string
+}
+
+export type ContactListResponse = {
+  total: number
+  has_more: boolean
+  limit: number
+  offset: number
+  items: ProspectContactRead[]
+}
+
+export type ContactFetchResult = {
+  requested_count: number
+  queued_count: number
+  already_fetching_count: number
+  queued_job_ids: string[]
+}
+
+export type TitleMatchRuleRead = {
+  id: string
+  rule_type: 'include' | 'exclude'
+  keywords: string
+  created_at: string
+}
+
+export type TitleMatchRuleCreate = {
+  rule_type: 'include' | 'exclude'
+  keywords: string
+}
+
+export type TitleRuleSeedResult = {
+  inserted: number
+  message: string
 }
 
 export type AnalyticsSnapshot = {

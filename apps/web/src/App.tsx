@@ -61,6 +61,7 @@ import { ScrapeJobsView } from './components/views/ScrapeJobsView'
 import { AnalysisRunsView } from './components/views/AnalysisRunsView'
 import { OperationsLogView } from './components/views/OperationsLogView'
 import { AnalyticsSnapshotView } from './components/views/AnalyticsSnapshotView'
+import { ContactsView } from './components/views/ContactsView'
 
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
@@ -1011,6 +1012,10 @@ function App() {
             onRefresh={() => void loadRuns(runsOffset, runsPageSize)}
             onInspectRun={(run) => void loadRunJobs(run)}
           />
+        )}
+
+        {activeView === 'contacts' && (
+          <ContactsView />
         )}
 
         {activeView === 'operations' && (

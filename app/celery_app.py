@@ -6,7 +6,7 @@ from celery.schedules import crontab
 from app.core.config import settings
 
 app = Celery("prospect")
-app.autodiscover_tasks(["app.tasks.scrape", "app.tasks.analysis", "app.tasks.beat"])
+app.autodiscover_tasks(["app.tasks.scrape", "app.tasks.analysis", "app.tasks.beat", "app.tasks.contacts"])
 
 app.conf.update(
     broker_url=settings.redis_url,
@@ -29,6 +29,7 @@ app.conf.update(
         "app.tasks.scrape.scrape_website": {"queue": "scrape"},
         "app.tasks.analysis.run_analysis_job": {"queue": "analysis"},
         "app.tasks.beat.reconcile_stuck_jobs": {"queue": "beat"},
+        "app.tasks.contacts.fetch_contacts": {"queue": "contacts"},
     },
     # Celery Beat periodic schedule.
     beat_schedule={

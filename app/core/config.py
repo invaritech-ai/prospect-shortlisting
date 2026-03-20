@@ -20,7 +20,11 @@ class Settings(BaseSettings):
     scrape_dynamic_timeout_ms: int = 28000
     scrape_dynamic_wait_ms: int = 3000
     scrape_dynamic_retries: int = 1
+    scrape_stealth_timeout_ms: int = 60000  # longer — CAPTCHA solving can take ~30 s
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    snov_client_id: str = ""
+    snov_client_secret: str = ""
+    zerobounce_api_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -6,6 +6,7 @@ import {
   IconChart,
   IconTimeline,
   IconPulse,
+  IconUsers,
   IconPencil,
   IconDownload,
   IconChevronLeft,
@@ -31,6 +32,7 @@ const NAV_ITEMS: Array<{
   { value: 'companies', label: 'Companies', Icon: IconBuilding },
   { value: 'jobs', label: 'Scrape Jobs', Icon: IconGlobe },
   { value: 'runs', label: 'Analysis Runs', Icon: IconChart },
+  { value: 'contacts', label: 'Contacts', Icon: IconUsers },
   { value: 'operations', label: 'Operations Log', Icon: IconTimeline },
   { value: 'analytics', label: 'Analytics Snapshot', Icon: IconPulse },
 ]

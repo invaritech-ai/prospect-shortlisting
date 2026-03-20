@@ -46,6 +46,15 @@ class PredictedLabel(StrEnum):
 class JobType(StrEnum):
     CRAWL = "crawl"
     ANALYSIS = "analysis"
+    CONTACT_FETCH = "contact_fetch"
+
+
+class ContactFetchJobState(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    DEAD = "dead"
 
 
 class Upload(SQLModel, table=True):
@@ -216,4 +225,85 @@ class JobEvent(SQLModel, table=True):
     to_state: str = Field(max_length=64)
     event_type: str = Field(max_length=128)
     payload_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContactFetchJob(SQLModel, table=True):
+    """One contact-fetch task per company. CAS-locked, same pattern as AnalysisJob."""
+
+    __tablename__ = "contact_fetch_jobs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    company_id: UUID = Field(foreign_key="companies.id", index=True)
+
+    state: ContactFetchJobState = Field(default=ContactFetchJobState.QUEUED, index=True)
+    terminal_state: bool = Field(default=False)
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, ge=1)
+
+    last_error_code: str | None = Field(default=None, max_length=128)
+    last_error_message: str | None = Field(default=None, max_length=4000)
+
+    lock_token: str | None = Field(default=None, max_length=64)
+    lock_expires_at: datetime | None = Field(default=None, index=True)
+
+    contacts_found: int = Field(default=0, ge=0)
+    title_matched_count: int = Field(default=0, ge=0)
+
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ProspectContact(SQLModel, table=True):
+    """Contact record fetched from Snov.io for a company."""
+
+    __tablename__ = "prospect_contacts"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    company_id: UUID = Field(foreign_key="companies.id", index=True)
+    contact_fetch_job_id: UUID = Field(foreign_key="contact_fetch_jobs.id", index=True)
+    source: str = Field(default="snov", max_length=32)
+
+    first_name: str = Field(max_length=255)
+    last_name: str = Field(max_length=255)
+    title: str | None = Field(default=None, max_length=512)
+    title_match: bool = Field(default=False, index=True)
+    linkedin_url: str | None = Field(default=None, max_length=2048)
+
+    email: str | None = Field(default=None, max_length=512, index=True)
+    # unverified | valid | unknown | not_valid
+    email_status: str = Field(default="unverified", max_length=32, index=True)
+    snov_confidence: float | None = Field(default=None)
+
+    snov_prospect_raw: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    snov_email_raw: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    zerobounce_raw: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class TitleMatchRule(SQLModel, table=True):
+    """Keyword-set rules for matching prospect titles.
+
+    rule_type='include': ALL keywords in the set must appear in the title (AND logic).
+    rule_type='exclude': ANY keyword in the set disqualifies the title.
+    Include rules are ORed together; exclude rules are checked before includes.
+    """
+
+    __tablename__ = "title_match_rules"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    # 'include' or 'exclude'
+    rule_type: str = Field(max_length=16, index=True)
+    # Comma-separated keywords, e.g. "marketing, director"
+    keywords: str = Field(max_length=255)
     created_at: datetime = Field(default_factory=utcnow, index=True)

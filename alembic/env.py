@@ -13,13 +13,16 @@ from app.models import (  # noqa: F401
     AnalysisJob,
     ClassificationResult,
     Company,
+    ContactFetchJob,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
     Prompt,
+    ProspectContact,
     Run,
     ScrapeJob,
     ScrapePage,
+    TitleMatchRule,
     Upload,
 )
 
@@ -51,6 +54,9 @@ PIPELINE_TABLES = {
     "job_events",
     "scrapejob",
     "scrapepage",
+    "contact_fetch_jobs",
+    "prospect_contacts",
+    "title_match_rules",
 }
 
 

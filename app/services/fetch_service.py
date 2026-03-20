@@ -7,7 +7,7 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from scrapling import AsyncFetcher, DynamicFetcher, Selector
+from scrapling import AsyncFetcher, DynamicFetcher, Selector, StealthyFetcher
 
 from app.core.config import settings
 from app.services.url_utils import absolute_url, canonical_internal_url, clean_text
@@ -206,7 +206,37 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
         else:
             last_error = static_error or "fetch_failed"
 
-    # All attempts exhausted — return the thin static fallback if we have one.
+    # ── Tier 3: Stealth (Cloudflare / CAPTCHA bypass) ───────────────────────
+    # Only reached when both static and dynamic failed or returned thin content.
+    # StealthyFetcher uses a hardened Playwright profile that solves Cloudflare
+    # Turnstile / JS / interstitial challenges automatically.
+    if use_js:
+        try:
+            stealth_response = await StealthyFetcher.async_fetch(
+                url,
+                headless=True,
+                timeout=settings.scrape_stealth_timeout_ms,
+                network_idle=True,
+                solve_cloudflare=True,
+                block_webrtc=True,
+                hide_canvas=True,
+            )
+            if is_html_selector_response(stealth_response):
+                stealth_text = clean_text(str(stealth_response.get_all_text(separator=" ")))
+                if len(stealth_text) >= 250:
+                    return FetchResult(
+                        final_url=str(stealth_response.url),
+                        status_code=int(getattr(stealth_response, "status", 0) or 0),
+                        selector=stealth_response,
+                        fetch_mode="stealth",
+                        error_code="",
+                        error_message="",
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stealth_fetch_failed url=%s error=%s", url, str(exc)[:200])
+
+    # All tiers exhausted — return the thin static fallback if we have one,
+    # otherwise a clean error result.
     if thin_static_fallback is not None:
         return thin_static_fallback
 

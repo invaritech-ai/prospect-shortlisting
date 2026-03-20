@@ -27,9 +27,11 @@ from app.models import (
     ClassificationResult,
     Company,
     CompanyFeedback,
+    ContactFetchJob,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
+    ProspectContact,
     ScrapeJob,
     Upload,
 )
@@ -81,6 +83,29 @@ def _latest_analysis_subquery():
         )
         .distinct(AnalysisJob.company_id)
         .order_by(AnalysisJob.company_id, AnalysisJob.created_at.desc())
+        .subquery()
+    )
+
+
+def _contact_count_subquery():
+    return (
+        select(
+            ProspectContact.company_id.label("company_id"),
+            func.count().label("contact_count"),
+        )
+        .group_by(ProspectContact.company_id)
+        .subquery()
+    )
+
+
+def _latest_contact_fetch_subquery():
+    return (
+        select(
+            ContactFetchJob.company_id.label("company_id"),
+            cast(ContactFetchJob.state, String()).label("state"),
+        )
+        .distinct(ContactFetchJob.company_id)
+        .order_by(ContactFetchJob.company_id, ContactFetchJob.created_at.desc())
         .subquery()
     )
 
@@ -175,6 +200,8 @@ def list_companies(
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     latest_analysis = _latest_analysis_subquery()
+    contact_counts = _contact_count_subquery()
+    latest_contact_fetch = _latest_contact_fetch_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     latest_confidence = latest_classification.c.confidence
     decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
@@ -206,12 +233,16 @@ def list_companies(
             latest_analysis.c.analysis_job_id,
             CompanyFeedback.thumbs,
             CompanyFeedback.comment,
+            func.coalesce(contact_counts.c.contact_count, 0),
+            latest_contact_fetch.c.state,
         )
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
+        .outerjoin(contact_counts, contact_counts.c.company_id == Company.id)
+        .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
     )
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
@@ -263,6 +294,8 @@ def list_companies(
             latest_analysis_job_id=row[15],
             feedback_thumbs=str(row[16]) if row[16] is not None else None,
             feedback_comment=str(row[17]) if row[17] is not None else None,
+            contact_count=int(row[18]) if row[18] is not None else 0,
+            contact_fetch_status=str(row[19]) if row[19] is not None else None,
         )
         for row in page_rows
     ]

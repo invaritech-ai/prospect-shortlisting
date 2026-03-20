@@ -19,6 +19,8 @@ RUN uv sync --frozen
 
 # Required for dynamic page rendering (CSR detection fallback).
 RUN uv run playwright install --with-deps chromium
+# Required for stealth fetching (Cloudflare / CAPTCHA bypass).
+RUN uv run patchright install chromium
 
 COPY . .
 

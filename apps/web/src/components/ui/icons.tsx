@@ -221,3 +221,15 @@ export function IconExternalLink({ className = '', size = 20 }: IconProps) {
     </svg>
   )
 }
+
+export function IconUsers({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M13 11c2.2.3 4 1.7 4 3.5V16H3v-1.5C3 12.7 4.8 11.3 7 11"/>
+      <circle cx="10" cy="6" r="3"/>
+      <path d="M15.5 9.5c1.5.4 2.5 1.5 2.5 3V14M4.5 9.5C3 9.9 2 11 2 12.5V14"/>
+      <circle cx="15" cy="5" r="2"/>
+      <circle cx="5" cy="5" r="2"/>
+    </svg>
+  )
+}

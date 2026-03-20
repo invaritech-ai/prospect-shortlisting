@@ -6,6 +6,8 @@ import type {
   CompanyIdsResult,
   CompanyList,
   CompanyScrapeResult,
+  ContactFetchResult,
+  ContactListResponse,
   DecisionFilter,
   DrainQueueResult,
   FeedbackRead,
@@ -24,6 +26,9 @@ import type {
   ScrapeJobRead,
   ScrapePageContentRead,
   StatsResponse,
+  TitleMatchRuleCreate,
+  TitleMatchRuleRead,
+  TitleRuleSeedResult,
   UploadCompanyList,
   UploadCreateResult,
   UploadDetail,
@@ -231,4 +236,63 @@ export async function getLetterCounts(
   return request<LetterCounts>(
     `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`,
   )
+}
+
+// ── Contacts ──────────────────────────────────────────────────────────────────
+
+export async function fetchContactsForCompany(companyId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts`, { method: 'POST' })
+}
+
+export async function fetchContactsForRun(runId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts`, { method: 'POST' })
+}
+
+export async function listContacts(
+  options: {
+    titleMatch?: boolean
+    emailStatus?: string
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<ContactListResponse> {
+  const params = new URLSearchParams()
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  if (options.emailStatus) params.set('email_status', options.emailStatus)
+  if (options.search) params.set('search', options.search)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  return request<ContactListResponse>(`/v1/contacts?${params.toString()}`)
+}
+
+export async function listCompanyContacts(companyId: string): Promise<ContactListResponse> {
+  return request<ContactListResponse>(`/v1/companies/${companyId}/contacts`)
+}
+
+export function getContactsExportUrl(titleMatch?: boolean, emailStatus?: string): string {
+  const params = new URLSearchParams()
+  if (titleMatch !== undefined) params.set('title_match', String(titleMatch))
+  if (emailStatus) params.set('email_status', emailStatus)
+  return `${API_BASE_URL}/v1/contacts/export.csv?${params.toString()}`
+}
+
+export async function listTitleMatchRules(): Promise<TitleMatchRuleRead[]> {
+  return request<TitleMatchRuleRead[]>('/v1/title-match-rules')
+}
+
+export async function createTitleMatchRule(payload: TitleMatchRuleCreate): Promise<TitleMatchRuleRead> {
+  return request<TitleMatchRuleRead>('/v1/title-match-rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteTitleMatchRule(ruleId: string): Promise<void> {
+  await request<void>(`/v1/title-match-rules/${ruleId}`, { method: 'DELETE' })
+}
+
+export async function seedTitleMatchRules(): Promise<TitleRuleSeedResult> {
+  return request<TitleRuleSeedResult>('/v1/title-match-rules/seed', { method: 'POST' })
 }
