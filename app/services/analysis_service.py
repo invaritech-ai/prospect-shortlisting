@@ -101,12 +101,25 @@ class AnalysisService:
         queued_runs: list[Run] = []
         queued_jobs: list[AnalysisJob] = []
 
+        # ── Bulk pre-fetch pass ──────────────────────────────────────────────
+        # 1. Latest completed scrape job per URL.
+        all_urls = [c.normalized_url for c in companies if c.normalized_url]
+        scrape_map = self._bulk_latest_completed_scrape_jobs(session=session, normalized_urls=all_urls)
+
         for company in companies:
-            latest_scrape = self._latest_completed_scrape_job(session=session, normalized_url=company.normalized_url)
-            if latest_scrape is None:
+            if scrape_map.get(company.normalized_url) is None:
                 skipped_company_ids.append(company.id)
                 continue
             grouped.setdefault(company.upload_id, []).append(company)
+
+        # Collect the companies that will actually be processed.
+        active_companies = [c for groups in grouped.values() for c in groups]
+
+        # 2. Bulk CrawlJob + CrawlArtifact upsert (replaces per-company queries).
+        artifact_map = self._bulk_ensure_crawl_adapters(
+            session=session, companies=active_companies, scrape_map=scrape_map
+        )
+        # ────────────────────────────────────────────────────────────────────
 
         prompt_hash = hashlib.sha256(prompt.prompt_text.encode("utf-8")).hexdigest()
         for upload_id, grouped_companies in grouped.items():
@@ -122,36 +135,29 @@ class AnalysisService:
                 started_at=utcnow(),
             )
             session.add(run)
-            session.flush()
+            session.flush()  # needed for run.id FK in AnalysisJob
 
             for company in grouped_companies:
-                latest_scrape = self._latest_completed_scrape_job(session=session, normalized_url=company.normalized_url)
-                if latest_scrape is None:
+                artifact = artifact_map.get(company.id)
+                if artifact is None:
                     skipped_company_ids.append(company.id)
                     continue
-                crawl_artifact = self._ensure_crawl_adapter(
-                    session=session,
-                    company=company,
-                    scrape_job=latest_scrape,
-                )
                 analysis_job = AnalysisJob(
                     run_id=run.id,
                     upload_id=company.upload_id,
                     company_id=company.id,
-                    crawl_artifact_id=crawl_artifact.id,
+                    crawl_artifact_id=artifact.id,
                     state=AnalysisJobState.QUEUED,
                     terminal_state=False,
                     prompt_hash=prompt_hash,
                 )
-                session.add(analysis_job)
-                session.flush()
                 queued_jobs.append(analysis_job)
 
             run.total_jobs = sum(1 for job in queued_jobs if job.run_id == run.id)
             queued_runs.append(run)
 
-        # Flush (not commit) so the caller can atomically add outbox rows in
-        # the same transaction before committing.
+        # Single bulk insert for all analysis jobs, then one final flush.
+        session.add_all(queued_jobs)
         session.flush()
         for run in queued_runs:
             session.refresh(run)
@@ -346,6 +352,29 @@ class AnalysisService:
             session.refresh(analysis_job)
             return analysis_job
 
+    def _bulk_latest_completed_scrape_jobs(
+        self, *, session: Session, normalized_urls: list[str]
+    ) -> dict[str, ScrapeJob]:
+        """Return a map of normalized_url → latest completed ScrapeJob for all given URLs."""
+        if not normalized_urls:
+            return {}
+        rows = list(
+            session.exec(
+                select(ScrapeJob)
+                .where(
+                    col(ScrapeJob.normalized_url).in_(normalized_urls)
+                    & (col(ScrapeJob.status) == "completed")
+                )
+                .order_by(col(ScrapeJob.created_at).desc())
+            )
+        )
+        # Keep only the latest job per URL (rows already ordered desc by created_at).
+        result: dict[str, ScrapeJob] = {}
+        for job in rows:
+            if job.normalized_url not in result:
+                result[job.normalized_url] = job
+        return result
+
     def _latest_completed_scrape_job(self, *, session: Session, normalized_url: str) -> ScrapeJob | None:
         return session.exec(
             select(ScrapeJob)
@@ -391,6 +420,114 @@ class AnalysisService:
         rendered = rendered.replace("{org}", domain)
         rendered = rendered.replace("{context}", context)
         return rendered
+
+    def _bulk_ensure_crawl_adapters(
+        self,
+        *,
+        session: Session,
+        companies: list[Company],
+        scrape_map: dict[str, ScrapeJob],
+    ) -> dict[UUID, CrawlArtifact]:
+        """Upsert CrawlJob + CrawlArtifact for all companies in bulk.
+
+        Replaces the per-company _ensure_crawl_adapter loop.
+        Returns a map of company_id → CrawlArtifact.
+        """
+        if not companies:
+            return {}
+
+        company_ids = [c.id for c in companies]
+        now = utcnow()
+
+        # 1. Bulk-fetch existing CrawlJobs.
+        existing_crawl_jobs: dict[UUID, CrawlJob] = {
+            cj.company_id: cj
+            for cj in session.exec(
+                select(CrawlJob).where(col(CrawlJob.company_id).in_(company_ids))
+            ).all()
+        }
+
+        # 2. Bulk-fetch all ScrapePages for all relevant scrape job IDs.
+        scrape_job_ids = list({
+            scrape_map[c.normalized_url].id
+            for c in companies
+            if c.normalized_url and c.normalized_url in scrape_map
+        })
+        pages_by_job: dict[UUID, dict[str, ScrapePage]] = {}
+        if scrape_job_ids:
+            for page in session.exec(
+                select(ScrapePage).where(col(ScrapePage.job_id).in_(scrape_job_ids))
+            ).all():
+                pages_by_job.setdefault(page.job_id, {})[page.page_kind] = page
+
+        # 3. Build CrawlJob objects (create or update).
+        crawl_jobs_to_save: list[CrawlJob] = []
+        crawl_job_by_company: dict[UUID, CrawlJob] = {}
+        for company in companies:
+            scrape_job = scrape_map.get(company.normalized_url)
+            if not scrape_job:
+                continue
+            actual_state = (
+                CrawlJobState.SUCCEEDED
+                if scrape_job.status == "completed" and (scrape_job.pages_fetched_count or 0) > 0
+                else CrawlJobState.FAILED
+            )
+            cj = existing_crawl_jobs.get(company.id)
+            if cj is None:
+                cj = CrawlJob(
+                    upload_id=company.upload_id,
+                    company_id=company.id,
+                    state=actual_state,
+                    attempt_count=1,
+                    started_at=scrape_job.started_at or scrape_job.created_at,
+                    finished_at=scrape_job.finished_at or scrape_job.updated_at,
+                )
+            else:
+                cj.state = actual_state
+                cj.finished_at = scrape_job.finished_at or scrape_job.updated_at
+                cj.updated_at = now
+            crawl_jobs_to_save.append(cj)
+            crawl_job_by_company[company.id] = cj
+
+        session.add_all(crawl_jobs_to_save)
+        session.flush()  # assign IDs to new CrawlJobs
+
+        # 4. Bulk-fetch existing CrawlArtifacts.
+        crawl_job_ids = [cj.id for cj in crawl_jobs_to_save if cj.id]
+        existing_artifacts: dict[UUID, CrawlArtifact] = {}
+        if crawl_job_ids:
+            existing_artifacts = {
+                ca.crawl_job_id: ca
+                for ca in session.exec(
+                    select(CrawlArtifact).where(col(CrawlArtifact.crawl_job_id).in_(crawl_job_ids))
+                ).all()
+            }
+
+        # 5. Build CrawlArtifact objects (create or update).
+        artifacts_to_save: list[CrawlArtifact] = []
+        artifact_by_company: dict[UUID, CrawlArtifact] = {}
+        for company in companies:
+            cj = crawl_job_by_company.get(company.id)
+            if not cj or not cj.id:
+                continue
+            scrape_job = scrape_map.get(company.normalized_url)
+            pages_by_kind = pages_by_job.get(scrape_job.id, {}) if scrape_job else {}
+
+            artifact = existing_artifacts.get(cj.id)
+            if artifact is None:
+                artifact = CrawlArtifact(company_id=company.id, crawl_job_id=cj.id)
+            artifact.home_url = pages_by_kind.get("home").url if pages_by_kind.get("home") else None
+            artifact.about_url = pages_by_kind.get("about").url if pages_by_kind.get("about") else None
+            artifact.product_url = pages_by_kind.get("products").url if pages_by_kind.get("products") else None
+            artifact.home_status = pages_by_kind.get("home").status_code if pages_by_kind.get("home") else None
+            artifact.about_status = pages_by_kind.get("about").status_code if pages_by_kind.get("about") else None
+            artifact.product_status = pages_by_kind.get("products").status_code if pages_by_kind.get("products") else None
+            artifacts_to_save.append(artifact)
+            artifact_by_company[company.id] = artifact
+
+        session.add_all(artifacts_to_save)
+        session.flush()  # assign IDs to new CrawlArtifacts
+        return artifact_by_company
 
     def _ensure_crawl_adapter(self, *, session: Session, company: Company, scrape_job: ScrapeJob) -> CrawlArtifact:
         # Derive the actual crawl state from the scrape job outcome.

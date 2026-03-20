@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import case, update
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
@@ -226,32 +227,26 @@ class ResetStuckResult(BaseModel):
 def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
     """Cancel all queued work. Workers will no-op any in-flight tasks because
     the DB state will no longer be claimable."""
-    queued_scrape = list(
-        session.exec(select(ScrapeJob).where(col(ScrapeJob.status) == "created"))
-    )
-    for job in queued_scrape:
-        job.status = "cancelled"
-        job.terminal_state = True
-        session.add(job)
+    cancelled_scrape = session.exec(
+        update(ScrapeJob)
+        .where(col(ScrapeJob.status) == "created")
+        .values(status="cancelled", terminal_state=True)
+    ).rowcount  # type: ignore[union-attr]
 
-    queued_analysis = list(
-        session.exec(
-            select(AnalysisJob).where(
-                col(AnalysisJob.terminal_state).is_(False)
-                & (col(AnalysisJob.state) == AnalysisJobState.QUEUED)
-            )
+    cancelled_analysis = session.exec(
+        update(AnalysisJob)
+        .where(
+            col(AnalysisJob.terminal_state).is_(False)
+            & (col(AnalysisJob.state) == AnalysisJobState.QUEUED)
         )
-    )
-    for job in queued_analysis:
-        job.state = AnalysisJobState.DEAD
-        job.terminal_state = True
-        session.add(job)
+        .values(state=AnalysisJobState.DEAD, terminal_state=True)
+    ).rowcount  # type: ignore[union-attr]
 
     session.commit()
 
     return DrainQueueResult(
-        cancelled_scrape_jobs=len(queued_scrape),
-        cancelled_analysis_jobs=len(queued_analysis),
+        cancelled_scrape_jobs=cancelled_scrape or 0,
+        cancelled_analysis_jobs=cancelled_analysis or 0,
     )
 
 
@@ -260,25 +255,25 @@ def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResul
     """Reset non-terminal scrape jobs stuck in running state and re-enqueue them."""
     from app.tasks.scrape import scrape_website
 
-    stuck = list(
+    stuck_ids = list(
         session.exec(
-            select(ScrapeJob).where(
+            select(ScrapeJob.id).where(
                 col(ScrapeJob.terminal_state).is_(False)
                 & (col(ScrapeJob.status) == "running")
             )
-        )
+        ).all()
     )
-    for job in stuck:
-        job.status = "created"
-        job.lock_token = None
-        job.lock_expires_at = None
-        session.add(job)
-    session.commit()
+    if stuck_ids:
+        session.exec(
+            update(ScrapeJob)
+            .where(col(ScrapeJob.id).in_(stuck_ids))
+            .values(status="created", lock_token=None, lock_expires_at=None)
+        )
+        session.commit()
+        for job_id in stuck_ids:
+            scrape_website.delay(str(job_id))
 
-    for job in stuck:
-        scrape_website.delay(str(job.id))
-
-    return ResetStuckResult(reset_count=len(stuck))
+    return ResetStuckResult(reset_count=len(stuck_ids))
 
 
 class MarkFailedResult(BaseModel):
@@ -288,20 +283,16 @@ class MarkFailedResult(BaseModel):
 @router.post("/jobs/mark-non-completed-failed", response_model=MarkFailedResult)
 def mark_non_completed_failed(session: Session = Depends(get_session)) -> MarkFailedResult:
     """Mark all non-completed, non-failed scrape jobs as failed/terminal."""
-    non_completed = list(
-        session.exec(
-            select(ScrapeJob).where(
-                (col(ScrapeJob.status) != "completed")
-                & (col(ScrapeJob.status) != "failed")
-            )
+    result = session.exec(
+        update(ScrapeJob)
+        .where(
+            (col(ScrapeJob.status) != "completed")
+            & (col(ScrapeJob.status) != "failed")
         )
+        .values(status="failed", terminal_state=True)
     )
-    for job in non_completed:
-        job.status = "failed"
-        job.terminal_state = True
-        session.add(job)
     session.commit()
-    return MarkFailedResult(marked_count=len(non_completed))
+    return MarkFailedResult(marked_count=result.rowcount or 0)  # type: ignore[union-attr]
 
 
 class ResetStuckAnalysisResult(BaseModel):
@@ -313,26 +304,30 @@ def reset_stuck_analysis_jobs(session: Session = Depends(get_session)) -> ResetS
     """Reset analysis jobs stuck in RUNNING or QUEUED state and re-enqueue them."""
     from app.tasks.analysis import run_analysis_job
 
-    stuck = list(
+    stuck_ids = list(
         session.exec(
-            select(AnalysisJob).where(
+            select(AnalysisJob.id).where(
                 col(AnalysisJob.terminal_state).is_(False)
                 & col(AnalysisJob.state).in_([AnalysisJobState.RUNNING, AnalysisJobState.QUEUED])
             )
-        )
+        ).all()
     )
-    for job in stuck:
-        job.state = AnalysisJobState.QUEUED
-        job.started_at = None
-        job.lock_token = None
-        job.lock_expires_at = None
-        session.add(job)
-    session.commit()
+    if stuck_ids:
+        session.exec(
+            update(AnalysisJob)
+            .where(col(AnalysisJob.id).in_(stuck_ids))
+            .values(
+                state=AnalysisJobState.QUEUED,
+                started_at=None,
+                lock_token=None,
+                lock_expires_at=None,
+            )
+        )
+        session.commit()
+        for job_id in stuck_ids:
+            run_analysis_job.delay(str(job_id))
 
-    for job in stuck:
-        run_analysis_job.delay(str(job.id))
-
-    return ResetStuckAnalysisResult(reset_count=len(stuck))
+    return ResetStuckAnalysisResult(reset_count=len(stuck_ids))
 
 
 class MarkEmptyCompletedResult(BaseModel):
@@ -342,22 +337,21 @@ class MarkEmptyCompletedResult(BaseModel):
 @router.post("/jobs/mark-empty-completed-failed", response_model=MarkEmptyCompletedResult)
 def mark_empty_completed_failed(session: Session = Depends(get_session)) -> MarkEmptyCompletedResult:
     """Mark scrape jobs that completed but produced zero markdown pages as failed."""
-    empty = list(
-        session.exec(
-            select(ScrapeJob).where(
-                (col(ScrapeJob.status) == "completed")
-                & (col(ScrapeJob.markdown_pages_count) == 0)
-            )
+    result = session.exec(
+        update(ScrapeJob)
+        .where(
+            (col(ScrapeJob.status) == "completed")
+            & (col(ScrapeJob.markdown_pages_count) == 0)
+        )
+        .values(
+            status="failed",
+            terminal_state=True,
+            # Only set error_code if not already set (COALESCE preserves existing value)
+            last_error_code=func.coalesce(ScrapeJob.last_error_code, "no_markdown_produced"),
         )
     )
-    for job in empty:
-        job.status = "failed"
-        job.terminal_state = True
-        if not job.last_error_code:
-            job.last_error_code = "no_markdown_produced"
-        session.add(job)
     session.commit()
-    return MarkEmptyCompletedResult(marked_count=len(empty))
+    return MarkEmptyCompletedResult(marked_count=result.rowcount or 0)  # type: ignore[union-attr]
 
 
 class RefreshRunStatusResult(BaseModel):
@@ -374,28 +368,33 @@ def refresh_run_statuses(session: Session = Depends(get_session)) -> RefreshRunS
             )
         )
     )
+    if not runs:
+        return RefreshRunStatusResult(refreshed_count=0)
+
+    run_ids = [r.id for r in runs]
+
+    # Single query: counts per run_id using conditional aggregation.
+    agg_rows = session.exec(
+        select(
+            AnalysisJob.run_id,
+            func.count(case((col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED, 1))).label("succeeded"),
+            func.count(case((col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD]), 1))).label("failed"),
+            func.count(case((col(AnalysisJob.terminal_state).is_(True), 1))).label("terminal"),
+        )
+        .where(col(AnalysisJob.run_id).in_(run_ids))
+        .group_by(AnalysisJob.run_id)
+    ).all()
+
+    counts: dict = {row.run_id: row for row in agg_rows}
+
+    now = datetime.now(timezone.utc)
     for run in runs:
         if run.total_jobs == 0:
             continue
-        run_id = run.id
-        succeeded = session.exec(
-            select(func.count()).select_from(AnalysisJob).where(
-                (col(AnalysisJob.run_id) == run_id)
-                & (col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED)
-            )
-        ).one() or 0
-        failed = session.exec(
-            select(func.count()).select_from(AnalysisJob).where(
-                (col(AnalysisJob.run_id) == run_id)
-                & col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD])
-            )
-        ).one() or 0
-        terminal = session.exec(
-            select(func.count()).select_from(AnalysisJob).where(
-                (col(AnalysisJob.run_id) == run_id)
-                & col(AnalysisJob.terminal_state).is_(True)
-            )
-        ).one() or 0
+        row = counts.get(run.id)
+        succeeded = row.succeeded if row else 0
+        failed = row.failed if row else 0
+        terminal = row.terminal if row else 0
 
         run.completed_jobs = succeeded
         run.failed_jobs = failed
@@ -403,7 +402,7 @@ def refresh_run_statuses(session: Session = Depends(get_session)) -> RefreshRunS
         if is_done:
             run.status = RunStatus.FAILED if failed > 0 else RunStatus.COMPLETED
             if not run.finished_at:
-                run.finished_at = datetime.now(timezone.utc)
+                run.finished_at = now
         else:
             run.status = RunStatus.RUNNING
         session.add(run)
