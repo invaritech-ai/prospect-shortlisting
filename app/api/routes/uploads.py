@@ -99,24 +99,96 @@ def _latest_analysis_subquery():
 
 
 def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]) -> CompanyScrapeResult:
-    queued_job_ids: list[UUID] = []
+    from app.services.url_utils import domain_from_url, normalize_url
+
+    # Resolve normalized URLs upfront; collect failures immediately.
     failed_company_ids: list[UUID] = []
+    valid: list[tuple[Company, str, str]] = []  # (company, normalized_url, domain)
     for company in companies:
-        try:
-            job = scrape_service.create_job(
-                session=session,
+        normalized = normalize_url(company.normalized_url or company.website_url or "")
+        if not normalized:
+            failed_company_ids.append(company.id)
+            continue
+        domain = domain_from_url(normalized)
+        if not domain:
+            failed_company_ids.append(company.id)
+            continue
+        valid.append((company, normalized, domain))
+
+    if not valid:
+        return CompanyScrapeResult(
+            requested_count=len(companies),
+            queued_count=0,
+            queued_job_ids=[],
+            failed_company_ids=failed_company_ids,
+        )
+
+    # Single bulk query: find all URLs that already have a non-terminal job.
+    all_normalized = [v[1] for v in valid]
+    active_urls: set[str] = set(
+        session.exec(
+            select(ScrapeJob.normalized_url)
+            .where(
+                col(ScrapeJob.normalized_url).in_(all_normalized)
+                & col(ScrapeJob.terminal_state).is_(False)
+            )
+        ).all()
+    )
+
+    # Build new ScrapeJob objects for URLs that don't already have one.
+    jobs_to_create: list[ScrapeJob] = []
+    company_by_url: dict[str, UUID] = {}
+    for company, normalized, domain in valid:
+        if normalized in active_urls:
+            # Skip silently — already queued/running.
+            continue
+        jobs_to_create.append(
+            ScrapeJob(
                 website_url=company.normalized_url,
+                normalized_url=normalized,
+                domain=domain,
                 js_fallback=SCRAPE_DEFAULTS["js_fallback"],
                 include_sitemap=SCRAPE_DEFAULTS["include_sitemap"],
                 general_model=SCRAPE_DEFAULTS["general_model"],
                 classify_model=SCRAPE_DEFAULTS["classify_model"],
             )
-            session.commit()
-            scrape_website.delay(str(job.id))
-            queued_job_ids.append(job.id)
-        except Exception:  # noqa: BLE001
-            session.rollback()
-            failed_company_ids.append(company.id)
+        )
+        company_by_url[normalized] = company.id
+
+    if not jobs_to_create:
+        return CompanyScrapeResult(
+            requested_count=len(companies),
+            queued_count=0,
+            queued_job_ids=[],
+            failed_company_ids=failed_company_ids,
+        )
+
+    # Single bulk insert + single commit.
+    session.add_all(jobs_to_create)
+    try:
+        session.commit()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        # Fall back to individual inserts so partial success is preserved.
+        for job in jobs_to_create:
+            try:
+                session.add(job)
+                session.commit()
+            except Exception:  # noqa: BLE001
+                session.rollback()
+                company_id = company_by_url.get(job.normalized_url)
+                if company_id:
+                    failed_company_ids.append(company_id)
+        jobs_to_create = [j for j in jobs_to_create if j.id is not None]
+
+    # Refresh to get DB-assigned IDs, then fire all Celery messages.
+    queued_job_ids: list[UUID] = []
+    for job in jobs_to_create:
+        if job.id is None:
+            continue
+        scrape_website.delay(str(job.id))
+        queued_job_ids.append(job.id)
+
     return CompanyScrapeResult(
         requested_count=len(companies),
         queued_count=len(queued_job_ids),
