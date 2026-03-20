@@ -94,7 +94,7 @@ export function OperationsLogView({
                 key={item.value}
                 type="button"
                 onClick={() => onSetPipelineFilter(item.value)}
-                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                className={`min-h-9 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
                   pipelineFilter === item.value
                     ? 'bg-[var(--oc-accent)] text-white'
                     : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
@@ -113,7 +113,7 @@ export function OperationsLogView({
                 key={item.value}
                 type="button"
                 onClick={() => onSetStatusFilter(item.value)}
-                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                className={`min-h-9 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
                   statusFilter === item.value
                     ? 'bg-slate-700 text-white'
                     : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
@@ -124,7 +124,7 @@ export function OperationsLogView({
             ))}
           </div>
 
-          <label className="ml-auto flex items-center gap-2 rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--oc-muted)]">
+          <label className="ml-auto flex min-h-9 items-center gap-2 rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--oc-muted)]">
             <input
               type="checkbox"
               checked={errorOnly}
@@ -140,7 +140,7 @@ export function OperationsLogView({
           value={searchQuery}
           onChange={(e) => onSetSearchQuery(e.target.value)}
           placeholder="Search domain, prompt, id, or error code"
-          className="w-full rounded-xl border border-[var(--oc-border)] bg-white px-3 py-2 text-sm text-[var(--oc-text)] placeholder:text-[var(--oc-muted)]"
+          className="w-full rounded-xl border border-[var(--oc-border)] bg-white px-3 py-2.5 text-sm text-[var(--oc-text)] placeholder:text-[var(--oc-muted)]"
         />
       </div>
 

@@ -1,16 +1,16 @@
 :root {
   /* ── Colour palette ─────────────────────────────────── */
-  --oc-bg: #eef4f7;
-  --oc-surface: #f5f9fc;
+  --oc-bg: #f8fafc;
+  --oc-surface: #f1f6fd;
   --oc-surface-strong: #ffffff;
-  --oc-border: #c6d3de;
-  --oc-text: #102231;
-  --oc-muted: #546577;
-  --oc-accent: #0e7d73;
-  --oc-accent-ink: #16384b;
-  --oc-accent-soft: #d7f0ec;
+  --oc-border: #dbeafe;
+  --oc-text: #0f172a;
+  --oc-muted: #64748b;
+  --oc-accent: #1e40af;
+  --oc-accent-ink: #1e3a8a;
+  --oc-accent-soft: #dbeafe;
   --oc-info-bg: #dbeafe;
-  --oc-info-text: #1d4f8a;
+  --oc-info-text: #1e40af;
   --oc-success-bg: #dcfce7;
   --oc-success-text: #14532d;
   --oc-warn-bg: #f1f5f9;
@@ -19,7 +19,7 @@
   --oc-fail-text: #9f1239;
   --oc-danger-bg: #fee2e2;
   --oc-danger-text: #7f1d1d;
-  --oc-shadow: 0 12px 34px rgba(12, 35, 55, 0.11);
+  --oc-shadow: 0 12px 34px rgba(30, 58, 138, 0.09);
   --oc-radius: 14px;
 
   /* ── Layout ─────────────────────────────────────────── */
@@ -43,16 +43,21 @@
     margin: 0;
     min-width: 320px;
     background:
-      radial-gradient(circle at 8% -12%, rgba(14, 125, 115, 0.11), transparent 36%),
-      radial-gradient(circle at 100% 0%, rgba(29, 78, 216, 0.08), transparent 36%),
-      linear-gradient(180deg, #f7fbff 0%, var(--oc-bg) 48%, #eaf1f6 100%);
+      radial-gradient(circle at 8% -12%, rgba(30, 64, 175, 0.11), transparent 36%),
+      radial-gradient(circle at 100% 0%, rgba(217, 119, 6, 0.07), transparent 40%),
+      linear-gradient(180deg, #fbfdff 0%, var(--oc-bg) 48%, #eef3fb 100%);
     color: var(--oc-text);
-    font-family: 'Manrope', sans-serif;
+    font-family: 'Fira Sans', sans-serif;
     letter-spacing: 0.003em;
   }
 
   html, body, #root {
     height: 100%;
+  }
+
+  :where(button, [role='button'], a, input, select, textarea, summary):focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--oc-accent) 80%, white);
+    outline-offset: 2px;
   }
 }
 
@@ -86,7 +91,7 @@
     @apply inline-flex items-center rounded-md border px-2 py-1 text-[11px] font-semibold uppercase tracking-widest;
     border-color: var(--oc-border);
     color: var(--oc-muted);
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Fira Code', monospace;
     background: var(--oc-surface);
   }
 
@@ -122,7 +127,7 @@
 
   .oc-folder-title {
     @apply block;
-    font-family: 'IBM Plex Sans', 'Manrope', sans-serif;
+    font-family: 'Fira Sans', sans-serif;
     letter-spacing: 0.01em;
   }
 

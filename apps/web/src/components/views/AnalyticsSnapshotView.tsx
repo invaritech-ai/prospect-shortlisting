@@ -66,6 +66,44 @@ function BucketList({ title, buckets }: { title: string; buckets: CountBucket[] 
   )
 }
 
+function StatusSplit({
+  label,
+  active,
+  completed,
+  failed,
+  total,
+}: {
+  label: string
+  active: number
+  completed: number
+  failed: number
+  total: number
+}) {
+  const safeTotal = Math.max(total, 1)
+  const activePct = (active / safeTotal) * 100
+  const completedPct = (completed / safeTotal) * 100
+  const failedPct = (failed / safeTotal) * 100
+
+  return (
+    <div className="rounded-xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-bold text-[var(--oc-accent-ink)]">{label}</p>
+        <span className="font-mono text-[11px] text-[var(--oc-muted)]">{total} sample</span>
+      </div>
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-white">
+        <div style={{ width: `${completedPct}%` }} className="bg-emerald-500" title={`Completed ${completed}`} />
+        <div style={{ width: `${activePct}%` }} className="bg-[var(--oc-accent)]" title={`Active ${active}`} />
+        <div style={{ width: `${failedPct}%` }} className="bg-rose-500" title={`Failed ${failed}`} />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--oc-muted)]">
+        <span className="rounded bg-emerald-50 px-2 py-0.5 text-emerald-700">Done {completed}</span>
+        <span className="rounded bg-blue-50 px-2 py-0.5 text-blue-700">Active {active}</span>
+        <span className="rounded bg-rose-50 px-2 py-0.5 text-rose-700">Failed {failed}</span>
+      </div>
+    </div>
+  )
+}
+
 export function AnalyticsSnapshotView({
   stats,
   companyCounts,
@@ -153,6 +191,23 @@ export function AnalyticsSnapshotView({
             />
           </div>
         </div>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <StatusSplit
+          label="Scrape Sample State Split"
+          active={snapshot.scrape_sample_active}
+          completed={snapshot.scrape_sample_completed}
+          failed={snapshot.scrape_sample_failed}
+          total={snapshot.scrape_sample_total}
+        />
+        <StatusSplit
+          label="Analysis Sample State Split"
+          active={snapshot.run_sample_active}
+          completed={snapshot.run_sample_completed}
+          failed={snapshot.run_sample_failed}
+          total={snapshot.run_sample_total}
+        />
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
