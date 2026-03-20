@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
@@ -96,6 +96,39 @@ def _latest_analysis_subquery():
         .order_by(AnalysisJob.company_id, AnalysisJob.created_at.desc())
         .subquery()
     )
+
+
+_ALLOWED_DECISION_FILTERS = frozenset({"all", "unlabeled", "possible", "unknown", "crap"})
+_ALLOWED_SCRAPE_FILTERS = frozenset({"all", "done", "failed", "none"})
+
+
+def _validate_filters(decision_filter: str, scrape_filter: str) -> tuple[str, str]:
+    """Validate and normalise filter query params. Raises HTTPException on invalid value."""
+    ndf = decision_filter.strip().lower()
+    nsf = scrape_filter.strip().lower()
+    if ndf not in _ALLOWED_DECISION_FILTERS:
+        raise HTTPException(status_code=422, detail="Invalid decision_filter.")
+    if nsf not in _ALLOWED_SCRAPE_FILTERS:
+        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
+    return ndf, nsf
+
+
+def _apply_decision_filter(stmt, decision_lower, normalized_filter: str):
+    if normalized_filter == "unlabeled":
+        return stmt.where(decision_lower == "")
+    if normalized_filter in {"possible", "unknown", "crap"}:
+        return stmt.where(decision_lower == normalized_filter)
+    return stmt
+
+
+def _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter: str):
+    if normalized_scrape_filter == "done":
+        return stmt.where(latest_scrape.c.status == "completed")
+    if normalized_scrape_filter == "failed":
+        return stmt.where(latest_scrape.c.status.like("%failed%"))
+    if normalized_scrape_filter == "none":
+        return stmt.where(latest_scrape.c.job_id.is_(None))
+    return stmt
 
 
 def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]) -> CompanyScrapeResult:
@@ -339,14 +372,7 @@ def list_companies(
         (decision_lower == "crap", 3),
         else_=4,
     )
-    normalized_filter = decision_filter.strip().lower()
-    allowed_filters = {"all", "unlabeled", "possible", "unknown", "crap"}
-    if normalized_filter not in allowed_filters:
-        raise HTTPException(status_code=422, detail="Invalid decision_filter.")
-    normalized_scrape_filter = scrape_filter.strip().lower()
-    allowed_scrape_filters = {"all", "done", "failed", "none"}
-    if normalized_scrape_filter not in allowed_scrape_filters:
-        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
+    normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
     statement = (
         select(
             Company.id,
@@ -374,16 +400,8 @@ def list_companies(
         .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
-    if normalized_filter == "unlabeled":
-        statement = statement.where(decision_lower == "")
-    elif normalized_filter in {"possible", "unknown", "crap"}:
-        statement = statement.where(decision_lower == normalized_filter)
-    if normalized_scrape_filter == "done":
-        statement = statement.where(latest_scrape.c.status == "completed")
-    elif normalized_scrape_filter == "failed":
-        statement = statement.where(latest_scrape.c.status.like("%failed%"))
-    elif normalized_scrape_filter == "none":
-        statement = statement.where(latest_scrape.c.job_id.is_(None))
+    statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
+    statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
     if letter is not None:
         statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
 
@@ -413,16 +431,8 @@ def list_companies(
             .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
             .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         )
-        if normalized_filter == "unlabeled":
-            total_stmt = total_stmt.where(decision_lower == "")
-        elif normalized_filter in {"possible", "unknown", "crap"}:
-            total_stmt = total_stmt.where(decision_lower == normalized_filter)
-        if normalized_scrape_filter == "done":
-            total_stmt = total_stmt.where(latest_scrape.c.status == "completed")
-        elif normalized_scrape_filter == "failed":
-            total_stmt = total_stmt.where(latest_scrape.c.status.like("%failed%"))
-        elif normalized_scrape_filter == "none":
-            total_stmt = total_stmt.where(latest_scrape.c.job_id.is_(None))
+        total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
+        total_stmt = _apply_scrape_filter(total_stmt, latest_scrape, normalized_scrape_filter)
         if letter is not None:
             total_stmt = total_stmt.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
         total = session.exec(total_stmt).one()
@@ -465,30 +475,15 @@ def list_company_ids(
     latest_decision_text = latest_classification.c.predicted_label
     decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
 
-    normalized_filter = decision_filter.strip().lower()
-    allowed_filters = {"all", "unlabeled", "possible", "unknown", "crap"}
-    if normalized_filter not in allowed_filters:
-        raise HTTPException(status_code=422, detail="Invalid decision_filter.")
-    normalized_scrape_filter = scrape_filter.strip().lower()
-    allowed_scrape_filters = {"all", "done", "failed", "none"}
-    if normalized_scrape_filter not in allowed_scrape_filters:
-        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
+    normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
 
     statement = (
         select(Company.id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
     )
-    if normalized_filter == "unlabeled":
-        statement = statement.where(decision_lower == "")
-    elif normalized_filter in {"possible", "unknown", "crap"}:
-        statement = statement.where(decision_lower == normalized_filter)
-    if normalized_scrape_filter == "done":
-        statement = statement.where(latest_scrape.c.status == "completed")
-    elif normalized_scrape_filter == "failed":
-        statement = statement.where(latest_scrape.c.status.like("%failed%"))
-    elif normalized_scrape_filter == "none":
-        statement = statement.where(latest_scrape.c.job_id.is_(None))
+    statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
+    statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
     if letter is not None:
         statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
 
@@ -508,14 +503,7 @@ def get_letter_counts(
     latest_decision_text = latest_classification.c.predicted_label
     decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
 
-    normalized_filter = decision_filter.strip().lower()
-    allowed_filters = {"all", "unlabeled", "possible", "unknown", "crap"}
-    if normalized_filter not in allowed_filters:
-        raise HTTPException(status_code=422, detail="Invalid decision_filter.")
-    normalized_scrape_filter = scrape_filter.strip().lower()
-    allowed_scrape_filters = {"all", "done", "failed", "none"}
-    if normalized_scrape_filter not in allowed_scrape_filters:
-        raise HTTPException(status_code=422, detail="Invalid scrape_filter.")
+    normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
 
     letter_expr = func.lower(func.left(Company.domain, 1))
     stmt = (
@@ -526,16 +514,8 @@ def get_letter_counts(
         .where(letter_expr.between("a", "z"))
         .group_by(letter_expr)
     )
-    if normalized_filter == "unlabeled":
-        stmt = stmt.where(decision_lower == "")
-    elif normalized_filter in {"possible", "unknown", "crap"}:
-        stmt = stmt.where(decision_lower == normalized_filter)
-    if normalized_scrape_filter == "done":
-        stmt = stmt.where(latest_scrape.c.status == "completed")
-    elif normalized_scrape_filter == "failed":
-        stmt = stmt.where(latest_scrape.c.status.like("%failed%"))
-    elif normalized_scrape_filter == "none":
-        stmt = stmt.where(latest_scrape.c.job_id.is_(None))
+    stmt = _apply_decision_filter(stmt, decision_lower, normalized_filter)
+    stmt = _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter)
 
     rows = session.exec(stmt).all()
     counts: dict[str, int] = {chr(ord("a") + i): 0 for i in range(26)}
@@ -606,7 +586,7 @@ def export_companies_csv(session: Session = Depends(get_session)) -> Response:
     for raw_url, classification in rows:
         writer.writerow([raw_url, classification])
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return Response(
         content=buffer.getvalue(),
         media_type="text/csv",

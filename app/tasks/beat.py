@@ -57,11 +57,16 @@ def reconcile_stuck_jobs() -> None:
 
         for job in stuck_scrapes:
             job.status = "created"
+            job.lock_token = None
+            job.lock_expires_at = None
             job.updated_at = now
             session.add(job)
 
         for job in stuck_analysis:
             job.state = AnalysisJobState.QUEUED
+            job.started_at = None
+            job.lock_token = None
+            job.lock_expires_at = None
             job.updated_at = now
             session.add(job)
 

@@ -174,12 +174,12 @@ class AnalysisJob(SQLModel, table=True):
     # Idempotency / ownership lock — set atomically at job-start; guards against
     # duplicate workers writing results when the same task is delivered twice.
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None)
+    lock_expires_at: datetime | None = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class ClassificationResult(SQLModel, table=True):

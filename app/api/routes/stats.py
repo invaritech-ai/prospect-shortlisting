@@ -47,41 +47,41 @@ def _utcnow() -> datetime:
 
 def _scrape_stats(session: Session) -> PipelineStageStats:
     now = _utcnow()
-    total = session.exec(select(func.count()).select_from(ScrapeJob)).one() or 0
-    completed = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(col(ScrapeJob.status) == "completed")
-    ).one() or 0
-    site_unavailable = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(
-            col(ScrapeJob.status) == "site_unavailable"
-        )
-    ).one() or 0
-    failed = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(
-            col(ScrapeJob.terminal_state).is_(True)
-            & (col(ScrapeJob.status) != "completed")
-            & (col(ScrapeJob.status) != "site_unavailable")
-        )
-    ).one() or 0
-    running = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(
-            col(ScrapeJob.terminal_state).is_(False)
-            & (col(ScrapeJob.status) == "running")
-        )
-    ).one() or 0
-    queued = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(col(ScrapeJob.status) == "created")
-    ).one() or 0
-
-    # Stuck = running but not updated within the expected window.
     stuck_cutoff = now - timedelta(minutes=SCRAPE_RUNNING_STUCK_MINUTES)
-    stuck_count = session.exec(
-        select(func.count()).select_from(ScrapeJob).where(
-            col(ScrapeJob.terminal_state).is_(False)
-            & (col(ScrapeJob.status) == "running")
-            & (col(ScrapeJob.updated_at) < stuck_cutoff)
-        )
-    ).one() or 0
+
+    # Single pass: all counts in one query via conditional aggregation.
+    row = session.exec(
+        select(
+            func.count().label("total"),
+            func.count(case((col(ScrapeJob.status) == "completed", 1))).label("completed"),
+            func.count(case((col(ScrapeJob.status) == "site_unavailable", 1))).label("site_unavailable"),
+            func.count(case((
+                col(ScrapeJob.terminal_state).is_(True)
+                & (col(ScrapeJob.status) != "completed")
+                & (col(ScrapeJob.status) != "site_unavailable"),
+                1,
+            ))).label("failed"),
+            func.count(case((
+                col(ScrapeJob.terminal_state).is_(False) & (col(ScrapeJob.status) == "running"),
+                1,
+            ))).label("running"),
+            func.count(case((col(ScrapeJob.status) == "created", 1))).label("queued"),
+            func.count(case((
+                col(ScrapeJob.terminal_state).is_(False)
+                & (col(ScrapeJob.status) == "running")
+                & (col(ScrapeJob.updated_at) < stuck_cutoff),
+                1,
+            ))).label("stuck_count"),
+        ).select_from(ScrapeJob)
+    ).one()
+
+    total = row.total or 0
+    completed = row.completed or 0
+    site_unavailable = row.site_unavailable or 0
+    failed = row.failed or 0
+    running = row.running or 0
+    queued = row.queued or 0
+    stuck_count = row.stuck_count or 0
 
     # Average full-pipeline duration from recent completions.
     recent = list(
@@ -127,37 +127,34 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
 
 def _analysis_stats(session: Session) -> PipelineStageStats:
     now = _utcnow()
-    total = session.exec(select(func.count()).select_from(AnalysisJob)).one() or 0
-    completed = session.exec(
-        select(func.count()).select_from(AnalysisJob).where(
-            col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED
-        )
-    ).one() or 0
-    failed = session.exec(
-        select(func.count()).select_from(AnalysisJob).where(
-            col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD])
-        )
-    ).one() or 0
-    running = session.exec(
-        select(func.count()).select_from(AnalysisJob).where(
-            col(AnalysisJob.state) == AnalysisJobState.RUNNING
-        )
-    ).one() or 0
-    queued = session.exec(
-        select(func.count()).select_from(AnalysisJob).where(
-            col(AnalysisJob.state) == AnalysisJobState.QUEUED
-        )
-    ).one() or 0
 
-    # Stuck = RUNNING with expired lock.
-    stuck_count = session.exec(
-        select(func.count()).select_from(AnalysisJob).where(
-            col(AnalysisJob.terminal_state).is_(False)
-            & (col(AnalysisJob.state) == AnalysisJobState.RUNNING)
-            & col(AnalysisJob.lock_expires_at).is_not(None)
-            & (col(AnalysisJob.lock_expires_at) < now)
-        )
-    ).one() or 0
+    # Single pass: all counts in one query via conditional aggregation.
+    row = session.exec(
+        select(
+            func.count().label("total"),
+            func.count(case((col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED, 1))).label("completed"),
+            func.count(case((
+                col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD]),
+                1,
+            ))).label("failed"),
+            func.count(case((col(AnalysisJob.state) == AnalysisJobState.RUNNING, 1))).label("running"),
+            func.count(case((col(AnalysisJob.state) == AnalysisJobState.QUEUED, 1))).label("queued"),
+            func.count(case((
+                col(AnalysisJob.terminal_state).is_(False)
+                & (col(AnalysisJob.state) == AnalysisJobState.RUNNING)
+                & col(AnalysisJob.lock_expires_at).is_not(None)
+                & (col(AnalysisJob.lock_expires_at) < now),
+                1,
+            ))).label("stuck_count"),
+        ).select_from(AnalysisJob)
+    ).one()
+
+    total = row.total or 0
+    completed = row.completed or 0
+    failed = row.failed or 0
+    running = row.running or 0
+    queued = row.queued or 0
+    stuck_count = row.stuck_count or 0
 
     recent = list(
         session.exec(
@@ -267,7 +264,7 @@ def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResul
         session.exec(
             update(ScrapeJob)
             .where(col(ScrapeJob.id).in_(stuck_ids))
-            .values(status="created", lock_token=None, lock_expires_at=None)
+            .values(status="created", lock_token=None, lock_expires_at=None, updated_at=_utcnow())
         )
         session.commit()
         for job_id in stuck_ids:
@@ -321,6 +318,7 @@ def reset_stuck_analysis_jobs(session: Session = Depends(get_session)) -> ResetS
                 started_at=None,
                 lock_token=None,
                 lock_expires_at=None,
+                updated_at=_utcnow(),
             )
         )
         session.commit()

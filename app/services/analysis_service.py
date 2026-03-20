@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -153,8 +154,14 @@ class AnalysisService:
                 )
                 queued_jobs.append(analysis_job)
 
-            run.total_jobs = sum(1 for job in queued_jobs if job.run_id == run.id)
             queued_runs.append(run)
+
+        # Count jobs per run in one pass instead of O(n×runs) scans.
+        jobs_per_run: dict[UUID, int] = defaultdict(int)
+        for job in queued_jobs:
+            jobs_per_run[job.run_id] += 1
+        for run in queued_runs:
+            run.total_jobs = jobs_per_run[run.id]
 
         # Single bulk insert for all analysis jobs, then one final flush.
         session.add_all(queued_jobs)
@@ -393,10 +400,14 @@ class AnalysisService:
                 .order_by(col(ScrapePage.depth).asc(), col(ScrapePage.id).asc())
             )
         )
+        by_kind: dict[str, list[ScrapePage]] = {}
+        for page in pages:
+            by_kind.setdefault(page.page_kind, []).append(page)
         ordered: list[ScrapePage] = []
         for page_kind in ANALYSIS_PAGE_ORDER:
-            ordered.extend([page for page in pages if page.page_kind == page_kind])
-        ordered.extend([page for page in pages if page.page_kind not in ANALYSIS_PAGE_ORDER])
+            ordered.extend(by_kind.pop(page_kind, []))
+        for remaining in by_kind.values():
+            ordered.extend(remaining)
         return ordered
 
     def _build_context(self, pages: list[ScrapePage]) -> str:
@@ -516,72 +527,21 @@ class AnalysisService:
             artifact = existing_artifacts.get(cj.id)
             if artifact is None:
                 artifact = CrawlArtifact(company_id=company.id, crawl_job_id=cj.id)
-            artifact.home_url = pages_by_kind.get("home").url if pages_by_kind.get("home") else None
-            artifact.about_url = pages_by_kind.get("about").url if pages_by_kind.get("about") else None
-            artifact.product_url = pages_by_kind.get("products").url if pages_by_kind.get("products") else None
-            artifact.home_status = pages_by_kind.get("home").status_code if pages_by_kind.get("home") else None
-            artifact.about_status = pages_by_kind.get("about").status_code if pages_by_kind.get("about") else None
-            artifact.product_status = pages_by_kind.get("products").status_code if pages_by_kind.get("products") else None
+            home = pages_by_kind.get("home")
+            about = pages_by_kind.get("about")
+            products = pages_by_kind.get("products")
+            artifact.home_url = home.url if home else None
+            artifact.about_url = about.url if about else None
+            artifact.product_url = products.url if products else None
+            artifact.home_status = home.status_code if home else None
+            artifact.about_status = about.status_code if about else None
+            artifact.product_status = products.status_code if products else None
             artifacts_to_save.append(artifact)
             artifact_by_company[company.id] = artifact
 
         session.add_all(artifacts_to_save)
         session.flush()  # assign IDs to new CrawlArtifacts
         return artifact_by_company
-
-    def _ensure_crawl_adapter(self, *, session: Session, company: Company, scrape_job: ScrapeJob) -> CrawlArtifact:
-        # Derive the actual crawl state from the scrape job outcome.
-        actual_state = (
-            CrawlJobState.SUCCEEDED
-            if scrape_job.status == "completed" and scrape_job.pages_fetched_count > 0
-            else CrawlJobState.FAILED
-        )
-        crawl_job = session.exec(
-            select(CrawlJob)
-            .where(
-                (col(CrawlJob.upload_id) == company.upload_id)
-                & (col(CrawlJob.company_id) == company.id)
-            )
-        ).first()
-        if crawl_job is None:
-            crawl_job = CrawlJob(
-                upload_id=company.upload_id,
-                company_id=company.id,
-                state=actual_state,
-                attempt_count=1,
-                started_at=scrape_job.started_at or scrape_job.created_at,
-                finished_at=scrape_job.finished_at or scrape_job.updated_at,
-            )
-            session.add(crawl_job)
-            session.flush()
-        else:
-            crawl_job.state = actual_state
-            crawl_job.finished_at = scrape_job.finished_at or scrape_job.updated_at
-            crawl_job.updated_at = utcnow()
-            session.add(crawl_job)
-            session.flush()
-
-        pages = self._analysis_pages_for_job(session=session, job_id=scrape_job.id)
-        pages_by_kind = {page.page_kind: page for page in pages}
-        artifact = session.exec(
-            select(CrawlArtifact)
-            .where(col(CrawlArtifact.crawl_job_id) == crawl_job.id)
-            .order_by(col(CrawlArtifact.created_at).desc())
-        ).first()
-        if artifact is None:
-            artifact = CrawlArtifact(
-                company_id=company.id,
-                crawl_job_id=crawl_job.id,
-            )
-        artifact.home_url = pages_by_kind.get("home").url if pages_by_kind.get("home") else None
-        artifact.about_url = pages_by_kind.get("about").url if pages_by_kind.get("about") else None
-        artifact.product_url = pages_by_kind.get("products").url if pages_by_kind.get("products") else None
-        artifact.home_status = pages_by_kind.get("home").status_code if pages_by_kind.get("home") else None
-        artifact.about_status = pages_by_kind.get("about").status_code if pages_by_kind.get("about") else None
-        artifact.product_status = pages_by_kind.get("products").status_code if pages_by_kind.get("products") else None
-        session.add(artifact)
-        session.flush()
-        return artifact
 
     def _fail_job(
         self,
@@ -634,32 +594,20 @@ class AnalysisService:
         if not run or run.total_jobs == 0:
             return
 
-        # Use separate COUNT queries + ORM assignment. The correlated-subquery
-        # UPDATE approach fails silently in SQLite due to expression type coercion.
-        succeeded = session.exec(
-            select(func.count())
-            .select_from(AnalysisJob)
-            .where(
-                (col(AnalysisJob.run_id) == run_id)
-                & (col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED)
+        from collections import namedtuple
+        from sqlalchemy import case as sa_case
+        row = session.exec(
+            select(
+                func.count(sa_case((col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED, 1))).label("succeeded"),
+                func.count(sa_case((col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD]), 1))).label("failed"),
+                func.count(sa_case((col(AnalysisJob.terminal_state).is_(True), 1))).label("terminal"),
             )
-        ).one() or 0
-        failed = session.exec(
-            select(func.count())
             .select_from(AnalysisJob)
-            .where(
-                (col(AnalysisJob.run_id) == run_id)
-                & col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD])
-            )
-        ).one() or 0
-        terminal = session.exec(
-            select(func.count())
-            .select_from(AnalysisJob)
-            .where(
-                (col(AnalysisJob.run_id) == run_id)
-                & col(AnalysisJob.terminal_state).is_(True)
-            )
-        ).one() or 0
+            .where(col(AnalysisJob.run_id) == run_id)
+        ).one()
+        succeeded = row.succeeded or 0
+        failed = row.failed or 0
+        terminal = row.terminal or 0
 
         run.completed_jobs = succeeded
         run.failed_jobs = failed

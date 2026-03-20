@@ -57,7 +57,7 @@ class ScrapeJob(SQLModel, table=True):
     lock_expires_at: Optional[datetime] = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
 

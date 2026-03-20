@@ -24,11 +24,9 @@ def _html_to_markdown(html_or_text: str) -> str:
 
 
 class MarkdownService:
-    def _rule_based_markdown(self, url: str, title: str, page_text: str) -> str:
-        """Primary conversion path: html2text → clean_text fallback."""
-        md = _html_to_markdown(page_text)
-        if not md:
-            md = clean_text(page_text)[:18000]
+    def _assemble_rule_based(self, url: str, title: str, rule_md: str, page_text: str) -> str:
+        """Build final rule-based markdown from an already-converted string."""
+        md = rule_md or clean_text(page_text)[:18000]
         header = f"# {title or 'Untitled'}\n\nSource: {url}\n\n"
         return (header + md).strip() or "_No text extracted._"
 
@@ -78,4 +76,5 @@ class MarkdownService:
         )
         if content:
             return content, True, ""
-        return self._rule_based_markdown(url, title, page_text), False, error or "llm_call_failed"
+        # Reuse already-computed rule_md — no second _html_to_markdown call.
+        return self._assemble_rule_based(url, title, rule_md, page_text), False, error or "llm_call_failed"

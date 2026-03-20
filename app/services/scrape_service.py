@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import socket
@@ -50,7 +51,7 @@ _PAGE_KINDS = [
     ("pricing", 2),
 ]
 
-SKIP_HINTS = (
+SKIP_HINTS: frozenset[str] = frozenset({
     "/login",
     "/signin",
     "/account",
@@ -61,7 +62,7 @@ SKIP_HINTS = (
     "/cookie",
     "/search",
     "/testimonial",
-)
+})
 
 
 @dataclass
