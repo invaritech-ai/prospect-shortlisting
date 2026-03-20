@@ -1,25 +1,25 @@
 :root {
   /* ── Colour palette ─────────────────────────────────── */
-  --oc-bg: #ecf0ef;
-  --oc-surface: #f9fbfa;
+  --oc-bg: #eef4f7;
+  --oc-surface: #f5f9fc;
   --oc-surface-strong: #ffffff;
-  --oc-border: #c9d4d0;
-  --oc-text: #122019;
-  --oc-muted: #5d6f67;
-  --oc-accent: #0f766e;
-  --oc-accent-ink: #0a3f3a;
-  --oc-accent-soft: #d8ece9;
-  --oc-info-bg: #e0f2fe;
-  --oc-info-text: #075985;
+  --oc-border: #c6d3de;
+  --oc-text: #102231;
+  --oc-muted: #546577;
+  --oc-accent: #0e7d73;
+  --oc-accent-ink: #16384b;
+  --oc-accent-soft: #d7f0ec;
+  --oc-info-bg: #dbeafe;
+  --oc-info-text: #1d4f8a;
   --oc-success-bg: #dcfce7;
-  --oc-success-text: #166534;
+  --oc-success-text: #14532d;
   --oc-warn-bg: #f1f5f9;
-  --oc-warn-text: #475569;
+  --oc-warn-text: #334155;
   --oc-fail-bg: #ffe4e6;
   --oc-fail-text: #9f1239;
   --oc-danger-bg: #fee2e2;
   --oc-danger-text: #7f1d1d;
-  --oc-shadow: 0 10px 30px rgba(10, 31, 24, 0.08);
+  --oc-shadow: 0 12px 34px rgba(12, 35, 55, 0.11);
   --oc-radius: 14px;
 
   /* ── Layout ─────────────────────────────────────────── */
@@ -42,9 +42,13 @@
   body {
     margin: 0;
     min-width: 320px;
-    background: var(--oc-bg);
+    background:
+      radial-gradient(circle at 8% -12%, rgba(14, 125, 115, 0.11), transparent 36%),
+      radial-gradient(circle at 100% 0%, rgba(29, 78, 216, 0.08), transparent 36%),
+      linear-gradient(180deg, #f7fbff 0%, var(--oc-bg) 48%, #eaf1f6 100%);
     color: var(--oc-text);
     font-family: 'Manrope', sans-serif;
+    letter-spacing: 0.003em;
   }
 
   html, body, #root {
@@ -73,7 +77,7 @@
     @apply border backdrop-blur-sm;
     border-color: var(--oc-border);
     border-radius: var(--oc-radius);
-    background: color-mix(in srgb, var(--oc-surface-strong) 88%, transparent);
+    background: color-mix(in srgb, var(--oc-surface-strong) 92%, transparent);
     box-shadow: var(--oc-shadow);
   }
 
@@ -183,7 +187,8 @@
   .oc-toolbar {
     @apply sticky top-0 z-10 rounded-2xl border p-3 backdrop-blur-sm;
     border-color: color-mix(in srgb, var(--oc-border) 88%, white);
-    background: color-mix(in srgb, var(--oc-surface-strong) 92%, transparent);
+    background: color-mix(in srgb, var(--oc-surface-strong) 95%, transparent);
+    box-shadow: 0 6px 18px rgba(15, 37, 57, 0.06);
   }
 
   /* ── Skeleton loader ───────────────────────────────────── */
@@ -217,7 +222,7 @@
   }
 
   .oc-nav-item:hover {
-    background: color-mix(in srgb, var(--oc-accent-soft) 50%, white);
+    background: color-mix(in srgb, var(--oc-accent-soft) 58%, white);
     color: var(--oc-accent-ink);
   }
 

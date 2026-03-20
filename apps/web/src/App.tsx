@@ -29,6 +29,7 @@ import {
   upsertCompanyFeedback,
 } from './lib/api'
 import type {
+  AnalyticsSnapshot,
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
   CompanyCounts,
@@ -42,18 +43,31 @@ import type {
   ScrapePageContentRead,
   StatsResponse,
 } from './lib/types'
+import type { ActiveView } from './lib/navigation'
+import {
+  buildAnalyticsSnapshot,
+  buildOperationsEvents,
+  runStatus,
+  scrapeStatus,
+  topFailedRunPrompts,
+  topScrapeErrorCodes,
+  type CountBucket,
+} from './lib/telemetry'
 
 // Layout & views
 import { AppShell } from './components/layout/AppShell'
 import { CompaniesView } from './components/views/CompaniesView'
 import { ScrapeJobsView } from './components/views/ScrapeJobsView'
 import { AnalysisRunsView } from './components/views/AnalysisRunsView'
+import { OperationsLogView } from './components/views/OperationsLogView'
+import { AnalyticsSnapshotView } from './components/views/AnalyticsSnapshotView'
 
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
 import { PromptLibraryPanel } from './components/panels/PromptLibraryPanel'
 import { AnalysisDetailPanel } from './components/panels/AnalysisDetailPanel'
 import { CompanyReviewPanel } from './components/panels/CompanyReviewPanel'
+import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPanel'
 
 // UI
 import { Toast } from './components/ui/Toast'
@@ -63,10 +77,11 @@ import { Toast } from './components/ui/Toast'
 const DEFAULT_COMPANY_PAGE_SIZE = 100
 const DEFAULT_JOBS_PAGE_SIZE = 50
 const DEFAULT_RUNS_PAGE_SIZE = 25
+const DEFAULT_OPERATIONS_LIMIT = 100
+const DEFAULT_ANALYTICS_SAMPLE_LIMIT = 120
 const PROMPT_SELECTION_KEY = 'ps:selected-prompt-id'
 const MAX_POLL_FAILURES = 3
 
-type ActiveView = 'companies' | 'jobs' | 'runs'
 type JobFilter = 'all' | 'active' | 'completed' | 'failed'
 
 // ── App ────────────────────────────────────────────────────────────────────
@@ -124,6 +139,22 @@ function App() {
   const [isRunsLoading, setIsRunsLoading] = useState(false)
   const [runsHasMore, setRunsHasMore] = useState(false)
 
+  // ── Operations log snapshot ──────────────────────────────────────────────
+  const [operationsScrapeJobs, setOperationsScrapeJobs] = useState<ScrapeJobRead[]>([])
+  const [operationsRuns, setOperationsRuns] = useState<RunRead[]>([])
+  const [operationsPipelineFilter, setOperationsPipelineFilter] = useState<'all' | 'scrape' | 'analysis'>('all')
+  const [operationsStatusFilter, setOperationsStatusFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all')
+  const [operationsErrorOnly, setOperationsErrorOnly] = useState(false)
+  const [operationsSearchQuery, setOperationsSearchQuery] = useState('')
+  const [isOperationsLoading, setIsOperationsLoading] = useState(false)
+  const [operationsError, setOperationsError] = useState('')
+
+  // ── Analytics snapshot ───────────────────────────────────────────────────
+  const [analyticsScrapeSample, setAnalyticsScrapeSample] = useState<ScrapeJobRead[]>([])
+  const [analyticsRunSample, setAnalyticsRunSample] = useState<RunRead[]>([])
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false)
+  const [analyticsError, setAnalyticsError] = useState('')
+
   // ── Analysis detail panel ────────────────────────────────────────────────
   const [inspectedRun, setInspectedRun] = useState<RunRead | null>(null)
   const [runJobs, setRunJobs] = useState<AnalysisRunJobRead[]>([])
@@ -147,6 +178,12 @@ function App() {
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [markdownError, setMarkdownError] = useState('')
   const [markdownCopyState, setMarkdownCopyState] = useState('')
+
+  // ── Scrape diagnostics panel ─────────────────────────────────────────────
+  const [diagnosticsJob, setDiagnosticsJob] = useState<ScrapeJobRead | null>(null)
+  const [diagnosticsPages, setDiagnosticsPages] = useState<ScrapePageContentRead[]>([])
+  const [isDiagnosticsLoading, setIsDiagnosticsLoading] = useState(false)
+  const [diagnosticsError, setDiagnosticsError] = useState('')
 
   // ── Prompts ──────────────────────────────────────────────────────────────
   const [prompts, setPrompts] = useState<PromptRead[]>([])
@@ -280,6 +317,48 @@ function App() {
     [runsPageSize],
   )
 
+  const loadOperationsSnapshot = useCallback(async () => {
+    setIsOperationsLoading(true)
+    setOperationsError('')
+    try {
+      const [scrapeRows, runRows] = await Promise.all([
+        listScrapeJobs(DEFAULT_OPERATIONS_LIMIT, 0, operationsStatusFilter),
+        listRuns(DEFAULT_OPERATIONS_LIMIT, 0),
+      ])
+      setOperationsScrapeJobs(scrapeRows)
+      setOperationsRuns(
+        operationsStatusFilter === 'all'
+          ? runRows
+          : runRows.filter((row) => runStatus(row) === operationsStatusFilter),
+      )
+    } catch (err) {
+      setOperationsError(parseError(err))
+    } finally {
+      setIsOperationsLoading(false)
+    }
+  }, [operationsStatusFilter])
+
+  const loadAnalyticsSnapshot = useCallback(async () => {
+    setIsAnalyticsLoading(true)
+    setAnalyticsError('')
+    try {
+      const [scrapeRows, runRows, statsResponse, companyCountsResponse] = await Promise.all([
+        listScrapeJobs(DEFAULT_ANALYTICS_SAMPLE_LIMIT, 0, 'all'),
+        listRuns(DEFAULT_ANALYTICS_SAMPLE_LIMIT, 0),
+        getStats(),
+        getCompanyCounts(),
+      ])
+      setAnalyticsScrapeSample(scrapeRows)
+      setAnalyticsRunSample(runRows)
+      setStats(statsResponse)
+      setCompanyCounts(companyCountsResponse)
+    } catch (err) {
+      setAnalyticsError(parseError(err))
+    } finally {
+      setIsAnalyticsLoading(false)
+    }
+  }, [])
+
   const loadRunJobs = useCallback(async (run: RunRead) => {
     setInspectedRun(run)
     setRunJobs([])
@@ -381,6 +460,34 @@ function App() {
   useEffect(() => { void loadScrapeJobs(0, jobsPageSize) }, [jobsFilter, jobsPageSize, loadScrapeJobs])
   useEffect(() => { void loadRuns(0, runsPageSize) }, [runsPageSize, loadRuns])
   useEffect(() => { void loadPrompts() }, [loadPrompts])
+
+  useEffect(() => {
+    if (activeView !== 'operations') return
+    void loadOperationsSnapshot()
+  }, [activeView, loadOperationsSnapshot])
+
+  useEffect(() => {
+    if (activeView !== 'operations') return
+    const hasActiveOps =
+      operationsScrapeJobs.some((job) => scrapeStatus(job) === 'active') ||
+      operationsRuns.some((run) => runStatus(run) === 'active')
+    const cadenceMs = hasActiveOps ? 4000 : 10000
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return
+      void loadOperationsSnapshot()
+    }, cadenceMs)
+    return () => window.clearInterval(timer)
+  }, [activeView, loadOperationsSnapshot, operationsScrapeJobs, operationsRuns])
+
+  useEffect(() => {
+    if (activeView !== 'analytics') return
+    void loadAnalyticsSnapshot()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return
+      void loadAnalyticsSnapshot()
+    }, 10000)
+    return () => window.clearInterval(timer)
+  }, [activeView, loadAnalyticsSnapshot])
 
   useEffect(() => {
     void loadStats()
@@ -598,6 +705,28 @@ function App() {
     await startClassification('selected', selectedCompanyIds)
   }
 
+  // Scrape diagnostics
+  const openScrapeDiagnostics = async (job: ScrapeJobRead) => {
+    setDiagnosticsJob(job)
+    setDiagnosticsPages([])
+    setDiagnosticsError('')
+    setIsDiagnosticsLoading(true)
+    try {
+      const pages = await listScrapeJobPageContents(job.id)
+      setDiagnosticsPages(pages)
+    } catch (err) {
+      setDiagnosticsError(parseError(err))
+    } finally {
+      setIsDiagnosticsLoading(false)
+    }
+  }
+
+  const closeScrapeDiagnostics = () => {
+    setDiagnosticsJob(null)
+    setDiagnosticsPages([])
+    setDiagnosticsError('')
+  }
+
   // Markdown panel
   const openMarkdownDrawer = async (job: ScrapeJobRead) => {
     setMarkdownJob(job)
@@ -770,6 +899,25 @@ function App() {
 
   // ── Derived ────────────────────────────────────────────────────────────
   const selectedPrompt = prompts.find((p) => p.id === selectedPromptId) ?? null
+  const operationsEvents = buildOperationsEvents(operationsScrapeJobs, operationsRuns)
+  const filteredOperationsEvents = operationsEvents.filter((event) => {
+    if (operationsPipelineFilter !== 'all' && event.kind !== operationsPipelineFilter) return false
+    if (operationsStatusFilter !== 'all' && event.status !== operationsStatusFilter) return false
+    if (operationsErrorOnly && !event.error_code) return false
+    if (operationsSearchQuery.trim()) {
+      const needle = operationsSearchQuery.trim().toLowerCase()
+      if (!event.search_blob.includes(needle)) return false
+    }
+    return true
+  })
+  const operationsActiveCount = operationsEvents.filter((event) => event.status === 'active').length
+  const analyticsSnapshot: AnalyticsSnapshot = buildAnalyticsSnapshot(
+    analyticsScrapeSample,
+    analyticsRunSample,
+    companyCounts,
+  )
+  const analyticsScrapeErrors: CountBucket[] = topScrapeErrorCodes(analyticsScrapeSample, 6)
+  const analyticsFailedRunPrompts: CountBucket[] = topFailedRunPrompts(analyticsRunSample, 6)
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -865,6 +1013,44 @@ function App() {
           />
         )}
 
+        {activeView === 'operations' && (
+          <OperationsLogView
+            events={filteredOperationsEvents}
+            isLoading={isOperationsLoading}
+            error={operationsError}
+            pipelineFilter={operationsPipelineFilter}
+            statusFilter={operationsStatusFilter}
+            errorOnly={operationsErrorOnly}
+            searchQuery={operationsSearchQuery}
+            activeCount={operationsActiveCount}
+            onSetPipelineFilter={setOperationsPipelineFilter}
+            onSetStatusFilter={setOperationsStatusFilter}
+            onSetErrorOnly={setOperationsErrorOnly}
+            onSetSearchQuery={setOperationsSearchQuery}
+            onRefresh={() => void loadOperationsSnapshot()}
+            onInspectEvent={(event) => {
+              if (event.scrape_job) {
+                void openScrapeDiagnostics(event.scrape_job)
+                return
+              }
+              if (event.run) void loadRunJobs(event.run)
+            }}
+          />
+        )}
+
+        {activeView === 'analytics' && (
+          <AnalyticsSnapshotView
+            stats={stats}
+            companyCounts={companyCounts}
+            snapshot={analyticsSnapshot}
+            scrapeErrors={analyticsScrapeErrors}
+            failedRunPrompts={analyticsFailedRunPrompts}
+            isLoading={isAnalyticsLoading}
+            error={analyticsError}
+            onRefresh={() => void loadAnalyticsSnapshot()}
+          />
+        )}
+
         {/* Pipeline ops — visible in scrape jobs view toolbar area via stats */}
         {stats && activeView === 'jobs' && (
           <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--oc-border)] bg-white p-3">
@@ -913,6 +1099,15 @@ function App() {
         onClose={closeMarkdownDrawer}
         onSetActivePageKind={setActiveMarkdownPageKind}
         onCopyMarkdown={(content) => void copyMarkdown(content)}
+      />
+
+      <ScrapeDiagnosticsPanel
+        job={diagnosticsJob}
+        pages={diagnosticsPages}
+        isLoading={isDiagnosticsLoading}
+        error={diagnosticsError}
+        onClose={closeScrapeDiagnostics}
+        onOpenMarkdown={(job) => void openMarkdownDrawer(job)}
       />
 
       <PromptLibraryPanel

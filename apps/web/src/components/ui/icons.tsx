@@ -30,6 +30,36 @@ export function IconChart({ className = '', size = 20 }: IconProps) {
   )
 }
 
+export function IconTimeline({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 5h4M13 5h4M3 10h8M15 10h2M3 15h6M12 15h8" />
+      <circle cx="10.5" cy="5" r="1.4" />
+      <circle cx="13" cy="10" r="1.4" />
+      <circle cx="9.5" cy="15" r="1.4" />
+    </svg>
+  )
+}
+
+export function IconPulse({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M2 10h3l2-4 3 8 2-4h6" />
+      <path d="M2 4v12" opacity="0.4" />
+    </svg>
+  )
+}
+
+export function IconDots({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="currentColor" className={className}>
+      <circle cx="5" cy="10" r="1.6" />
+      <circle cx="10" cy="10" r="1.6" />
+      <circle cx="15" cy="10" r="1.6" />
+    </svg>
+  )
+}
+
 export function IconSliders({ className = '', size = 20 }: IconProps) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>

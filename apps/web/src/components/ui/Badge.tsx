@@ -23,22 +23,3 @@ export function Badge({ variant = 'neutral', children, className = '', title }: 
     </span>
   )
 }
-
-// ── Decision-specific badge helpers ──────────────────────────────────────────
-
-export function decisionVariant(decision: string | null): BadgeVariant {
-  if (!decision) return 'neutral'
-  const t = decision.trim().toLowerCase()
-  if (t === 'possible') return 'success'
-  if (t === 'unknown') return 'neutral'
-  return 'fail' // crap
-}
-
-export function decisionBgClass(decision: string | null): string {
-  if (!decision) return 'bg-slate-100 text-slate-600'
-  const t = decision.trim().toLowerCase()
-  if (t === 'possible') return 'bg-emerald-50 text-emerald-800'
-  if (t === 'unknown') return 'bg-amber-50 text-amber-800'
-  if (t === 'crap') return 'bg-rose-50 text-rose-800'
-  return 'bg-indigo-50 text-indigo-800'
-}

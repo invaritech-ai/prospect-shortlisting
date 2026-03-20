@@ -1,7 +1,16 @@
 import type { StatsResponse, PromptRead } from '../../lib/types'
-import { IconBuilding, IconGlobe, IconChart, IconPencil, IconDownload, IconChevronLeft, IconChevronRight } from '../ui/icons'
-
-type ActiveView = 'companies' | 'jobs' | 'runs'
+import type { ActiveView } from '../../lib/navigation'
+import {
+  IconBuilding,
+  IconGlobe,
+  IconChart,
+  IconTimeline,
+  IconPulse,
+  IconPencil,
+  IconDownload,
+  IconChevronLeft,
+  IconChevronRight,
+} from '../ui/icons'
 
 interface SidebarProps {
   activeView: ActiveView
@@ -22,6 +31,8 @@ const NAV_ITEMS: Array<{
   { value: 'companies', label: 'Companies', Icon: IconBuilding },
   { value: 'jobs', label: 'Scrape Jobs', Icon: IconGlobe },
   { value: 'runs', label: 'Analysis Runs', Icon: IconChart },
+  { value: 'operations', label: 'Operations Log', Icon: IconTimeline },
+  { value: 'analytics', label: 'Analytics Snapshot', Icon: IconPulse },
 ]
 
 function PipelineDot({ stats }: { stats: StatsResponse | null }) {
@@ -111,12 +122,11 @@ export function Sidebar({
           className="mb-5 flex items-center gap-2.5 overflow-hidden"
           style={{ padding: collapsed ? '0 12px' : '0 12px 0 14px' }}
         >
-          <div
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg font-extrabold text-white text-sm"
-            style={{ background: 'var(--oc-accent)' }}
-          >
-            PS
-          </div>
+          <img
+            src="/prospect-console-mark.svg"
+            alt="Prospect Console"
+            className="h-8 w-8 flex-shrink-0 rounded-lg"
+          />
           {/* Label fades + slides out */}
           <div
             className="overflow-hidden transition-all duration-200"
@@ -127,7 +137,7 @@ export function Sidebar({
             }}
           >
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--oc-muted)]">Prospect</p>
-            <p className="text-sm font-extrabold text-[var(--oc-accent-ink)] leading-none">Pipeline</p>
+            <p className="text-sm font-extrabold text-[var(--oc-accent-ink)] leading-none">Console</p>
           </div>
         </div>
 

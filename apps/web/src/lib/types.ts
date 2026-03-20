@@ -164,12 +164,9 @@ export type ScrapePageContentRead = {
   url: string
   page_kind: string
   status_code: number
-  screenshot_path: string
-  screenshot_exists: boolean
   markdown_content: string
-  ocr_text: string
-  fetch_error_code: string
-  fetch_error_message: string
+  fetch_error_code: string | null
+  fetch_error_message: string | null
   updated_at: string
 }
 
@@ -313,4 +310,34 @@ export type AnalysisJobDetailRead = {
   confidence: number | null
   reasoning_json: Record<string, unknown> | null
   evidence_json: Record<string, unknown> | null
+}
+
+export type OperationsEventKind = 'scrape' | 'analysis'
+export type OperationsEventStatus = 'active' | 'completed' | 'failed'
+
+export type OperationsEvent = {
+  id: string
+  kind: OperationsEventKind
+  status: OperationsEventStatus
+  occurred_at: string
+  title: string
+  subtitle: string
+  error_code: string | null
+  search_blob: string
+  scrape_job: ScrapeJobRead | null
+  run: RunRead | null
+}
+
+export type AnalyticsSnapshot = {
+  scrape_sample_total: number
+  scrape_sample_completed: number
+  scrape_sample_failed: number
+  scrape_sample_active: number
+  run_sample_total: number
+  run_sample_completed: number
+  run_sample_failed: number
+  run_sample_active: number
+  possible_ratio_pct: number | null
+  scrape_failure_pct: number | null
+  analysis_failure_pct: number | null
 }

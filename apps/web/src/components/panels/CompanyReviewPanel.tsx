@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import type { CompanyListItem, AnalysisJobDetailRead } from '../../lib/types'
 import { Drawer } from '../ui/Drawer'
 import { Button } from '../ui/Button'
 import { Skeleton } from '../ui/Skeleton'
 import { IconThumbUp, IconThumbDown, IconExternalLink } from '../ui/icons'
-import { decisionBgClass } from '../ui/Badge'
+import { decisionBgClass } from '../ui/badgeUtils'
 
 interface CompanyReviewPanelProps {
   company: CompanyListItem | null
@@ -105,18 +105,34 @@ export function CompanyReviewPanel({
   onClose,
   onSave,
 }: CompanyReviewPanelProps) {
-  const [thumbs, setThumbs] = useState<'up' | 'down' | null>(null)
-  const [comment, setComment] = useState('')
-
-  // Reset form when company changes
-  useEffect(() => {
-    if (company) {
-      setThumbs(company.feedback_thumbs ?? null)
-      setComment(company.feedback_comment ?? '')
-    }
-  }, [company?.id])
+  const [draftByCompany, setDraftByCompany] = useState<Record<string, { thumbs: 'up' | 'down' | null; comment: string }>>({})
 
   if (!company) return null
+
+  const draft = draftByCompany[company.id] ?? {
+    thumbs: company.feedback_thumbs ?? null,
+    comment: company.feedback_comment ?? '',
+  }
+  const thumbs = draft.thumbs
+  const comment = draft.comment
+  const setThumbs = (next: 'up' | 'down' | null) => {
+    setDraftByCompany((current) => ({
+      ...current,
+      [company.id]: {
+        ...(current[company.id] ?? { thumbs: company.feedback_thumbs ?? null, comment: company.feedback_comment ?? '' }),
+        thumbs: next,
+      },
+    }))
+  }
+  const setComment = (next: string) => {
+    setDraftByCompany((current) => ({
+      ...current,
+      [company.id]: {
+        ...(current[company.id] ?? { thumbs: company.feedback_thumbs ?? null, comment: company.feedback_comment ?? '' }),
+        comment: next,
+      },
+    }))
+  }
 
   const hasClassification = !!detail?.predicted_label
   const evidenceItems = extractEvidence(detail?.evidence_json ?? null)

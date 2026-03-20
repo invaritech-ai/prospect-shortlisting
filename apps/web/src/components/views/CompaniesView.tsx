@@ -7,7 +7,8 @@ import type {
   ScrapeFilter,
   PromptRead,
 } from '../../lib/types'
-import { Badge, decisionBgClass } from '../ui/Badge'
+import { Badge } from '../ui/Badge'
+import { decisionBgClass } from '../ui/badgeUtils'
 import { Button } from '../ui/Button'
 import { BulkActionBar } from '../ui/BulkActionBar'
 import { LetterStrip } from '../ui/LetterStrip'

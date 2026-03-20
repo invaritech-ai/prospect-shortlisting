@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { StatsResponse, PromptRead } from '../../lib/types'
+import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart } from '../ui/icons'
-
-type ActiveView = 'companies' | 'jobs' | 'runs'
+import { IconBuilding, IconGlobe, IconChart, IconTimeline, IconPulse } from '../ui/icons'
 
 interface AppShellProps {
   activeView: ActiveView
@@ -21,6 +20,8 @@ const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: n
   companies: { label: 'Companies', Icon: IconBuilding },
   jobs: { label: 'Scrape Jobs', Icon: IconGlobe },
   runs: { label: 'Analysis Runs', Icon: IconChart },
+  operations: { label: 'Operations Log', Icon: IconTimeline },
+  analytics: { label: 'Analytics Snapshot', Icon: IconPulse },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'
@@ -73,13 +74,19 @@ export function AppShell({
           className="flex items-center gap-3 border-b border-(--oc-border) bg-(--oc-surface-strong) px-4 md:hidden"
           style={{ height: '52px' }}
         >
-          <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-extrabold text-white text-xs"
-            style={{ background: 'var(--oc-accent)' }}
-          >
-            PS
+          <div className="flex items-center gap-2 min-w-0">
+            <img
+              src="/prospect-console-mark.svg"
+              alt="Prospect Console"
+              className="h-7 w-7 shrink-0 rounded-md"
+            />
+            <div className="min-w-0">
+              <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-(--oc-muted)">Prospect</p>
+              <p className="truncate text-[11px] font-extrabold text-(--oc-accent-ink) leading-none">Console</p>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 min-w-0">
+          <span className="h-5 w-px bg-(--oc-border)" />
+          <div className="flex items-center gap-1.5 min-w-0 ml-0.5">
             <Icon size={16} className="text-(--oc-accent) shrink-0" />
             <span className="text-sm font-bold text-(--oc-accent-ink) truncate">{label}</span>
           </div>
