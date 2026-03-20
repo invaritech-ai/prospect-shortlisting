@@ -129,6 +129,10 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
         attempts.append(url.replace("http://", "https://", 1))
 
     last_error = "unknown_fetch_error"
+    # Keep the best thin static result across all attempts so we can fall back
+    # to it when the dynamic fetcher crashes instead of losing it entirely.
+    thin_static_fallback: FetchResult | None = None
+
     for attempt in attempts:
         static_error = ""
         try:
@@ -152,7 +156,18 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                         error_code="",
                         error_message="",
                     )
+                # Static returned valid HTML but below the JS-enrichment threshold.
+                # Stash it — if the dynamic fetch fails we use this instead of nothing.
                 static_error = "thin_static"
+                if thin_static_fallback is None:
+                    thin_static_fallback = FetchResult(
+                        final_url=str(static_response.url),
+                        status_code=int(getattr(static_response, "status", 0) or 0),
+                        selector=static_response,
+                        fetch_mode="static_thin",
+                        error_code="",
+                        error_message="",
+                    )
             else:
                 static_error = "non_html"
         except Exception as exc:  # noqa: BLE001
@@ -186,6 +201,10 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                 last_error = str(exc) or static_error or "dynamic_fetch_failed"
         else:
             last_error = static_error or "fetch_failed"
+
+    # All attempts exhausted — return the thin static fallback if we have one.
+    if thin_static_fallback is not None:
+        return thin_static_fallback
 
     return FetchResult(
         final_url=url,

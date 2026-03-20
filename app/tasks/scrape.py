@@ -35,6 +35,7 @@ def scrape_website(self, job_id: str) -> None:  # type: ignore[misc]
         raise
     except Exception as exc:  # noqa: BLE001
         log_event(logger, "scrape_task_error", job_id=job_id, error=str(exc))
+        _mark_failed(job_id, "task_exception", str(exc)[:500])
         raise
 
 

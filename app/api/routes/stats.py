@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import case
+from sqlalchemy import case, literal_column
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
@@ -47,32 +47,61 @@ def _utcnow() -> datetime:
 
 
 def _scrape_stats(session: Session) -> PipelineStageStats:
+    """Count per unique normalized_url using the latest (most recent) job only.
+
+    This prevents inflated totals when scrape-all is run multiple times.
+    Active (non-terminal) jobs always take priority: if a URL has a running or
+    queued job, that is the one that counts, regardless of older terminal rows.
+    """
     now = _utcnow()
     stuck_cutoff = now - timedelta(minutes=SCRAPE_RUNNING_STUCK_MINUTES)
+
+    # Subquery: pick one row per normalized_url.
+    # Priority: non-terminal jobs first (they represent current work), then
+    # most-recently-created terminal job.
+    latest = (
+        select(
+            ScrapeJob.id,
+            ScrapeJob.status,
+            ScrapeJob.terminal_state,
+            ScrapeJob.updated_at,
+            ScrapeJob.started_at,
+            ScrapeJob.finished_at,
+            func.row_number()
+            .over(
+                partition_by=ScrapeJob.normalized_url,
+                order_by=(ScrapeJob.terminal_state.asc(), ScrapeJob.created_at.desc()),
+            )
+            .label("rn"),
+        )
+        .subquery("latest")
+    )
+    latest_only = select(latest).where(literal_column("rn") == 1).subquery("lo")
 
     row = session.exec(
         select(
             func.count().label("total"),
-            func.count(case((col(ScrapeJob.status) == "completed", 1))).label("completed"),
-            func.count(case((col(ScrapeJob.status) == "site_unavailable", 1))).label("site_unavailable"),
+            func.count(case((literal_column("lo.status") == "completed", 1))).label("completed"),
+            func.count(case((literal_column("lo.status") == "site_unavailable", 1))).label("site_unavailable"),
             func.count(case((
-                col(ScrapeJob.terminal_state).is_(True)
-                & (col(ScrapeJob.status) != "completed")
-                & (col(ScrapeJob.status) != "site_unavailable"),
+                literal_column("lo.terminal_state").is_(True)
+                & (literal_column("lo.status") != "completed")
+                & (literal_column("lo.status") != "site_unavailable"),
                 1,
             ))).label("failed"),
             func.count(case((
-                col(ScrapeJob.terminal_state).is_(False) & (col(ScrapeJob.status) == "running"),
+                literal_column("lo.terminal_state").is_(False)
+                & (literal_column("lo.status") == "running"),
                 1,
             ))).label("running"),
-            func.count(case((col(ScrapeJob.status) == "created", 1))).label("queued"),
+            func.count(case((literal_column("lo.status") == "created", 1))).label("queued"),
             func.count(case((
-                col(ScrapeJob.terminal_state).is_(False)
-                & (col(ScrapeJob.status) == "running")
-                & (col(ScrapeJob.updated_at) < stuck_cutoff),
+                literal_column("lo.terminal_state").is_(False)
+                & (literal_column("lo.status") == "running")
+                & (literal_column("lo.updated_at") < stuck_cutoff),
                 1,
             ))).label("stuck_count"),
-        ).select_from(ScrapeJob)
+        ).select_from(latest_only)
     ).one()
 
     total = row.total or 0
@@ -83,17 +112,29 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
     queued = row.queued or 0
     stuck_count = row.stuck_count or 0
 
+    # Prefer started_at/finished_at; fall back to created_at/updated_at for
+    # jobs completed before the Celery migration added those timestamps.
     recent = list(
         session.exec(
-            select(ScrapeJob.started_at, ScrapeJob.finished_at)
+            select(
+                ScrapeJob.started_at,
+                ScrapeJob.finished_at,
+                ScrapeJob.created_at,
+                ScrapeJob.updated_at,
+            )
             .where(col(ScrapeJob.status) == "completed")
-            .order_by(col(ScrapeJob.finished_at).desc())
+            .order_by(col(ScrapeJob.updated_at).desc())
             .limit(_SAMPLE_SIZE)
         )
     )
     avg_job_sec: float | None = None
     if recent:
-        durations = [(f - s).total_seconds() for s, f in recent if s and f and f > s]
+        durations: list[float] = []
+        for started, finished, created, updated in recent:
+            s = started or created
+            f = finished or updated
+            if s and f and f > s:
+                durations.append((f - s).total_seconds())
         if durations:
             avg_job_sec = sum(durations) / len(durations)
 

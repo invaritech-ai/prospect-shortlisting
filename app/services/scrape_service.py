@@ -263,6 +263,21 @@ class ScrapeService:
             with Session(engine) as session:
                 job = session.get(ScrapeJob, job_id)
                 if job and job.lock_token == lock_token:
+                    # Persist page-level errors so we can diagnose why fetches failed.
+                    for snap in fetched_pages:
+                        if not snap["success"]:
+                            session.add(ScrapePage(
+                                job_id=job_id,
+                                url=snap["url"],
+                                canonical_url=snap["canonical_url"],
+                                depth=snap["depth"],
+                                page_kind=snap["page_kind"],
+                                fetch_mode=snap["fetch_mode"],
+                                status_code=snap["status_code"],
+                                fetch_error_code=snap["fetch_error_code"],
+                                fetch_error_message=snap.get("fetch_error_message", "")[:500],
+                            ))
+
                     failure_codes = [
                         p.get("fetch_error_code", "")
                         for p in fetched_pages
