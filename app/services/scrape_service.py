@@ -35,7 +35,11 @@ from app.services.fetch_service import SKIP_HINTS, USER_AGENT  # noqa: E402, F40
 _SCRAPE_LOCK_TTL = timedelta(minutes=35)
 
 # Error codes that indicate a permanent, unrecoverable website failure.
-PERMANENT_SCRAPE_ERROR_CODES: frozenset[str] = frozenset({"dns_not_resolved", "tls_error"})
+PERMANENT_SCRAPE_ERROR_CODES: frozenset[str] = frozenset({
+    "dns_not_resolved",
+    "tls_error",
+    "bot_protection",   # Imperva / WAF that no tier can bypass — not worth retrying
+})
 
 # Page kinds discovered and fetched, in priority order.
 _PAGE_KINDS = [

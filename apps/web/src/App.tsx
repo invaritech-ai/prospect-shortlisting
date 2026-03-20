@@ -36,6 +36,7 @@ import type {
   CompanyList,
   CompanyListItem,
   DecisionFilter,
+  ManualLabel,
   PromptRead,
   RunRead,
   ScrapeFilter,
@@ -854,13 +855,21 @@ function App() {
     if (!reviewedCompany) return
     setIsFeedbackSaving(true)
     try {
-      await upsertCompanyFeedback(reviewedCompany.id, { thumbs, comment: comment || null })
+      await upsertCompanyFeedback(reviewedCompany.id, { thumbs, comment: comment || null, manual_label: reviewedCompany.feedback_manual_label ?? null })
       companyCacheRef.current = {}
       void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
       setReviewedCompany((prev) => prev ? { ...prev, feedback_thumbs: thumbs, feedback_comment: comment || null } : prev)
       setNotice('Feedback saved.')
     } catch (err) { setError(parseError(err)) }
     finally { setIsFeedbackSaving(false) }
+  }
+
+  const setManualLabel = async (company: CompanyListItem, label: ManualLabel | null) => {
+    try {
+      await upsertCompanyFeedback(company.id, { manual_label: label })
+      companyCacheRef.current = {}
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+    } catch (err) { setError(parseError(err)) }
   }
 
   const onDrainQueue = async () => {
@@ -979,6 +988,7 @@ function App() {
             onUpload={onUpload}
             onToggleUtilities={() => setUtilitiesOpen((v) => !v)}
             onReviewCompany={(c) => void openCompanyReview(c)}
+            onSetManualLabel={(c, label) => void setManualLabel(c, label)}
           />
         )}
 

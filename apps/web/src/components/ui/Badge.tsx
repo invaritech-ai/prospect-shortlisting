@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 
-export type BadgeVariant = 'neutral' | 'info' | 'success' | 'fail'
+export type BadgeVariant = 'neutral' | 'info' | 'success' | 'fail' | 'warn'
 
 const VARIANT_CLASSES: Record<BadgeVariant, string> = {
   neutral: 'oc-badge-neutral',
   info: 'oc-badge-info',
   success: 'oc-badge-success',
   fail: 'oc-badge-fail',
+  warn: 'oc-badge-warn',
 }
 
 interface BadgeProps {

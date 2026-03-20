@@ -4,6 +4,7 @@ import type {
   CompanyListItem,
   CompanyCounts,
   DecisionFilter,
+  ManualLabel,
   ScrapeFilter,
   PromptRead,
 } from '../../lib/types'
@@ -73,6 +74,7 @@ interface CompaniesViewProps {
   onUpload: (event: FormEvent<HTMLFormElement>) => void
   onToggleUtilities: () => void
   onReviewCompany: (company: CompanyListItem) => void
+  onSetManualLabel: (company: CompanyListItem, label: ManualLabel | null) => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -96,21 +98,16 @@ const SCRAPE_FILTERS: Array<{ value: ScrapeFilter; label: string; countKey: keyo
 
 // ── Badge helpers ──────────────────────────────────────────────────────────
 
-function scrapeBadgeForCompany(item: CompanyListItem): { label: string; variant: 'neutral' | 'info' | 'success' | 'fail'; title: string } {
+function scrapeBadgeForCompany(item: CompanyListItem): { label: string; variant: 'neutral' | 'info' | 'success' | 'fail' | 'warn'; title: string } {
   const status = item.latest_scrape_status ?? 'not_started'
-  const stage1 = item.latest_scrape_stage1_status ?? '-'
-  const stage2 = item.latest_scrape_stage2_status ?? '-'
-  const title = `status: ${status} | stage1: ${stage1} | stage2: ${stage2}`
+  const errCode = item.latest_scrape_error_code ?? ''
+  const title = `status: ${status}${errCode ? ` | error: ${errCode}` : ''}`
   if (!item.latest_scrape_status) return { label: 'Not started', variant: 'neutral', title }
-  if (item.latest_scrape_terminal === false) {
-    if (stage1 === 'running') return { label: 'Stage 1', variant: 'info', title }
-    if (stage2 === 'running') return { label: 'Stage 2', variant: 'info', title }
-    return { label: 'Running', variant: 'info', title }
-  }
-  if (status.includes('failed') || stage1 === 'failed' || stage2 === 'failed') {
-    return { label: 'Failed', variant: 'fail', title }
-  }
-  if (status === 'completed' || stage2 === 'completed') return { label: 'Done', variant: 'success', title }
+  if (item.latest_scrape_terminal === false) return { label: 'Running', variant: 'info', title }
+  if (errCode === 'bot_protection') return { label: 'Bot wall', variant: 'warn', title }
+  if (status === 'site_unavailable') return { label: 'Unavailable', variant: 'fail', title }
+  if (status.includes('failed')) return { label: 'Failed', variant: 'fail', title }
+  if (status === 'completed') return { label: 'Done', variant: 'success', title }
   return { label: 'Queued', variant: 'neutral', title }
 }
 
@@ -319,6 +316,40 @@ function FeedbackBadge({ thumbs }: { thumbs: 'up' | 'down' | null }) {
   )
 }
 
+const LABEL_OPTIONS: Array<{ value: ManualLabel; short: string; title: string; cls: string }> = [
+  { value: 'possible', short: 'P', title: 'Mark as Possible', cls: 'text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100' },
+  { value: 'unknown',  short: 'U', title: 'Mark as Unknown',  cls: 'text-slate-600  border-slate-300  bg-slate-50  hover:bg-slate-100'  },
+  { value: 'crap',     short: 'C', title: 'Mark as Crap',     cls: 'text-rose-700   border-rose-300   bg-rose-50   hover:bg-rose-100'   },
+]
+
+function QuickLabelPicker({
+  current,
+  onSelect,
+}: {
+  current: ManualLabel | null
+  onSelect: (label: ManualLabel | null) => void
+}) {
+  return (
+    <span className="flex items-center gap-0.5 ml-1">
+      {LABEL_OPTIONS.map(({ value, short, title, cls }) => (
+        <button
+          key={value}
+          type="button"
+          title={current === value ? `Remove manual label (${value})` : title}
+          onClick={(e) => { e.stopPropagation(); onSelect(current === value ? null : value) }}
+          className={`h-4 w-4 rounded border text-[9px] font-bold leading-none transition ${
+            current === value
+              ? `${cls} ring-1 ring-current opacity-100`
+              : `${cls} opacity-60 hover:opacity-100`
+          }`}
+        >
+          {short}
+        </button>
+      ))}
+    </span>
+  )
+}
+
 function CompanyCard({
   item,
   isSelected,
@@ -326,6 +357,7 @@ function CompanyCard({
   onScrape,
   onClassify,
   onReview,
+  onSetManualLabel,
   actionState,
   analysisActionState,
   selectedPrompt,
@@ -336,6 +368,7 @@ function CompanyCard({
   onScrape: () => void
   onClassify: () => void
   onReview: () => void
+  onSetManualLabel: (label: ManualLabel | null) => void
   actionState: string
   analysisActionState: string
   selectedPrompt: PromptRead | null
@@ -369,13 +402,18 @@ function CompanyCard({
             <IconExternalLink size={11} className="shrink-0 text-(--oc-muted) opacity-50" />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {item.latest_decision ? (
+            {item.feedback_manual_label ? (
+              <span className={`oc-badge ${decisionBgClass(item.feedback_manual_label)}`} title="Manually classified">
+                ✏ {item.feedback_manual_label}
+              </span>
+            ) : item.latest_decision ? (
               <span className={`oc-badge ${decisionBgClass(item.latest_decision)}`}>
                 {item.latest_decision}
               </span>
             ) : (
               <Badge variant="neutral">No decision</Badge>
             )}
+            <QuickLabelPicker current={item.feedback_manual_label} onSelect={onSetManualLabel} />
             <FeedbackBadge thumbs={item.feedback_thumbs} />
             <Badge variant={scrapeBadge.variant} title={scrapeBadge.title}>{scrapeBadge.label}</Badge>
             {(actionState || analysisActionState) && (
@@ -456,6 +494,7 @@ export function CompaniesView({
   onUpload,
   onToggleUtilities,
   onReviewCompany,
+  onSetManualLabel,
 }: CompaniesViewProps) {
   // Derived state
   const effectiveTotal = companies?.total ?? companyCounts?.total ?? null
@@ -601,6 +640,7 @@ export function CompaniesView({
                 onScrape={() => onScrape(item)}
                 onClassify={() => onClassify(item)}
                 onReview={() => onReviewCompany(item)}
+                onSetManualLabel={(label) => onSetManualLabel(item, label)}
                 actionState={actionState[item.id] ?? ''}
                 analysisActionState={analysisActionState[item.id] ?? ''}
                 selectedPrompt={selectedPrompt}
@@ -659,13 +699,21 @@ export function CompaniesView({
                       </td>
                       <td>
                         <div className="flex items-center gap-1.5">
-                          {item.latest_decision ? (
+                          {item.feedback_manual_label ? (
+                            <span className={`oc-badge ${decisionBgClass(item.feedback_manual_label)}`} title="Manually classified">
+                              ✏ {item.feedback_manual_label}
+                            </span>
+                          ) : item.latest_decision ? (
                             <span className={`oc-badge ${decisionBgClass(item.latest_decision)}`}>
                               {item.latest_decision}
                             </span>
                           ) : (
                             <Badge variant="neutral">No decision</Badge>
                           )}
+                          <QuickLabelPicker
+                            current={item.feedback_manual_label}
+                            onSelect={(label) => onSetManualLabel(item, label)}
+                          />
                           <FeedbackBadge thumbs={item.feedback_thumbs} />
                         </div>
                       </td>

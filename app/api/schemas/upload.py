@@ -77,6 +77,8 @@ class CompanyListItem(BaseModel):
     latest_analysis_terminal: bool | None = None
     feedback_thumbs: str | None = None
     feedback_comment: str | None = None
+    feedback_manual_label: str | None = None
+    latest_scrape_error_code: str | None = None
     contact_count: int = 0
     contact_fetch_status: str | None = None
 

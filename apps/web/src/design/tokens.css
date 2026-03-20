@@ -161,6 +161,11 @@
     color: var(--oc-fail-text);
   }
 
+  .oc-badge-warn {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
   /* ── Compact table ─────────────────────────────────────── */
   .oc-compact-table {
     @apply w-full border-collapse;

@@ -62,6 +62,30 @@ def is_html_selector_response(response: Selector) -> bool:
     return len(clean_text(str(response.get_all_text(separator=" ")))) > 40
 
 
+# Patterns that indicate a bot-protection wall rather than real site content.
+# When detected we refuse to accept the response as usable content, so the
+# scrape correctly fails/marks the site as unavailable instead of producing
+# junk markdown from an error page.
+_BOT_WALL_PATTERNS: tuple[str, ...] = (
+    "incapsula incident id",           # Imperva / Incapsula
+    "request unsuccessful",            # Imperva / Incapsula prefix
+    "just a moment",                   # Cloudflare interstitial (pre-solve)
+    "checking your browser",           # Cloudflare
+    "enable javascript and cookies",   # Cloudflare JS challenge
+    "please enable cookies",           # Cloudflare
+    "ddos-guard",                      # DDoS-Guard
+    "ray id:",                         # Cloudflare debug footer
+    "access denied",                   # Generic WAF
+    "403 forbidden",                   # Generic WAF
+)
+
+
+def is_bot_wall(text: str) -> bool:
+    """Return True if the page text looks like a WAF/bot-protection page."""
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in _BOT_WALL_PATTERNS)
+
+
 def classify_fetch_error(message: str) -> str:
     lowered = (message or "").lower()
     if "dns" in lowered or "resolve host" in lowered or "name_not_resolved" in lowered:
@@ -160,9 +184,10 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                         error_message="",
                     )
                 # Static returned valid HTML but below the JS-enrichment threshold.
-                # Stash it — if the dynamic fetch fails we use this instead of nothing.
+                # Stash it as a fallback — unless it's a bot-wall page (Cloudflare,
+                # Imperva, etc.), in which case it has zero content value.
                 static_error = "thin_static"
-                if thin_static_fallback is None:
+                if thin_static_fallback is None and not is_bot_wall(static_text):
                     thin_static_fallback = FetchResult(
                         final_url=str(static_response.url),
                         status_code=int(getattr(static_response, "status", 0) or 0),
@@ -223,7 +248,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
             )
             if is_html_selector_response(stealth_response):
                 stealth_text = clean_text(str(stealth_response.get_all_text(separator=" ")))
-                if len(stealth_text) >= 250:
+                if len(stealth_text) >= 250 and not is_bot_wall(stealth_text):
                     return FetchResult(
                         final_url=str(stealth_response.url),
                         status_code=int(getattr(stealth_response, "status", 0) or 0),
@@ -240,11 +265,19 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
     if thin_static_fallback is not None:
         return thin_static_fallback
 
+    # If the last error contains a known bot-wall signal, use a specific code
+    # so the job is marked site_unavailable (permanent) rather than retried.
+    error_code = (
+        "bot_protection"
+        if is_bot_wall(last_error)
+        else classify_fetch_error(last_error)
+    )
+
     return FetchResult(
         final_url=url,
         status_code=0,
         selector=None,
         fetch_mode="none",
-        error_code=classify_fetch_error(last_error),
+        error_code=error_code,
         error_message=last_error,
     )

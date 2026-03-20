@@ -210,6 +210,7 @@ class CompanyFeedback(SQLModel, table=True):
     company_id: UUID = Field(foreign_key="companies.id", primary_key=True)
     thumbs: str | None = Field(default=None, max_length=8)  # 'up' | 'down'
     comment: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    manual_label: str | None = Field(default=None, max_length=16)  # 'possible' | 'unknown' | 'crap'
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

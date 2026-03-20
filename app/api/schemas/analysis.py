@@ -26,6 +26,7 @@ class AnalysisRunJobRead(BaseModel):
 class FeedbackUpsert(BaseModel):
     thumbs: str | None = None  # 'up' | 'down' | None
     comment: str | None = None
+    manual_label: str | None = None  # 'possible' | 'unknown' | 'crap' | None
 
     @field_validator("thumbs")
     @classmethod
@@ -34,10 +35,18 @@ class FeedbackUpsert(BaseModel):
             raise ValueError("thumbs must be 'up', 'down', or null")
         return v
 
+    @field_validator("manual_label")
+    @classmethod
+    def validate_manual_label(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("possible", "unknown", "crap"):
+            raise ValueError("manual_label must be 'possible', 'unknown', 'crap', or null")
+        return v
+
 
 class FeedbackRead(BaseModel):
     thumbs: str | None = None
     comment: str | None = None
+    manual_label: str | None = None
     updated_at: datetime
 
 

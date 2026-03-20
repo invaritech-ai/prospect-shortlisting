@@ -59,18 +59,24 @@ export type CompanyListItem = {
   latest_analysis_terminal: boolean | null
   feedback_thumbs: 'up' | 'down' | null
   feedback_comment: string | null
+  feedback_manual_label: 'possible' | 'unknown' | 'crap' | null
+  latest_scrape_error_code: string | null
   contact_count: number
   contact_fetch_status: string | null
 }
 
+export type ManualLabel = 'possible' | 'unknown' | 'crap'
+
 export type FeedbackUpsert = {
-  thumbs: 'up' | 'down' | null
+  thumbs?: 'up' | 'down' | null
   comment?: string | null
+  manual_label?: ManualLabel | null
 }
 
 export type FeedbackRead = {
   thumbs: 'up' | 'down' | null
   comment: string | null
+  manual_label: ManualLabel | null
   updated_at: string
 }
 

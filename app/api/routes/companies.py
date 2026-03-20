@@ -65,6 +65,7 @@ def _latest_scrape_subquery():
             ScrapeJob.id.label("job_id"),
             ScrapeJob.status.label("status"),
             ScrapeJob.terminal_state.label("terminal_state"),
+            ScrapeJob.last_error_code.label("last_error_code"),
         )
         .distinct(ScrapeJob.normalized_url)
         .order_by(ScrapeJob.normalized_url, ScrapeJob.created_at.desc())
@@ -164,6 +165,7 @@ def upsert_company_feedback(
             company_id=company_id,
             thumbs=payload.thumbs,
             comment=payload.comment,
+            manual_label=payload.manual_label,
             created_at=now,
             updated_at=now,
         )
@@ -171,6 +173,7 @@ def upsert_company_feedback(
     else:
         feedback.thumbs = payload.thumbs
         feedback.comment = payload.comment
+        feedback.manual_label = payload.manual_label
         feedback.updated_at = now
         session.add(feedback)
 
@@ -179,6 +182,7 @@ def upsert_company_feedback(
     return FeedbackRead(
         thumbs=feedback.thumbs,
         comment=feedback.comment,
+        manual_label=feedback.manual_label,
         updated_at=feedback.updated_at,
     )
 
@@ -204,7 +208,9 @@ def list_companies(
     latest_contact_fetch = _latest_contact_fetch_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     latest_confidence = latest_classification.c.confidence
-    decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
+    # manual_label overrides LLM decision for filtering and ordering
+    effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
+    decision_lower = func.lower(func.coalesce(effective_decision, ""))
     decision_rank = case(
         (decision_lower == "", 0),
         (decision_lower == "possible", 1),
@@ -233,6 +239,8 @@ def list_companies(
             latest_analysis.c.analysis_job_id,
             CompanyFeedback.thumbs,
             CompanyFeedback.comment,
+            CompanyFeedback.manual_label,
+            latest_scrape.c.last_error_code,
             func.coalesce(contact_counts.c.contact_count, 0),
             latest_contact_fetch.c.state,
         )
@@ -268,6 +276,7 @@ def list_companies(
             .select_from(Company)
             .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
             .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+            .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         )
         total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
         total_stmt = _apply_scrape_filter(total_stmt, latest_scrape, normalized_scrape_filter)
@@ -294,8 +303,10 @@ def list_companies(
             latest_analysis_job_id=row[15],
             feedback_thumbs=str(row[16]) if row[16] is not None else None,
             feedback_comment=str(row[17]) if row[17] is not None else None,
-            contact_count=int(row[18]) if row[18] is not None else 0,
-            contact_fetch_status=str(row[19]) if row[19] is not None else None,
+            feedback_manual_label=str(row[18]) if row[18] is not None else None,
+            latest_scrape_error_code=str(row[19]) if row[19] is not None else None,
+            contact_count=int(row[20]) if row[20] is not None else 0,
+            contact_fetch_status=str(row[21]) if row[21] is not None else None,
         )
         for row in page_rows
     ]
@@ -313,13 +324,15 @@ def list_company_ids(
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     latest_decision_text = latest_classification.c.predicted_label
-    decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
+    effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
+    decision_lower = func.lower(func.coalesce(effective_decision, ""))
 
     normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
     statement = (
         select(Company.id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
@@ -339,7 +352,8 @@ def get_letter_counts(
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     latest_decision_text = latest_classification.c.predicted_label
-    decision_lower = func.lower(func.coalesce(latest_decision_text, ""))
+    effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
+    decision_lower = func.lower(func.coalesce(effective_decision, ""))
 
     normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
     letter_expr = func.lower(func.left(Company.domain, 1))
@@ -348,6 +362,7 @@ def get_letter_counts(
         .select_from(Company)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         .where(letter_expr.between("a", "z"))
         .group_by(letter_expr)
     )
@@ -366,7 +381,8 @@ def get_letter_counts(
 def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
-    decision_lower = func.lower(func.coalesce(latest_classification.c.predicted_label, ""))
+    effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_classification.c.predicted_label)
+    decision_lower = func.lower(func.coalesce(effective_decision, ""))
     scrape_status = latest_scrape.c.status
 
     row = session.exec(
@@ -383,6 +399,7 @@ def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts
         .select_from(Company)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     ).one()
 
     return CompanyCounts(
@@ -405,13 +422,15 @@ def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts
 def export_companies_csv(session: Session = Depends(get_session)) -> Response:
     latest_classification = _latest_classification_subquery()
     latest_decision_text = latest_classification.c.predicted_label
+    effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     rows = session.exec(
         select(
             Company.raw_url,
-            func.coalesce(latest_decision_text, "Unknown"),
+            func.coalesce(effective_decision, "Unknown"),
         )
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
+        .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         .order_by(
             col(Upload.created_at).asc(),
             case((col(Company.source_row_number).is_(None), 1), else_=0).asc(),
