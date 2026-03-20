@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -10,6 +11,8 @@ from scrapling import AsyncFetcher, DynamicFetcher, Selector
 
 from app.core.config import settings
 from app.services.url_utils import absolute_url, canonical_internal_url, clean_text
+
+logger = logging.getLogger(__name__)
 
 
 USER_AGENT = "ProspectShortlistingBot/1.0 (+https://example.com)"
@@ -199,6 +202,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                 last_error = "non_html_dynamic"
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc) or static_error or "dynamic_fetch_failed"
+                logger.warning("dynamic_fetch_failed url=%s error=%s", attempt, str(exc)[:200])
         else:
             last_error = static_error or "fetch_failed"
 
