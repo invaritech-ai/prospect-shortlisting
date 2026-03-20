@@ -9,12 +9,12 @@ from sqlmodel import Session, col, select
 from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.db.session import get_session
 from app.models import Company, Prompt, Run
-from app.services.analysis_service import AnalysisService
+from app.services.run_service import RunService
 from app.tasks.analysis import run_analysis_job
 
 
 router = APIRouter(prefix="/v1", tags=["runs"])
-analysis_service = AnalysisService()
+run_service = RunService()
 
 
 def _as_run_read(run: Run, prompt_name: str) -> RunRead:
@@ -51,7 +51,7 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
         raise HTTPException(status_code=422, detail="No companies available for classification.")
 
     try:
-        runs, jobs, skipped_company_ids = analysis_service.create_runs(
+        runs, jobs, skipped_company_ids = run_service.create_runs(
             session=session,
             companies=companies,
             prompt_id=payload.prompt_id,
