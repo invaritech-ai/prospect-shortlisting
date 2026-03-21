@@ -50,6 +50,10 @@ class ScrapeJob(SQLModel, table=True):
     last_error_code: Optional[str] = Field(default=None)
     last_error_message: Optional[str] = Field(default=None)
 
+    # Number of times the reconciler has reset and re-queued this job.
+    # Used to cap infinite retry loops for consistently failing sites.
+    reconcile_count: int = Field(default=0)
+
     # Ownership lock — set atomically at task-start via CAS; cleared on finish.
     # Guards against duplicate workers writing results when Celery re-delivers
     # a task (e.g. after soft_time_limit expiry or worker respawn).

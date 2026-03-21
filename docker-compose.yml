@@ -21,10 +21,12 @@ services:
   worker-scrape:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.scrape
     env_file:
       - .env
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-c", "8", "--loglevel=info"]
+    # Concurrency capped at 4: each Chromium instance uses ~200-400MB RAM.
+    # 8 concurrent browsers risks OOM-kills which cause silent task hangs.
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-c", "4", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:

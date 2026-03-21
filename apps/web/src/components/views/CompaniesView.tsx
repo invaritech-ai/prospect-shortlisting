@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { DragEvent, FormEvent } from 'react'
 import type {
   CompanyList,
@@ -21,6 +22,7 @@ import {
   IconGlobe,
   IconZap,
   IconEye,
+  IconUsers,
   IconThumbUp,
   IconThumbDown,
   IconExternalLink,
@@ -75,6 +77,9 @@ interface CompaniesViewProps {
   onToggleUtilities: () => void
   onReviewCompany: (company: CompanyListItem) => void
   onSetManualLabel: (company: CompanyListItem, label: ManualLabel | null) => void
+  onFetchContacts: (company: CompanyListItem) => Promise<void>
+  isFetchingContactsSelected: boolean
+  onFetchContactsSelected: () => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -358,6 +363,7 @@ function CompanyCard({
   onClassify,
   onReview,
   onSetManualLabel,
+  onFetchContacts,
   actionState,
   analysisActionState,
   selectedPrompt,
@@ -369,14 +375,21 @@ function CompanyCard({
   onClassify: () => void
   onReview: () => void
   onSetManualLabel: (label: ManualLabel | null) => void
+  onFetchContacts: () => void
   actionState: string
   analysisActionState: string
   selectedPrompt: PromptRead | null
 }) {
+  const [isFetchingContacts, setIsFetchingContacts] = useState(false)
   const scrapeBadge = scrapeBadgeForCompany(item)
   const isScraping = item.latest_scrape_terminal === false
   const isAnalysing = item.latest_analysis_terminal === false
   const canClassify = !!selectedPrompt?.enabled && item.latest_scrape_status === 'completed' && !isAnalysing
+
+  const handleFetchContacts = async () => {
+    setIsFetchingContacts(true)
+    try { await onFetchContacts() } finally { setIsFetchingContacts(false) }
+  }
 
   return (
     <div className={`oc-company-card ${isSelected ? 'ring-1 ring-(--oc-accent)' : ''}`}>
@@ -416,6 +429,12 @@ function CompanyCard({
             <QuickLabelPicker current={item.feedback_manual_label} onSelect={onSetManualLabel} />
             <FeedbackBadge thumbs={item.feedback_thumbs} />
             <Badge variant={scrapeBadge.variant} title={scrapeBadge.title}>{scrapeBadge.label}</Badge>
+            {item.contact_count > 0 && (
+              <span className="flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600" title={`${item.contact_count} contact${item.contact_count === 1 ? '' : 's'}`}>
+                <IconUsers size={9} />
+                {item.contact_count}
+              </span>
+            )}
             {(actionState || analysisActionState) && (
               <span className="text-[11px] text-(--oc-muted)">{analysisActionState || actionState}</span>
             )}
@@ -440,6 +459,9 @@ function CompanyCard({
         <Button variant="ghost" size="xs" onClick={onReview} title="Review AI analysis & give feedback">
           <IconEye size={13} />
           Review
+        </Button>
+        <Button variant="ghost" size="xs" onClick={() => void handleFetchContacts()} loading={isFetchingContacts} title="Fetch contacts via Snov.io">
+          <IconUsers size={13} />
         </Button>
       </div>
     </div>
@@ -495,6 +517,9 @@ export function CompaniesView({
   onToggleUtilities,
   onReviewCompany,
   onSetManualLabel,
+  onFetchContacts,
+  isFetchingContactsSelected,
+  onFetchContactsSelected,
 }: CompaniesViewProps) {
   // Derived state
   const effectiveTotal = companies?.total ?? companyCounts?.total ?? null
@@ -641,6 +666,7 @@ export function CompaniesView({
                 onClassify={() => onClassify(item)}
                 onReview={() => onReviewCompany(item)}
                 onSetManualLabel={(label) => onSetManualLabel(item, label)}
+                onFetchContacts={() => onFetchContacts(item)}
                 actionState={actionState[item.id] ?? ''}
                 analysisActionState={analysisActionState[item.id] ?? ''}
                 selectedPrompt={selectedPrompt}
@@ -750,6 +776,15 @@ export function CompaniesView({
                             <IconEye size={13} />
                             Review
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => void onFetchContacts(item)}
+                            title="Fetch contacts via Snov.io"
+                          >
+                            <IconUsers size={13} />
+                            {item.contact_count > 0 ? item.contact_count : ''}
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -782,10 +817,12 @@ export function CompaniesView({
         onClassifySelected={onClassifySelected}
         onDeleteSelected={onDeleteSelected}
         onSelectAllFiltered={onSelectAllFiltered}
+        onFetchContactsSelected={onFetchContactsSelected}
         isScrapingSelected={isScrapingSelected}
         isClassifyingSelected={isClassifyingSelected}
         isDeleting={isDeleting}
         isSelectingAll={isSelectingAll}
+        isFetchingContactsSelected={isFetchingContactsSelected}
         selectedPrompt={selectedPrompt}
       />
     </div>

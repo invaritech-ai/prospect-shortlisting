@@ -17,6 +17,7 @@ from app.models import ScrapeJob, ScrapePage
 from app.services.fetch_service import (
     FetchResult,  # re-exported for backwards compat
     fetch_with_fallback,
+    is_parked_domain,
     resolve_domain,
     should_skip_url,
 )
@@ -38,7 +39,10 @@ _SCRAPE_LOCK_TTL = timedelta(minutes=35)
 PERMANENT_SCRAPE_ERROR_CODES: frozenset[str] = frozenset({
     "dns_not_resolved",
     "tls_error",
-    "bot_protection",   # Imperva / WAF that no tier can bypass — not worth retrying
+    "bot_protection",       # Imperva / WAF that no tier can bypass — not worth retrying
+    "not_found",            # HTTP 404 across all tiers
+    "access_denied",        # HTTP 403 across all tiers
+    "parked_domain",        # Domain is parked / for sale
 })
 
 # Page kinds discovered and fetched, in priority order.
@@ -139,6 +143,7 @@ class ScrapeService:
         """
         now = utcnow()
         lock_token = str(uuid4())
+        log_event(logger, "scrape_task_start", job_id=str(job_id))
 
         # ── Phase 1: CAS-claim ──────────────────────────────────────────────
         with Session(engine) as session:
@@ -163,8 +168,16 @@ class ScrapeService:
             )
             session.commit()
             job = session.get(ScrapeJob, job_id)
-            if not job or job.lock_token != lock_token:
-                log_event(logger, "scrape_skipped_not_owner", job_id=str(job_id))
+            if not job:
+                log_event(logger, "scrape_skipped_job_not_found", job_id=str(job_id))
+                return
+            if job.lock_token != lock_token:
+                log_event(
+                    logger, "scrape_skipped_not_owner", job_id=str(job_id),
+                    job_status=job.status, terminal=job.terminal_state,
+                    lock_held_by="none" if job.lock_token is None else "other",
+                    lock_expires_at=str(job.lock_expires_at),
+                )
                 return
             domain = job.domain
             normalized_url = job.normalized_url
@@ -172,9 +185,13 @@ class ScrapeService:
             include_sitemap = job.include_sitemap
             classify_model = job.classify_model
             general_model = job.general_model
+            log_event(logger, "scrape_lock_acquired", job_id=str(job_id),
+                      domain=domain, js_fallback=js_fallback, include_sitemap=include_sitemap)
 
         # ── Phase 2: DNS check ──────────────────────────────────────────────
+        log_event(logger, "scrape_dns_check", job_id=str(job_id), domain=domain)
         if not await resolve_domain(domain):
+            log_event(logger, "scrape_dns_failed", job_id=str(job_id), domain=domain)
             with Session(engine) as session:
                 job = session.get(ScrapeJob, job_id)
                 if job and job.lock_token == lock_token:
@@ -195,6 +212,7 @@ class ScrapeService:
             session.commit()
 
         # ── Phase 4: discover target URLs (sitemap + LLM) ───────────────────
+        log_event(logger, "scrape_discover_start", job_id=str(job_id), domain=domain)
         targets = await discover_focus_targets(
             start_url=normalized_url,
             domain=domain,
@@ -202,12 +220,16 @@ class ScrapeService:
             use_js_fallback=js_fallback,
             classify_model=classify_model,
         )
+        log_event(logger, "scrape_discover_done", job_id=str(job_id), domain=domain,
+                  targets={k: v for k, v in targets.items() if v})
 
         seen_urls: set[str] = set()
         fetched_pages: list[dict] = []
         failure_count = 0
 
         # ── Phase 5: fetch each target page ─────────────────────────────────
+        log_event(logger, "scrape_fetch_start", job_id=str(job_id), domain=domain,
+                  page_count=len([k for k, v in targets.items() if v]))
         for kind, depth in _PAGE_KINDS:
             target_url = targets.get(kind, "")
             canonical = canonical_internal_url(target_url, domain) if target_url else ""
@@ -218,6 +240,19 @@ class ScrapeService:
             fetch = await fetch_with_fallback(canonical, use_js=js_fallback)
             if fetch.selector is None:
                 failure_count += 1
+                # Classify 404 / 403 from the HTTP status when no error_code was set.
+                error_code = fetch.error_code or "fetch_failed"
+                if not error_code or error_code == "fetch_failed":
+                    if fetch.status_code == 404:
+                        error_code = "not_found"
+                    elif fetch.status_code == 403:
+                        error_code = "access_denied"
+                log_event(
+                    logger, "scrape_page_fetch_failed",
+                    job_id=str(job_id), kind=kind, url=canonical,
+                    status_code=fetch.status_code, error_code=error_code,
+                    fetch_mode=fetch.fetch_mode, error_message=fetch.error_message[:200],
+                )
                 fetched_pages.append({
                     "success": False,
                     "url": canonical,
@@ -226,9 +261,15 @@ class ScrapeService:
                     "page_kind": kind,
                     "fetch_mode": fetch.fetch_mode,
                     "status_code": fetch.status_code,
-                    "fetch_error_code": fetch.error_code or "fetch_failed",
+                    "fetch_error_code": error_code,
                     "fetch_error_message": fetch.error_message,
                 })
+                # If the home page fails with a permanent error, the whole site is
+                # unreachable — no point trying subpages.
+                if kind == "home" and error_code in PERMANENT_SCRAPE_ERROR_CODES:
+                    log_event(logger, "scrape_aborted_permanent_home_error",
+                              job_id=str(job_id), domain=domain, error_code=error_code)
+                    break
                 continue
 
             selector = fetch.selector
@@ -247,6 +288,33 @@ class ScrapeService:
             title = clean_text(str(selector.css("title::text").get(default="")))[:300]
             description = clean_text(str(selector.css("meta[name='description']::attr(content)").get(default="")))[:800]
             text = clean_text(str(selector.get_all_text(separator=" ")))
+            # Append text from other tiers (static + dynamic kept together for LLM combination).
+            if fetch.extra_text:
+                text = text + "\n\n" + fetch.extra_text
+
+            # Detect parked / for-sale domains regardless of which tier fetched it.
+            if kind == "home" and is_parked_domain(text):
+                log_event(logger, "scrape_parked_domain_detected",
+                          job_id=str(job_id), url=canonical, text_preview=text[:200])
+                failure_count += 1
+                fetched_pages.append({
+                    "success": False,
+                    "url": page_url,
+                    "canonical_url": canonical_internal_url(page_url, domain) or canonical,
+                    "depth": depth,
+                    "page_kind": kind,
+                    "fetch_mode": fetch.fetch_mode,
+                    "status_code": fetch.status_code,
+                    "fetch_error_code": "parked_domain",
+                    "fetch_error_message": "Domain is parked or for sale.",
+                })
+                continue
+
+            log_event(
+                logger, "scrape_page_fetched",
+                job_id=str(job_id), kind=kind, url=page_url,
+                status_code=fetch.status_code, fetch_mode=fetch.fetch_mode, text_len=len(text),
+            )
             fetched_pages.append({
                 "success": True,
                 "url": page_url,
@@ -262,6 +330,14 @@ class ScrapeService:
             })
 
         pages_fetched_count = sum(1 for p in fetched_pages if p["success"])
+        log_event(
+            logger, "scrape_fetch_done", job_id=str(job_id), domain=domain,
+            pages_fetched=pages_fetched_count, failures=failure_count,
+            failed_urls=[
+                {"url": p["url"], "kind": p["page_kind"], "code": p.get("fetch_error_code"), "status": p.get("status_code")}
+                for p in fetched_pages if not p["success"]
+            ],
+        )
 
         if pages_fetched_count == 0:
             with Session(engine) as session:

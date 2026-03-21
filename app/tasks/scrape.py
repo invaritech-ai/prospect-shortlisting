@@ -25,16 +25,25 @@ logger = logging.getLogger(__name__)
 )
 def scrape_website(self, job_id: str) -> None:  # type: ignore[misc]
     """Celery task: run the full scrape pipeline for a single ScrapeJob."""
+    import time
+    log_event(logger, "scrape_celery_task_received",
+              job_id=job_id, worker=self.request.hostname, retries=self.request.retries)
     engine = get_engine()
     service = ScrapeService()
+    t_start = time.monotonic()
     try:
         asyncio.run(service.run_scrape(engine=engine, job_id=job_id))
+        elapsed = time.monotonic() - t_start
+        log_event(logger, "scrape_celery_task_done", job_id=job_id, elapsed_sec=round(elapsed, 1))
     except SoftTimeLimitExceeded:
-        log_event(logger, "scrape_task_timeout", job_id=job_id)
-        _mark_failed(job_id, "timeout", "Task exceeded 30-minute limit")
+        elapsed = time.monotonic() - t_start
+        log_event(logger, "scrape_task_timeout", job_id=job_id, elapsed_sec=round(elapsed, 1))
+        _mark_failed(job_id, "timeout", "Task exceeded 30-minute soft time limit")
         raise
     except Exception as exc:  # noqa: BLE001
-        log_event(logger, "scrape_task_error", job_id=job_id, error=str(exc))
+        elapsed = time.monotonic() - t_start
+        log_event(logger, "scrape_task_error", job_id=job_id,
+                  error=str(exc)[:500], elapsed_sec=round(elapsed, 1))
         _mark_failed(job_id, "task_exception", str(exc)[:500])
         raise
 

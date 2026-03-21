@@ -20,8 +20,17 @@ from app.models import (  # noqa: F401
 )
 
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 _is_sqlite = settings.database_url.startswith("sqlite")
+if _is_sqlite:
+    connect_args: dict = {"check_same_thread": False}
+else:
+    connect_args = {
+        "connect_timeout": 10,      # fail fast if host is unreachable (seconds)
+        "keepalives": 1,            # enable TCP keepalives
+        "keepalives_idle": 30,      # start probing after 30s of silence
+        "keepalives_interval": 10,  # retry every 10s
+        "keepalives_count": 3,      # drop after 3 failed probes
+    }
 _pool_kwargs = {} if _is_sqlite else {"pool_size": 20, "max_overflow": 5}
 engine = create_engine(
     settings.database_url,

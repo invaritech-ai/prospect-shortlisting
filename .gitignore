@@ -19,3 +19,4 @@ data
 # Accidental local files
 -H
 -d
+.env.local

@@ -17,6 +17,9 @@ app.conf.update(
     # automatic redelivery rather than silent message loss.
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    # Cancel in-flight tasks on broker disconnect so they are redelivered cleanly
+    # rather than silently continuing with no broker connection.
+    worker_cancel_long_running_tasks_on_connection_loss=True,
     # One task at a time per worker process — prevents head-of-line blocking
     # where a slow task starves everything behind it.
     worker_prefetch_multiplier=1,

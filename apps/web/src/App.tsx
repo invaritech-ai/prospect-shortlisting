@@ -8,6 +8,8 @@ import {
   deleteCompanies,
   drainQueue,
   enqueueRunAll,
+  fetchContactsForCompany,
+  fetchContactsForRun,
   getAnalysisJobDetail,
   getCompaniesExportUrl,
   getCompanyCounts,
@@ -125,6 +127,7 @@ function App() {
   const [isClassifyingSelected, setIsClassifyingSelected] = useState(false)
   const [isClassifyingAll, setIsClassifyingAll] = useState(false)
   const [isSelectingAll, setIsSelectingAll] = useState(false)
+  const [isFetchingContactsSelected, setIsFetchingContactsSelected] = useState(false)
 
   // ── Scrape jobs ──────────────────────────────────────────────────────────
   const [scrapeJobs, setScrapeJobs] = useState<ScrapeJobRead[]>([])
@@ -907,6 +910,43 @@ function App() {
     finally { setIsResettingStuckAnalysis(false) }
   }
 
+  const onFetchContacts = async (company: CompanyListItem) => {
+    setError(''); setNotice('')
+    try {
+      const result = await fetchContactsForCompany(company.id)
+      const msg = result.queued_count > 0
+        ? `Queued contact fetch for ${company.domain}.`
+        : result.already_fetching_count > 0
+          ? `Contact fetch already in progress for ${company.domain}.`
+          : `No contacts queued for ${company.domain}.`
+      setNotice(msg)
+    } catch (err) { setError(parseError(err)) }
+  }
+
+  const onFetchContactsSelected = async () => {
+    if (selectedCompanyIds.length === 0) return
+    setError(''); setNotice(''); setIsFetchingContactsSelected(true)
+    try {
+      let queued = 0
+      await Promise.all(selectedCompanyIds.map(async (id) => {
+        try {
+          const r = await fetchContactsForCompany(id)
+          queued += r.queued_count
+        } catch { /* skip individual failures */ }
+      }))
+      setNotice(`Queued contact fetch for ${queued} of ${selectedCompanyIds.length} selected companies.`)
+    } catch (err) { setError(parseError(err)) }
+    finally { setIsFetchingContactsSelected(false) }
+  }
+
+  const onFetchContactsForRun = async (run: RunRead) => {
+    setError(''); setNotice('')
+    try {
+      const result = await fetchContactsForRun(run.id)
+      setNotice(`Queued contact fetch for ${result.queued_count} Possible companies in run ${run.id.slice(0, 8)}….`)
+    } catch (err) { setError(parseError(err)) }
+  }
+
   // ── Derived ────────────────────────────────────────────────────────────
   const selectedPrompt = prompts.find((p) => p.id === selectedPromptId) ?? null
   const operationsEvents = buildOperationsEvents(operationsScrapeJobs, operationsRuns)
@@ -989,6 +1029,9 @@ function App() {
             onToggleUtilities={() => setUtilitiesOpen((v) => !v)}
             onReviewCompany={(c) => void openCompanyReview(c)}
             onSetManualLabel={(c, label) => void setManualLabel(c, label)}
+            onFetchContacts={(c) => onFetchContacts(c)}
+            isFetchingContactsSelected={isFetchingContactsSelected}
+            onFetchContactsSelected={() => void onFetchContactsSelected()}
           />
         )}
 
@@ -1021,6 +1064,7 @@ function App() {
             onPageNext={() => void loadRuns(runsOffset + runsPageSize, runsPageSize)}
             onRefresh={() => void loadRuns(runsOffset, runsPageSize)}
             onInspectRun={(run) => void loadRunJobs(run)}
+            onFetchContactsForRun={(run) => onFetchContactsForRun(run)}
           />
         )}
 

@@ -1,6 +1,7 @@
 """Link classification and page discovery: sitemap parsing, LLM link picking."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -124,7 +125,12 @@ async def discover_focus_targets(
         seen.add(canonical)
         deduped.append(canonical)
 
-    kind_urls = classify_links_with_llm(domain=domain, candidates=deduped, model=classify_model)
+    # classify_links_with_llm uses urllib (blocking I/O + time.sleep backoff).
+    # Run it in a thread so it doesn't freeze the asyncio event loop and
+    # prevent Playwright's internal timers from firing.
+    kind_urls = await asyncio.to_thread(
+        classify_links_with_llm, domain=domain, candidates=deduped, model=classify_model
+    )
 
     result: dict[str, str] = {"home": home}
     for kind in ("about", "products", "contact", "team", "leadership", "pricing"):

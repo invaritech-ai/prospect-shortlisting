@@ -17,8 +17,9 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
+# Playwright Chromium + system dependencies (for DynamicFetcher).
+RUN uv run playwright install --with-deps chromium
+# Patchright Chromium (for StealthyFetcher / Cloudflare bypass).
+RUN uv run patchright install chromium
+
 COPY . .
-
-EXPOSE 8000
-
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,5 +1,5 @@
 import { Button } from './Button'
-import { IconTrash, IconGlobe, IconZap, IconX } from './icons'
+import { IconTrash, IconGlobe, IconZap, IconX, IconUsers } from './icons'
 import type { PromptRead } from '../../lib/types'
 
 interface BulkActionBarProps {
@@ -9,10 +9,12 @@ interface BulkActionBarProps {
   onClassifySelected: () => void
   onDeleteSelected: () => void
   onSelectAllFiltered: () => void
+  onFetchContactsSelected: () => void
   isScrapingSelected: boolean
   isClassifyingSelected: boolean
   isDeleting: boolean
   isSelectingAll: boolean
+  isFetchingContactsSelected: boolean
   selectedPrompt: PromptRead | null
 }
 
@@ -23,10 +25,12 @@ export function BulkActionBar({
   onClassifySelected,
   onDeleteSelected,
   onSelectAllFiltered,
+  onFetchContactsSelected,
   isScrapingSelected,
   isClassifyingSelected,
   isDeleting,
   isSelectingAll,
+  isFetchingContactsSelected,
   selectedPrompt,
 }: BulkActionBarProps) {
   if (selectedCount === 0) return null
@@ -95,6 +99,16 @@ export function BulkActionBar({
           >
             <IconZap size={14} />
             Classify
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="!border-white/20 !text-white hover:!bg-white/15"
+            onClick={onFetchContactsSelected}
+            loading={isFetchingContactsSelected}
+          >
+            <IconUsers size={14} />
+            Contacts
           </Button>
           <Button
             variant="ghost"

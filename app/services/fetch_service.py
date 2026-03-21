@@ -1,4 +1,17 @@
-"""HTTP fetch utilities: static/dynamic fetching, DNS resolution, HTML detection."""
+"""HTTP fetch utilities: static/dynamic/stealth tiers, DNS resolution, HTML detection.
+
+Fetch strategy (per URL, when use_js=True):
+  Tier 1 — Static  (AsyncFetcher): fast, no JS.  Keep best result.
+  Tier 2 — Dynamic (DynamicFetcher): JS-rendered.  Upgrade if more content.
+  Tier 3 — Stealth (StealthyFetcher): Playwright + Cloudflare bypass.
+            Only triggered when Tier 1+2 both produced < 600 chars of text.
+
+When use_js=False only Tier 1 runs.
+
+Each Playwright tier is wrapped in asyncio.wait_for() so a hung browser
+process cannot block the worker indefinitely — Scrapling's internal timeout
+controls page navigation, the asyncio timeout is a hard backstop.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +43,9 @@ SKIP_HINTS: frozenset[str] = frozenset({
     "/testimonial",
 })
 
+# Stealth tier is triggered when cumulative content is below this threshold.
+_STEALTH_CONTENT_THRESHOLD = 600
+
 
 @dataclass
 class FetchResult:
@@ -39,6 +55,9 @@ class FetchResult:
     fetch_mode: str
     error_code: str
     error_message: str
+    # Cleaned text from other tiers (e.g. static text kept alongside dynamic).
+    # Concatenated into raw_text in the scrape service so the LLM sees all content.
+    extra_text: str = ""
 
 
 def header_value(headers: object, key: str) -> str:
@@ -63,9 +82,6 @@ def is_html_selector_response(response: Selector) -> bool:
 
 
 # Patterns that indicate a bot-protection wall rather than real site content.
-# When detected we refuse to accept the response as usable content, so the
-# scrape correctly fails/marks the site as unavailable instead of producing
-# junk markdown from an error page.
 _BOT_WALL_PATTERNS: tuple[str, ...] = (
     "incapsula incident id",           # Imperva / Incapsula
     "request unsuccessful",            # Imperva / Incapsula prefix
@@ -79,11 +95,35 @@ _BOT_WALL_PATTERNS: tuple[str, ...] = (
     "403 forbidden",                   # Generic WAF
 )
 
+# Patterns that indicate a parked / for-sale domain with no real content.
+_PARKED_DOMAIN_PATTERNS: tuple[str, ...] = (
+    "domain for sale",
+    "this domain is for sale",
+    "buy this domain",
+    "domain is available",
+    "domain may be for sale",
+    "godaddy.com",                     # GoDaddy parking page
+    "sedoparking.com",                 # Sedo domain parking
+    "dan.com",                         # DAN domain marketplace
+    "hugedomains.com",                 # HugeDomains
+    "afternic.com",                    # Afternic marketplace
+    "namecheap.com",                   # Namecheap parking
+    "register this domain",
+    "this web page is parked",
+    "this domain has been registered",
+)
+
 
 def is_bot_wall(text: str) -> bool:
     """Return True if the page text looks like a WAF/bot-protection page."""
     lowered = text.lower()
     return any(pattern in lowered for pattern in _BOT_WALL_PATTERNS)
+
+
+def is_parked_domain(text: str) -> bool:
+    """Return True if the page looks like a parked / for-sale domain."""
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in _PARKED_DOMAIN_PATTERNS)
 
 
 def classify_fetch_error(message: str) -> str:
@@ -147,21 +187,45 @@ def discover_internal_links(selector: Selector, base_url: str, domain: str) -> l
     return links
 
 
-async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
-    attempts = [url]
+def _selector_text(selector: object) -> str:
+    return clean_text(str(getattr(selector, "get_all_text", lambda **_: "")
+                         (separator=" ") if callable(getattr(selector, "get_all_text", None)) else ""))
+
+
+def _url_variants(url: str) -> list[str]:
+    """Return [url, http_or_https_counterpart] for fallback attempts."""
     parsed = urlparse(url)
     if parsed.scheme == "https":
-        attempts.append(url.replace("https://", "http://", 1))
-    elif parsed.scheme == "http":
-        attempts.append(url.replace("http://", "https://", 1))
+        return [url, url.replace("https://", "http://", 1)]
+    if parsed.scheme == "http":
+        return [url, url.replace("http://", "https://", 1)]
+    return [url]
 
+
+async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
+    """Fetch in up to three tiers; keep both static and dynamic results.
+
+    Strategy:
+      Tier 1 (Static)  — always runs; result is kept.
+      Tier 2 (Dynamic) — runs when use_js=True; result is kept alongside static.
+      Tier 3 (Stealth) — runs only when use_js=True AND both static AND dynamic
+                         individually produced < _STEALTH_CONTENT_THRESHOLD chars.
+
+    The returned FetchResult uses the highest-tier selector that succeeded
+    (stealth > dynamic > static) for URL/CSS metadata queries.
+    The text from ALL successful tiers is preserved in extra_text so the LLM
+    canonicalization step can combine it.
+    """
     last_error = "unknown_fetch_error"
-    # Keep the best thin static result across all attempts so we can fall back
-    # to it when the dynamic fetcher crashes instead of losing it entirely.
-    thin_static_fallback: FetchResult | None = None
+    variants = _url_variants(url)
 
-    for attempt in attempts:
-        static_error = ""
+    static_result: FetchResult | None = None
+    static_text: str = ""
+    dynamic_result: FetchResult | None = None
+    dynamic_text: str = ""
+
+    # ── Tier 1: Static ──────────────────────────────────────────────────────
+    for attempt in variants:
         try:
             static_response = await AsyncFetcher.get(
                 attempt,
@@ -171,108 +235,207 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                 verify=False,
                 headers={"user-agent": USER_AGENT},
             )
-            if is_html_selector_response(static_response):
-                static_text = clean_text(str(static_response.get_all_text(separator=" ")))
-                min_static_chars = 600 if use_js else 250
-                if not use_js or len(static_text) >= min_static_chars:
-                    return FetchResult(
-                        final_url=str(static_response.url),
-                        status_code=int(getattr(static_response, "status", 0) or 0),
-                        selector=static_response,
-                        fetch_mode="static",
-                        error_code="",
-                        error_message="",
-                    )
-                # Static returned valid HTML but below the JS-enrichment threshold.
-                # Stash it as a fallback — unless it's a bot-wall page (Cloudflare,
-                # Imperva, etc.), in which case it has zero content value.
-                static_error = "thin_static"
-                if thin_static_fallback is None and not is_bot_wall(static_text):
-                    thin_static_fallback = FetchResult(
-                        final_url=str(static_response.url),
-                        status_code=int(getattr(static_response, "status", 0) or 0),
-                        selector=static_response,
-                        fetch_mode="static_thin",
-                        error_code="",
-                        error_message="",
-                    )
-            else:
-                static_error = "non_html"
-        except Exception as exc:  # noqa: BLE001
-            static_error = str(exc)
-
-        if use_js:
-            try:
-                dynamic_response = await DynamicFetcher.async_fetch(
-                    attempt,
-                    headless=True,
-                    timeout=settings.scrape_dynamic_timeout_ms,
-                    wait=settings.scrape_dynamic_wait_ms,
-                    network_idle=True,
-                    disable_resources=False,
-                    load_dom=True,
-                    retries=settings.scrape_dynamic_retries,
-                    retry_delay=1,
-                    extra_headers={"user-agent": USER_AGENT},
+            if not is_html_selector_response(static_response):
+                last_error = "non_html_static"
+                logger.info(
+                    "fetch_static_non_html url=%s status=%s",
+                    attempt, getattr(static_response, "status", "?"),
                 )
-                if is_html_selector_response(dynamic_response):
-                    return FetchResult(
-                        final_url=str(dynamic_response.url),
-                        status_code=int(getattr(dynamic_response, "status", 0) or 0),
-                        selector=dynamic_response,
-                        fetch_mode="dynamic",
-                        error_code="",
-                        error_message="",
-                    )
-                last_error = "non_html_dynamic"
-            except Exception as exc:  # noqa: BLE001
-                last_error = str(exc) or static_error or "dynamic_fetch_failed"
-                logger.warning("dynamic_fetch_failed url=%s error=%s", attempt, str(exc)[:200])
-        else:
-            last_error = static_error or "fetch_failed"
+                continue
 
-    # ── Tier 3: Stealth (Cloudflare / CAPTCHA bypass) ───────────────────────
-    # Only reached when both static and dynamic failed or returned thin content.
-    # StealthyFetcher uses a hardened Playwright profile that solves Cloudflare
-    # Turnstile / JS / interstitial challenges automatically.
-    if use_js:
-        try:
-            stealth_response = await StealthyFetcher.async_fetch(
-                url,
-                headless=True,
-                timeout=settings.scrape_stealth_timeout_ms,
-                network_idle=True,
-                solve_cloudflare=True,
-                block_webrtc=True,
-                hide_canvas=True,
+            t = clean_text(str(static_response.get_all_text(separator=" ")))
+            status = int(getattr(static_response, "status", 0) or 0)
+            is_wall = is_bot_wall(t)
+            logger.info(
+                "fetch_static_result url=%s status=%d text_len=%d is_bot_wall=%s",
+                attempt, status, len(t), is_wall,
             )
-            if is_html_selector_response(stealth_response):
-                stealth_text = clean_text(str(stealth_response.get_all_text(separator=" ")))
-                if len(stealth_text) >= 250 and not is_bot_wall(stealth_text):
-                    return FetchResult(
-                        final_url=str(stealth_response.url),
-                        status_code=int(getattr(stealth_response, "status", 0) or 0),
-                        selector=stealth_response,
-                        fetch_mode="stealth",
-                        error_code="",
-                        error_message="",
-                    )
+
+            if is_wall:
+                last_error = "bot_wall_static"
+                logger.info("fetch_static_bot_wall url=%s preview=%.150s", attempt, t)
+                continue  # try http variant
+
+            static_text = t
+            static_result = FetchResult(
+                final_url=str(static_response.url),
+                status_code=status,
+                selector=static_response,
+                fetch_mode="static",
+                error_code="",
+                error_message="",
+            )
+            break
+
         except Exception as exc:  # noqa: BLE001
-            logger.warning("stealth_fetch_failed url=%s error=%s", url, str(exc)[:200])
+            last_error = str(exc)
+            logger.info("fetch_static_error url=%s error=%.300s", attempt, last_error)
 
-    # All tiers exhausted — return the thin static fallback if we have one,
-    # otherwise a clean error result.
-    if thin_static_fallback is not None:
-        return thin_static_fallback
+    logger.info(
+        "fetch_after_static url=%s result=%s text_len=%d",
+        url, "ok" if static_result else "none", len(static_text),
+    )
 
-    # If the last error contains a known bot-wall signal, use a specific code
-    # so the job is marked site_unavailable (permanent) rather than retried.
+    # ── Tier 2: Dynamic ─────────────────────────────────────────────────────
+    if use_js:
+        _dynamic_timeout_sec = settings.scrape_dynamic_timeout_ms / 1000 + 30
+        for attempt in variants:
+            try:
+                logger.info("fetch_dynamic_attempt url=%s timeout_sec=%.1f", attempt, _dynamic_timeout_sec)
+                dynamic_response = await asyncio.wait_for(
+                    DynamicFetcher.async_fetch(
+                        attempt,
+                        headless=True,
+                        timeout=settings.scrape_dynamic_timeout_ms,
+                        wait=settings.scrape_dynamic_wait_ms,
+                        network_idle=True,
+                        disable_resources=False,
+                        load_dom=True,
+                        retries=settings.scrape_dynamic_retries,
+                        retry_delay=1,
+                        extra_headers={"user-agent": USER_AGENT},
+                    ),
+                    timeout=_dynamic_timeout_sec,
+                )
+                if not is_html_selector_response(dynamic_response):
+                    last_error = "non_html_dynamic"
+                    logger.info(
+                        "fetch_dynamic_non_html url=%s status=%s",
+                        attempt, getattr(dynamic_response, "status", "?"),
+                    )
+                    continue
+
+                t = clean_text(str(dynamic_response.get_all_text(separator=" ")))
+                status = int(getattr(dynamic_response, "status", 0) or 0)
+                is_wall = is_bot_wall(t)
+                logger.info(
+                    "fetch_dynamic_result url=%s status=%d text_len=%d is_bot_wall=%s",
+                    attempt, status, len(t), is_wall,
+                )
+
+                if is_wall:
+                    last_error = "bot_wall_dynamic"
+                    logger.info("fetch_dynamic_bot_wall url=%s preview=%.150s", attempt, t)
+                    continue
+
+                dynamic_text = t
+                dynamic_result = FetchResult(
+                    final_url=str(dynamic_response.url),
+                    status_code=status,
+                    selector=dynamic_response,
+                    fetch_mode="dynamic",
+                    error_code="",
+                    error_message="",
+                )
+                break
+
+            except asyncio.TimeoutError:
+                last_error = "dynamic_fetch_timeout"
+                logger.warning(
+                    "fetch_dynamic_timeout url=%s timeout_sec=%.1f", attempt, _dynamic_timeout_sec,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc) or "dynamic_fetch_failed"
+                logger.warning("fetch_dynamic_error url=%s error=%.300s", attempt, last_error)
+
+        logger.info(
+            "fetch_after_dynamic url=%s result=%s text_len=%d",
+            url, "ok" if dynamic_result else "none", len(dynamic_text),
+        )
+
+    # ── Tier 3: Stealth ─────────────────────────────────────────────────────
+    # Stealth only when BOTH static AND dynamic individually produced thin content.
+    stealth_result: FetchResult | None = None
+    stealth_text: str = ""
+
+    if use_js:
+        s_len = len(static_text)
+        d_len = len(dynamic_text)
+        if s_len >= _STEALTH_CONTENT_THRESHOLD or d_len >= _STEALTH_CONTENT_THRESHOLD:
+            logger.info(
+                "fetch_stealth_skipped url=%s static_len=%d dynamic_len=%d threshold=%d",
+                url, s_len, d_len, _STEALTH_CONTENT_THRESHOLD,
+            )
+        else:
+            _stealth_timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
+            logger.info(
+                "fetch_stealth_attempt url=%s static_len=%d dynamic_len=%d threshold=%d timeout_sec=%.1f",
+                url, s_len, d_len, _STEALTH_CONTENT_THRESHOLD, _stealth_timeout_sec,
+            )
+            try:
+                stealth_response = await asyncio.wait_for(
+                    StealthyFetcher.async_fetch(
+                        url,
+                        headless=True,
+                        timeout=settings.scrape_stealth_timeout_ms,
+                        network_idle=True,
+                        solve_cloudflare=True,
+                        block_webrtc=True,
+                        hide_canvas=True,
+                    ),
+                    timeout=_stealth_timeout_sec,
+                )
+                if not is_html_selector_response(stealth_response):
+                    logger.info("fetch_stealth_non_html url=%s", url)
+                else:
+                    t = clean_text(str(stealth_response.get_all_text(separator=" ")))
+                    status = int(getattr(stealth_response, "status", 0) or 0)
+                    is_wall = is_bot_wall(t)
+                    logger.info(
+                        "fetch_stealth_result url=%s status=%d text_len=%d is_bot_wall=%s",
+                        url, status, len(t), is_wall,
+                    )
+                    if is_wall:
+                        logger.info("fetch_stealth_bot_wall url=%s preview=%.150s", url, t)
+                    elif len(t) < 250:
+                        logger.info("fetch_stealth_too_thin url=%s text_len=%d", url, len(t))
+                    else:
+                        stealth_text = t
+                        stealth_result = FetchResult(
+                            final_url=str(stealth_response.url),
+                            status_code=status,
+                            selector=stealth_response,
+                            fetch_mode="stealth",
+                            error_code="",
+                            error_message="",
+                        )
+            except asyncio.TimeoutError:
+                logger.warning("fetch_stealth_timeout url=%s timeout_sec=%.1f", url, _stealth_timeout_sec)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("fetch_stealth_error url=%s error=%.300s", url, str(exc))
+
+    # ── Assemble final result ────────────────────────────────────────────────
+    # Primary selector: stealth > dynamic > static (highest tier that succeeded).
+    # extra_text: text from all OTHER successful tiers so the LLM can combine.
+    primary = stealth_result or dynamic_result or static_result
+    if primary is not None:
+        all_texts = {
+            "static": static_text,
+            "dynamic": dynamic_text,
+            "stealth": stealth_text,
+        }
+        extra = "\n\n".join(
+            t for mode, t in all_texts.items()
+            if t and mode != primary.fetch_mode
+        )
+        primary.extra_text = extra
+        logger.info(
+            "fetch_success url=%s primary_mode=%s primary_len=%d extra_len=%d",
+            url, primary.fetch_mode,
+            len(all_texts.get(primary.fetch_mode, "") or primary.extra_text),
+            len(extra),
+        )
+        return primary
+
     error_code = (
         "bot_protection"
         if is_bot_wall(last_error)
         else classify_fetch_error(last_error)
     )
-
+    logger.info(
+        "fetch_all_failed url=%s last_error=%.300s error_code=%s",
+        url, last_error, error_code,
+    )
     return FetchResult(
         final_url=url,
         status_code=0,

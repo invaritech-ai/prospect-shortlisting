@@ -18,6 +18,10 @@ _SCRAPE_STUCK_MINUTES = 35    # normal max runtime ~30 min (soft_time_limit)
 _ANALYSIS_STUCK_MINUTES = 20  # normal max runtime < 10 min
 _CONTACT_STUCK_MINUTES = 15   # normal max runtime < 10 min (polling)
 
+# After this many reconciler re-queues a scrape job is marked terminal so it
+# doesn't cycle forever on sites that consistently hang or fail.
+_SCRAPE_MAX_RECONCILE_ATTEMPTS = 3
+
 
 @app.task(
     name="app.tasks.beat.reconcile_stuck_jobs",
@@ -49,7 +53,7 @@ def reconcile_stuck_jobs() -> None:
         stuck_analysis = session.exec(
             select(AnalysisJob).where(
                 col(AnalysisJob.terminal_state).is_(False),
-                col(AnalysisJob.state).in_([AnalysisJobState.RUNNING, AnalysisJobState.QUEUED]),
+                col(AnalysisJob.state).in_([AnalysisJobState.RUNNING.value, AnalysisJobState.QUEUED.value]),
                 col(AnalysisJob.updated_at) < analysis_cutoff,
             )
         ).all()
@@ -58,22 +62,41 @@ def reconcile_stuck_jobs() -> None:
             select(ContactFetchJob).where(
                 col(ContactFetchJob.terminal_state).is_(False),
                 col(ContactFetchJob.state).in_([
-                    ContactFetchJobState.RUNNING,
-                    ContactFetchJobState.QUEUED,
+                    ContactFetchJobState.RUNNING.value,
+                    ContactFetchJobState.QUEUED.value,
                 ]),
                 col(ContactFetchJob.updated_at) < contact_cutoff,
             )
         ).all()
 
         # Capture IDs before commit (objects expire after commit in SQLAlchemy).
-        scrape_ids = [str(job.id) for job in stuck_scrapes]
+        # Only re-queue jobs that were reset (not those just flagged as terminal).
+        scrape_ids = [
+            str(job.id) for job in stuck_scrapes
+            if (job.reconcile_count or 0) <= _SCRAPE_MAX_RECONCILE_ATTEMPTS
+        ]
         analysis_ids = [str(job.id) for job in stuck_analysis]
         contact_ids = [str(job.id) for job in stuck_contacts]
 
         for job in stuck_scrapes:
-            job.status = "created"
-            job.lock_token = None
-            job.lock_expires_at = None
+            job.reconcile_count = (job.reconcile_count or 0) + 1
+            if job.reconcile_count > _SCRAPE_MAX_RECONCILE_ATTEMPTS:
+                # Site consistently fails to scrape — mark terminal so it is
+                # not re-queued again.  Flag for manual review.
+                job.status = "failed"
+                job.terminal_state = True
+                job.last_error_code = "needs_manual_review"
+                job.last_error_message = (
+                    f"Scrape timed out or was killed {job.reconcile_count} times. "
+                    "Site may be permanently inaccessible, bot-protected, or require manual inspection."
+                )
+                job.finished_at = now
+                log_event(logger, "reconciler_flagged_scrape", job_id=str(job.id),
+                          reconcile_count=job.reconcile_count)
+            else:
+                job.status = "created"
+                job.lock_token = None
+                job.lock_expires_at = None
             job.updated_at = now
             session.add(job)
 

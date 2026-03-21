@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import type { RunRead } from '../../lib/types'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { SkeletonTable } from '../ui/Skeleton'
-import { IconChevronLeft, IconChevronRight, IconRefresh, IconChart, IconEye } from '../ui/icons'
+import { IconChevronLeft, IconChevronRight, IconRefresh, IconChart, IconEye, IconUsers } from '../ui/icons'
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 
@@ -17,6 +18,7 @@ interface AnalysisRunsViewProps {
   onPageNext: () => void
   onRefresh: () => void
   onInspectRun: (run: RunRead) => void
+  onFetchContactsForRun: (run: RunRead) => Promise<void>
 }
 
 function runBadge(run: RunRead): { variant: 'info' | 'success' | 'fail'; label: string } {
@@ -41,7 +43,7 @@ function RunProgressBar({ run }: { run: RunRead }) {
   )
 }
 
-function RunCard({ run, onInspect }: { run: RunRead; onInspect: () => void }) {
+function RunCard({ run, onInspect, onFetchContacts, isFetching }: { run: RunRead; onInspect: () => void; onFetchContacts: () => void; isFetching: boolean }) {
   const badge = runBadge(run)
   const done = run.completed_jobs + run.failed_jobs
   return (
@@ -56,10 +58,16 @@ function RunCard({ run, onInspect }: { run: RunRead; onInspect: () => void }) {
       <RunProgressBar run={run} />
       <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[var(--oc-muted)]">
         <span>{done}/{run.total_jobs} jobs · {run.failed_jobs} failed</span>
-        <Button variant="secondary" size="xs" onClick={onInspect}>
-          <IconEye size={13} />
-          Inspect
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="xs" onClick={onFetchContacts} loading={isFetching} title="Queue contact fetch for all Possible companies in this run">
+            <IconUsers size={13} />
+            Contacts
+          </Button>
+          <Button variant="secondary" size="xs" onClick={onInspect}>
+            <IconEye size={13} />
+            Inspect
+          </Button>
+        </div>
       </div>
       <p className="mt-1 text-[11px] text-[var(--oc-muted)]">
         {new Date(run.created_at).toLocaleString()}
@@ -79,7 +87,19 @@ export function AnalysisRunsView({
   onPageNext,
   onRefresh,
   onInspectRun,
+  onFetchContactsForRun,
 }: AnalysisRunsViewProps) {
+  const [fetchingRunIds, setFetchingRunIds] = useState<Set<string>>(new Set())
+
+  const handleFetchContacts = async (run: RunRead) => {
+    setFetchingRunIds((prev) => new Set(prev).add(run.id))
+    try {
+      await onFetchContactsForRun(run)
+    } finally {
+      setFetchingRunIds((prev) => { const next = new Set(prev); next.delete(run.id); return next })
+    }
+  }
+
   const rangeLabel = runs.length > 0 ? `${runsOffset + 1}–${runsOffset + runs.length}` : '0'
   const canPrev = runsOffset > 0 && !isLoading
   const canNext = runsHasMore && !isLoading
@@ -141,7 +161,13 @@ export function AnalysisRunsView({
           {/* Mobile cards */}
           <div className="space-y-2 md:hidden">
             {runs.map((run) => (
-              <RunCard key={run.id} run={run} onInspect={() => onInspectRun(run)} />
+              <RunCard
+                key={run.id}
+                run={run}
+                onInspect={() => onInspectRun(run)}
+                onFetchContacts={() => void handleFetchContacts(run)}
+                isFetching={fetchingRunIds.has(run.id)}
+              />
             ))}
           </div>
 
@@ -156,7 +182,7 @@ export function AnalysisRunsView({
                   <th>Progress</th>
                   <th>Failed</th>
                   <th>Created</th>
-                  <th>Inspect</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -194,10 +220,16 @@ export function AnalysisRunsView({
                         {new Date(run.created_at).toLocaleString()}
                       </td>
                       <td>
-                        <Button variant="secondary" size="xs" onClick={() => onInspectRun(run)}>
-                          <IconEye size={13} />
-                          Inspect
-                        </Button>
+                        <div className="flex items-center gap-1.5">
+                          <Button variant="ghost" size="xs" onClick={() => void handleFetchContacts(run)} loading={fetchingRunIds.has(run.id)} title="Queue contact fetch for all Possible companies in this run">
+                            <IconUsers size={13} />
+                            Contacts
+                          </Button>
+                          <Button variant="secondary" size="xs" onClick={() => onInspectRun(run)}>
+                            <IconEye size={13} />
+                            Inspect
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   )
