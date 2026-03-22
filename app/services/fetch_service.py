@@ -279,7 +279,19 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
     )
 
     # ── Tier 2: Dynamic ─────────────────────────────────────────────────────
-    if use_js:
+    # Skip dynamic when static already gave us enough content AND was not a
+    # bot-wall.  Dynamic (Playwright) takes 30–120 s per URL; there is no
+    # point paying that cost when static already has substantial text.
+    _static_sufficient = (
+        static_result is not None
+        and len(static_text) >= _STEALTH_CONTENT_THRESHOLD
+    )
+    if use_js and _static_sufficient:
+        logger.info(
+            "fetch_dynamic_skipped url=%s static_len=%d threshold=%d",
+            url, len(static_text), _STEALTH_CONTENT_THRESHOLD,
+        )
+    if use_js and not _static_sufficient:
         _dynamic_timeout_sec = settings.scrape_dynamic_timeout_ms / 1000 + 30
         for attempt in variants:
             try:

@@ -25,6 +25,8 @@ if _cnt_const is not None:
 app.conf.update(
     broker_url=settings.redis_url,
     broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=None,  # retry forever on disconnect
     broker_transport_options={
         "socket_keepalive": True,
         "socket_keepalive_options": _keepalive_opts,
@@ -33,7 +35,9 @@ app.conf.update(
         # (typically 600 s on managed Redis), which TCP keepalive cannot do.
         "health_check_interval": 15,
         "socket_connect_timeout": 10,
-        "socket_timeout": 30,
+        # No socket_timeout — the consumer socket sits idle during long tasks
+        # (up to 31 min); a hard 30s timeout kills it mid-run.  TCP keepalive
+        # + health_check_interval=15 keep the connection alive instead.
         "retry_on_timeout": True,
         # Must exceed the longest task hard time limit (31 min = 1860 s).
         # Prevents Redis from redelivering a message while its worker is
