@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     upload_file_ttl_hours: int = 24
     scrape_static_timeout_sec: float = 12.0
     scrape_static_retries: int = 1
-    scrape_dynamic_timeout_ms: int = 120000  # 2 min — allows slow-loading pages to complete
+    scrape_dynamic_timeout_ms: int = 60000   # 1 min — fail fast; bot-wall pages load in <30s
     scrape_dynamic_wait_ms: int = 3000
     scrape_dynamic_retries: int = 1
     scrape_stealth_timeout_ms: int = 120000  # 2 min — CAPTCHA solving + slow pages

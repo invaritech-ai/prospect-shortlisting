@@ -224,6 +224,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
     static_text: str = ""
     dynamic_result: FetchResult | None = None
     dynamic_text: str = ""
+    dynamic_timed_out: bool = False
 
     # ── Tier 1: Static ──────────────────────────────────────────────────────
     for attempt in variants:
@@ -346,9 +347,13 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
 
             except asyncio.TimeoutError:
                 last_error = "dynamic_fetch_timeout"
+                dynamic_timed_out = True
                 logger.warning(
                     "fetch_dynamic_timeout url=%s timeout_sec=%.1f", attempt, _dynamic_timeout_sec,
                 )
+                # Timeout means the server is hung/unreachable — the HTTP
+                # variant will also time out.  Stop trying variants.
+                break
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc) or "dynamic_fetch_failed"
                 logger.warning("fetch_dynamic_error url=%s error=%.300s", attempt, last_error)
@@ -370,6 +375,13 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
             logger.info(
                 "fetch_stealth_skipped url=%s static_len=%d dynamic_len=%d threshold=%d",
                 url, s_len, d_len, _STEALTH_CONTENT_THRESHOLD,
+            )
+        elif dynamic_timed_out:
+            # Dynamic timed out → server is hung or unreachable.  Stealth uses
+            # the same network path and will also time out.  Skip to fail fast.
+            logger.info(
+                "fetch_stealth_skipped_timeout url=%s dynamic_timed_out=True",
+                url,
             )
         else:
             _stealth_timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
