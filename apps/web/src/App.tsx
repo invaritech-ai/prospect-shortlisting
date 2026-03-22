@@ -740,10 +740,13 @@ function App() {
     setIsMarkdownLoading(true)
     try {
       const pages = await listScrapeJobPageContents(job.id)
-      const PAGE_KIND_ORDER = ['home', 'about', 'products'] as const
-      const filtered = PAGE_KIND_ORDER
-        .map((kind) => pages.find((p) => p.page_kind === kind && p.markdown_content.trim().length > 0))
-        .filter((p): p is ScrapePageContentRead => !!p)
+      const withContent = pages.filter((p) => p.markdown_content.trim().length > 0)
+      // Sort: home first, then alphabetically by page_kind
+      const filtered = withContent.sort((a, b) => {
+        if (a.page_kind === 'home') return -1
+        if (b.page_kind === 'home') return 1
+        return a.page_kind.localeCompare(b.page_kind)
+      })
       setMarkdownPages(filtered)
       setActiveMarkdownPageKind(filtered[0]?.page_kind ?? '')
       if (filtered.length === 0) setMarkdownError('No markdown available for this scrape job.')

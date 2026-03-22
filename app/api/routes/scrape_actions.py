@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, col, select
 
 from app.api.schemas.upload import CompanyScrapeRequest, CompanyScrapeResult
+from app.core.config import settings
 from app.db.session import get_session
 from app.models import Company, ScrapeJob
 from app.services.url_utils import domain_from_url, normalize_url
@@ -18,8 +19,6 @@ router = APIRouter(prefix="/v1", tags=["companies"])
 SCRAPE_DEFAULTS = {
     "js_fallback": True,
     "include_sitemap": True,
-    "general_model": "openai/gpt-5-nano",
-    "classify_model": "inception/mercury-2",
 }
 
 
@@ -68,8 +67,8 @@ def _enqueue_scrapes_for_companies(*, session: Session, companies: list[Company]
                 domain=domain,
                 js_fallback=SCRAPE_DEFAULTS["js_fallback"],
                 include_sitemap=SCRAPE_DEFAULTS["include_sitemap"],
-                general_model=SCRAPE_DEFAULTS["general_model"],
-                classify_model=SCRAPE_DEFAULTS["classify_model"],
+                general_model=settings.general_model,
+                classify_model=settings.classify_model,
             )
         )
         company_by_url[normalized] = company.id
