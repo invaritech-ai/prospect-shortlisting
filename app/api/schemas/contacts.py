@@ -10,6 +10,7 @@ class ProspectContactRead(BaseModel):
     id: UUID
     company_id: UUID
     contact_fetch_job_id: UUID
+    domain: str
     source: str
     first_name: str
     last_name: str

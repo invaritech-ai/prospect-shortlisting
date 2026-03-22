@@ -100,20 +100,25 @@ class SnovClient:
         if gap < self._min_interval:
             time.sleep(self._min_interval - gap)
 
-    def _post(self, path: str, payload: dict, timeout: int | None = None) -> tuple[dict, str]:
+    def _post(self, path: str, payload: dict, timeout: int | None = None, bearer: str = "") -> tuple[dict, str]:
         """POST JSON to Snov API. Returns (data_dict, error_code)."""
         self._throttle()
         url = f"{_SNOV_BASE}{path}"
         data = json.dumps(payload).encode("utf-8")
-        req = Request(url, data=data, method="POST",
-                      headers={"Content-Type": "application/json"})
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
+        req = Request(url, data=data, method="POST", headers=headers)
         return self._do_request(req, timeout or self._default_timeout)
 
-    def _get(self, path: str, timeout: int | None = None) -> tuple[dict, str]:
+    def _get(self, path: str, timeout: int | None = None, bearer: str = "") -> tuple[dict, str]:
         """GET from Snov API. Returns (data_dict, error_code)."""
         self._throttle()
         url = f"{_SNOV_BASE}{path}"
-        req = Request(url, method="GET")
+        headers: dict[str, str] = {}
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
+        req = Request(url, method="GET", headers=headers)
         return self._do_request(req, timeout or self._default_timeout)
 
     def _do_request(self, req: Request, timeout: int) -> tuple[dict, str]:
@@ -226,14 +231,14 @@ class SnovClient:
 
     # ── Task polling ──────────────────────────────────────────────────────────
 
-    def _poll_task(self, result_path: str) -> tuple[dict, str]:
+    def _poll_task(self, result_path: str, bearer: str = "") -> tuple[dict, str]:
         """Poll a Snov task result endpoint until status != 'in_progress'."""
         interval = self._poll_interval
         for attempt in range(self._poll_max_attempts):
             if attempt > 0:
                 time.sleep(interval)
                 interval = min(interval * 1.5, 10.0)
-            data, err = self._get(result_path)
+            data, err = self._get(result_path, bearer=bearer)
             if err:
                 return {}, err
             status = str(data.get("status") or "").lower()
@@ -269,49 +274,30 @@ class SnovClient:
         """Start a domain prospect search and poll for results.
 
         Returns (prospects_list, total_count, error_code).
-        Prospects include: firstName, lastName, position, linkedIn, hash.
+        Each prospect has: first_name, last_name, position, source_page, search_emails_start.
         """
         token, err = self._get_access_token()
         if err:
             return [], 0, err
 
-        # Start the task
         start_data, err = self._post("/v2/domain-search/prospects/start", {
-            "access_token": token,
             "domain": domain,
             "page": page,
-        })
+        }, bearer=token)
         if err:
             return [], 0, err
 
-        meta = start_data.get("meta") or {}
-        task_hash = str(
-            start_data.get("id")
-            or start_data.get("task_hash")
-            or meta.get("task_hash")
-            or meta.get("id")
-            or ""
-        )
+        task_hash = str((start_data.get("meta") or {}).get("task_hash") or "")
         if not task_hash:
             log_event(logger, "snov_no_task_hash", domain=domain, data=start_data)
             return [], 0, ERR_SNOV_FAILED
 
-        # Poll result
-        result, err = self._poll_task(f"/v2/domain-search/prospects/result/{task_hash}")
+        result, err = self._poll_task(f"/v2/domain-search/prospects/result/{task_hash}", bearer=token)
         if err:
             return [], 0, err
 
-        # The result shape varies; handle both list and dict wrappers
-        raw_data = result.get("data") or result
-        if isinstance(raw_data, list):
-            prospects = raw_data
-            total = len(prospects)
-        elif isinstance(raw_data, dict):
-            prospects = raw_data.get("prospects") or raw_data.get("emails") or []
-            total = int(raw_data.get("total") or len(prospects))
-        else:
-            prospects = []
-            total = 0
+        prospects = result.get("data") or []
+        total = int((result.get("meta") or {}).get("total_count") or len(prospects))
 
         log_event(logger, "snov_prospects_found", domain=domain, page=page,
                   prospects=len(prospects), total=total)
@@ -321,34 +307,35 @@ class SnovClient:
         """Find email addresses for a specific prospect by their Snov hash.
 
         Returns (emails_list, error_code).
-        Each email dict includes: email, emailStatus, confidence.
+        Each email dict has: email, smtp_status.
         Consumes 1 credit only if an email is found.
         """
         token, err = self._get_access_token()
         if err:
             return [], err
 
-        # Start email search task
+        # Correct path: /v2/domain-search/prospects/search-emails/start/{prospect_hash}
         start_data, err = self._post(
-            f"/v2/domain-search/prospects/{prospect_hash}/search-emails/start",
-            {"access_token": token},
+            f"/v2/domain-search/prospects/search-emails/start/{prospect_hash}",
+            {},
+            bearer=token,
         )
         if err:
             return [], err
 
-        task_hash = str(start_data.get("id") or start_data.get("task_hash") or "")
+        task_hash = str((start_data.get("meta") or {}).get("task_hash") or "")
         if not task_hash:
-            log_event(logger, "snov_no_email_task_hash", prospect_hash=prospect_hash)
+            log_event(logger, "snov_no_email_task_hash", prospect_hash=prospect_hash, data=start_data)
             return [], ERR_SNOV_FAILED
 
-        # Poll result
         result, err = self._poll_task(
-            f"/v2/domain-search/prospects/{prospect_hash}/search-emails/result/{task_hash}"
+            f"/v2/domain-search/prospects/search-emails/result/{task_hash}",
+            bearer=token,
         )
         if err:
             return [], err
 
-        emails = result.get("emails") or result.get("data") or []
-        if isinstance(emails, dict):
-            emails = emails.get("emails") or []
-        return list(emails), ""
+        # result.data.emails — docs: {"data": {"emails": [{"email": "...", "smtp_status": "valid"}]}}
+        data = result.get("data") or {}
+        emails = data.get("emails") if isinstance(data, dict) else []
+        return list(emails or []), ""

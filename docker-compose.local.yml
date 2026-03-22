@@ -1,0 +1,27 @@
+# Local testing override — adds Redis and wires containers to it.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up api worker-analysis --build
+#
+# Logs:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f worker-analysis
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"   # host 6380 avoids collisions with any local Redis on 6379
+
+  api:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+
+  worker-analysis:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started

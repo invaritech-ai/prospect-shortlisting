@@ -249,11 +249,15 @@ class ContactService:
         contacts_to_write: list[dict] = []
 
         for prospect in all_prospects:
-            first_name = str(prospect.get("firstName") or prospect.get("first_name") or "").strip()
-            last_name = str(prospect.get("lastName") or prospect.get("last_name") or "").strip()
-            title = str(prospect.get("position") or prospect.get("title") or "").strip()
-            linkedin_url = str(prospect.get("linkedIn") or prospect.get("linkedin") or "").strip() or None
-            prospect_hash = str(prospect.get("hash") or prospect.get("id") or "").strip()
+            first_name = str(prospect.get("first_name") or "").strip()
+            last_name = str(prospect.get("last_name") or "").strip()
+            title = str(prospect.get("position") or "").strip()
+            linkedin_url = str(prospect.get("source_page") or "").strip() or None
+
+            # Hash is embedded in the search_emails_start URL path, e.g.
+            # ".../search-emails/start/abc123def456"
+            search_emails_url = str(prospect.get("search_emails_start") or "")
+            prospect_hash = search_emails_url.rstrip("/").rsplit("/", 1)[-1] if search_emails_url else ""
 
             title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
 
@@ -276,10 +280,7 @@ class ContactService:
                 if not email_err and emails:
                     best = emails[0]
                     contact_entry["email"] = str(best.get("email") or "").strip() or None
-                    contact_entry["email_status"] = str(
-                        best.get("emailStatus") or best.get("email_status") or "unverified"
-                    ).lower()
-                    contact_entry["snov_confidence"] = best.get("confidence") or best.get("score")
+                    contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
                     contact_entry["snov_email_raw"] = emails
 
             contacts_to_write.append(contact_entry)

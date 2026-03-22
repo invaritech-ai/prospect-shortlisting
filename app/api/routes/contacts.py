@@ -162,37 +162,46 @@ def list_all_contacts(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> ContactListResponse:
-    q = select(ProspectContact)
+    from sqlalchemy import or_
+    from sqlalchemy import func as sa_func
+
+    q = select(ProspectContact, Company.domain).join(
+        Company, col(Company.id) == col(ProspectContact.company_id)
+    )
     if title_match is not None:
         q = q.where(col(ProspectContact.title_match) == title_match)
     if email_status:
         q = q.where(col(ProspectContact.email_status) == email_status)
     if search:
         term = f"%{search.lower()}%"
-        from sqlalchemy import or_
-        from sqlalchemy import func as sa_func
         q = q.where(
             or_(
                 sa_func.lower(ProspectContact.first_name).like(term),
                 sa_func.lower(ProspectContact.last_name).like(term),
                 sa_func.lower(ProspectContact.email).like(term),
                 sa_func.lower(ProspectContact.title).like(term),
+                sa_func.lower(Company.domain).like(term),
             )
         )
 
     total = session.exec(select(func.count()).select_from(q.subquery())).one()
-    items = list(session.exec(
+    rows = list(session.exec(
         q.order_by(col(ProspectContact.title_match).desc(), col(ProspectContact.created_at).desc())
         .offset(offset)
         .limit(limit)
     ).all())
+
+    items = []
+    for contact, domain in rows:
+        data = {**contact.__dict__, "domain": domain}
+        items.append(ProspectContactRead.model_validate(data))
 
     return ContactListResponse(
         total=total,
         has_more=(offset + len(items)) < total,
         limit=limit,
         offset=offset,
-        items=[ProspectContactRead.model_validate(c, from_attributes=True) for c in items],
+        items=items,
     )
 
 

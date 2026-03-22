@@ -10,65 +10,60 @@ import {
 } from '../../lib/api'
 import { IconDownload, IconRefresh, IconTrash, IconPlus } from '../ui/icons'
 
-const EMAIL_STATUS_LABELS: Record<string, string> = {
-  unverified: 'Unverified',
-  valid: 'Valid',
-  unknown: 'Unknown',
-  not_valid: 'Invalid',
-}
-
 function EmailStatusBadge({ status }: { status: string }) {
-  const colorMap: Record<string, string> = {
-    valid: 'oc-badge-success',
-    not_valid: 'oc-badge-fail',
-    unverified: 'oc-badge-info',
-    unknown: '',
+  const map: Record<string, { label: string; cls: string }> = {
+    valid:      { label: 'Valid',       cls: 'oc-badge-success' },
+    not_valid:  { label: 'Invalid',     cls: 'oc-badge-fail' },
+    unknown:    { label: 'Unknown',     cls: '' },
   }
-  return (
-    <span className={`oc-badge ${colorMap[status] ?? ''}`}>
-      {EMAIL_STATUS_LABELS[status] ?? status}
-    </span>
-  )
+  const { label, cls } = map[status] ?? { label: status, cls: '' }
+  return <span className={`oc-badge ${cls}`}>{label}</span>
 }
 
 function ContactRow({ contact }: { contact: ProspectContactRead }) {
   return (
-    <tr className="border-b border-[var(--oc-border)] hover:bg-[var(--oc-surface)] transition-colors">
-      <td className="px-3 py-2 text-xs font-medium text-[var(--oc-text)]">
+    <tr className={`border-b border-[var(--oc-border)] transition-colors hover:bg-[var(--oc-surface)] ${contact.title_match ? 'bg-emerald-50/40' : ''}`}>
+      {/* Name */}
+      <td className="px-3 py-2.5 text-xs font-medium text-[var(--oc-text)]">
         {contact.first_name} {contact.last_name}
-      </td>
-      <td className="px-3 py-2 text-xs text-[var(--oc-muted)] max-w-[200px] truncate" title={contact.title ?? ''}>
-        {contact.title ?? <span className="opacity-40">—</span>}
-      </td>
-      <td className="px-3 py-2 text-xs">
-        {contact.title_match ? (
-          <span className="oc-badge oc-badge-success">Matched</span>
-        ) : (
-          <span className="oc-badge">No</span>
+        {contact.title_match && (
+          <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">Match</span>
         )}
       </td>
-      <td className="px-3 py-2 text-xs text-[var(--oc-muted)]">
-        {contact.email ?? <span className="opacity-40">—</span>}
+      {/* Company */}
+      <td className="px-3 py-2.5 text-xs text-[var(--oc-accent-ink)] font-medium">
+        {contact.domain}
       </td>
-      <td className="px-3 py-2">
-        <EmailStatusBadge status={contact.email_status} />
+      {/* Title */}
+      <td className="px-3 py-2.5 text-xs text-[var(--oc-muted)] truncate" title={contact.title ?? ''}>
+        {contact.title ?? <span className="opacity-30">—</span>}
       </td>
-      <td className="px-3 py-2 text-xs">
+      {/* Email */}
+      <td className="px-3 py-2.5 text-xs">
+        {contact.email ? (
+          <a href={`mailto:${contact.email}`} className="text-[var(--oc-text)] underline decoration-dotted hover:text-[var(--oc-accent-ink)]">
+            {contact.email}
+          </a>
+        ) : contact.title_match ? (
+          <span className="text-[var(--oc-muted)] opacity-50">not found</span>
+        ) : (
+          <span className="opacity-20">—</span>
+        )}
+      </td>
+      {/* Email status — only meaningful when email exists */}
+      <td className="px-3 py-2.5">
+        {contact.email ? <EmailStatusBadge status={contact.email_status} /> : null}
+      </td>
+      {/* LinkedIn */}
+      <td className="px-3 py-2.5 text-xs">
         {contact.linkedin_url ? (
-          <a
-            href={contact.linkedin_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[var(--oc-accent-ink)] underline hover:no-underline"
-          >
+          <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer"
+            className="text-[var(--oc-accent-ink)] underline hover:no-underline">
             LinkedIn
           </a>
         ) : (
-          <span className="opacity-40">—</span>
+          <span className="opacity-20">—</span>
         )}
-      </td>
-      <td className="px-3 py-2 text-[10px] text-[var(--oc-muted)]">
-        {contact.snov_confidence != null ? `${Math.round(contact.snov_confidence * 100)}%` : '—'}
       </td>
     </tr>
   )
@@ -202,7 +197,7 @@ export function ContactsView() {
   const [error, setError] = useState('')
   const [offset, setOffset] = useState(0)
   const [limit] = useState(100)
-  const [titleMatchFilter, setTitleMatchFilter] = useState<boolean | undefined>(undefined)
+  const [titleMatchFilter, setTitleMatchFilter] = useState<boolean | undefined>(true)
   const [emailStatusFilter, setEmailStatusFilter] = useState('')
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
@@ -396,32 +391,42 @@ export function ContactsView() {
         ) : contacts?.items.length === 0 ? (
           <div className="flex h-40 items-center justify-center">
             <div className="text-center">
-              <p className="text-sm font-medium text-[var(--oc-muted)]">No contacts yet</p>
-              <p className="mt-1 text-xs text-[var(--oc-muted)]">
-                Use "Fetch Contacts" on Possible companies or from an Analysis Run.
-              </p>
+              {titleMatchFilter === true ? (
+                <>
+                  <p className="text-sm font-medium text-[var(--oc-muted)]">No title-matched contacts yet</p>
+                  <p className="mt-1 text-xs text-[var(--oc-muted)]">
+                    Contacts were fetched but none matched your title rules, or no fetches have run.
+                    <button type="button" onClick={() => setTitleMatchFilter(undefined)} className="ml-1 underline hover:no-underline">Show all contacts</button>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-[var(--oc-muted)]">No contacts yet</p>
+                  <p className="mt-1 text-xs text-[var(--oc-muted)]">
+                    Use "Fetch Contacts" on Possible companies or from an Analysis Run.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         ) : (
           <table className="w-full table-fixed text-left">
             <colgroup>
               <col style={{ width: '18%' }} />
+              <col style={{ width: '14%' }} />
               <col style={{ width: '22%' }} />
-              <col style={{ width: '8%' }} />
-              <col style={{ width: '22%' }} />
+              <col style={{ width: '24%' }} />
               <col style={{ width: '10%' }} />
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '10%' }} />
+              <col style={{ width: '12%' }} />
             </colgroup>
             <thead className="sticky top-0 bg-[var(--oc-surface-strong)]">
               <tr className="border-b border-[var(--oc-border)]">
                 <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Name</th>
+                <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Company</th>
                 <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Title</th>
-                <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Match</th>
                 <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Email</th>
                 <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Status</th>
                 <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">LinkedIn</th>
-                <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Confidence</th>
               </tr>
             </thead>
             <tbody>

@@ -318,6 +318,7 @@ export type ProspectContactRead = {
   id: string
   company_id: string
   contact_fetch_job_id: string
+  domain: string
   source: string
   first_name: string
   last_name: string
