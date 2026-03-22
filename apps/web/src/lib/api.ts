@@ -6,6 +6,7 @@ import type {
   CompanyIdsResult,
   CompanyList,
   CompanyScrapeResult,
+  ContactCompanyListResponse,
   ContactFetchResult,
   ContactListResponse,
   DecisionFilter,
@@ -261,14 +262,32 @@ export async function listContacts(
   return request<ContactListResponse>(`/v1/contacts?${params.toString()}`)
 }
 
-export async function listCompanyContacts(companyId: string): Promise<ContactListResponse> {
-  return request<ContactListResponse>(`/v1/companies/${companyId}/contacts`)
+export async function listCompanyContacts(
+  companyId: string,
+  options: { limit?: number; offset?: number; titleMatch?: boolean } = {},
+): Promise<ContactListResponse> {
+  const params = new URLSearchParams()
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  return request<ContactListResponse>(`/v1/companies/${companyId}/contacts?${params.toString()}`)
 }
 
-export function getContactsExportUrl(titleMatch?: boolean, emailStatus?: string): string {
+export async function listContactCompanies(
+  options: { search?: string; limit?: number; offset?: number } = {},
+): Promise<ContactCompanyListResponse> {
   const params = new URLSearchParams()
-  if (titleMatch !== undefined) params.set('title_match', String(titleMatch))
-  if (emailStatus) params.set('email_status', emailStatus)
+  if (options.search) params.set('search', options.search)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  return request<ContactCompanyListResponse>(`/v1/contacts/companies?${params.toString()}`)
+}
+
+export function getContactsExportUrl(options: { titleMatch?: boolean; emailStatus?: string; companyId?: string } = {}): string {
+  const params = new URLSearchParams()
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  if (options.emailStatus) params.set('email_status', options.emailStatus)
+  if (options.companyId) params.set('company_id', options.companyId)
   return `${API_BASE_URL}/v1/contacts/export.csv?${params.toString()}`
 }
 

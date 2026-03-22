@@ -54,3 +54,19 @@ class TitleMatchRuleCreate(BaseModel):
 class TitleRuleSeedResult(BaseModel):
     inserted: int
     message: str
+
+
+class ContactCompanySummary(BaseModel):
+    company_id: UUID
+    domain: str
+    total_count: int
+    title_matched_count: int
+    email_count: int
+
+
+class ContactCompanyListResponse(BaseModel):
+    total: int
+    has_more: bool
+    limit: int
+    offset: int
+    items: list[ContactCompanySummary]

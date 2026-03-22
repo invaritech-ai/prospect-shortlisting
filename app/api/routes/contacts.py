@@ -7,10 +7,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func
+from sqlalchemy import Integer, func, select as sa_select, text
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
+    ContactCompanyListResponse,
+    ContactCompanySummary,
     ContactFetchResult,
     ContactListResponse,
     ProspectContactRead,
@@ -147,7 +149,56 @@ def list_company_contacts(
         has_more=(offset + len(items)) < total,
         limit=limit,
         offset=offset,
-        items=[ProspectContactRead.model_validate(c, from_attributes=True) for c in items],
+        items=[ProspectContactRead.model_validate({**c.__dict__, "domain": company.domain}) for c in items],
+    )
+
+
+# ── Contacts grouped by company ───────────────────────────────────────────────
+
+@router.get("/contacts/companies", response_model=ContactCompanyListResponse)
+def list_contacts_by_company(
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> ContactCompanyListResponse:
+    stmt = (
+        sa_select(
+            col(Company.id).label("company_id"),
+            col(Company.domain).label("domain"),
+            func.count(col(ProspectContact.id)).label("total_count"),
+            func.coalesce(
+                func.sum(col(ProspectContact.title_match).cast(Integer)), 0
+            ).label("title_matched_count"),
+            func.count(col(ProspectContact.email)).label("email_count"),
+        )
+        .select_from(Company)
+        .join(ProspectContact, col(ProspectContact.company_id) == col(Company.id))
+        .group_by(col(Company.id), col(Company.domain))
+    )
+    if search:
+        stmt = stmt.where(func.lower(col(Company.domain)).like(f"%{search.lower()}%"))
+
+    total = session.execute(sa_select(func.count()).select_from(stmt.subquery())).scalar_one()
+    rows = session.execute(
+        stmt.order_by(text("title_matched_count DESC, total_count DESC")).offset(offset).limit(limit)
+    ).all()
+
+    return ContactCompanyListResponse(
+        total=total,
+        has_more=(offset + len(rows)) < total,
+        limit=limit,
+        offset=offset,
+        items=[
+            ContactCompanySummary(
+                company_id=r.company_id,
+                domain=r.domain,
+                total_count=r.total_count,
+                title_matched_count=r.title_matched_count,
+                email_count=r.email_count,
+            )
+            for r in rows
+        ],
     )
 
 
@@ -211,6 +262,7 @@ def list_all_contacts(
 def export_contacts_csv(
     title_match: bool | None = Query(default=None),
     email_status: str | None = Query(default=None),
+    company_id: UUID | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> Response:
     q = select(ProspectContact, Company.domain).join(
@@ -220,6 +272,8 @@ def export_contacts_csv(
         q = q.where(col(ProspectContact.title_match) == title_match)
     if email_status:
         q = q.where(col(ProspectContact.email_status) == email_status)
+    if company_id:
+        q = q.where(col(ProspectContact.company_id) == company_id)
 
     rows = list(session.exec(q.order_by(col(ProspectContact.created_at).desc())).all())
 

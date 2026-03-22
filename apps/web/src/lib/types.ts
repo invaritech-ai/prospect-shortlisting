@@ -347,6 +347,22 @@ export type ContactFetchResult = {
   queued_job_ids: string[]
 }
 
+export type ContactCompanySummary = {
+  company_id: string
+  domain: string
+  total_count: number
+  title_matched_count: number
+  email_count: number
+}
+
+export type ContactCompanyListResponse = {
+  total: number
+  has_more: boolean
+  limit: number
+  offset: number
+  items: ContactCompanySummary[]
+}
+
 export type TitleMatchRuleRead = {
   id: string
   rule_type: 'include' | 'exclude'
