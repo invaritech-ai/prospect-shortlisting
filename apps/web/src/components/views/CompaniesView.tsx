@@ -108,7 +108,10 @@ function scrapeBadgeForCompany(item: CompanyListItem): { label: string; variant:
   const errCode = item.latest_scrape_error_code ?? ''
   const title = `status: ${status}${errCode ? ` | error: ${errCode}` : ''}`
   if (!item.latest_scrape_status) return { label: 'Not started', variant: 'neutral', title }
-  if (item.latest_scrape_terminal === false) return { label: 'Running', variant: 'info', title }
+  // terminal=false means the job is still active. Distinguish queued (not yet
+  // started by a worker) from actively running (worker has claimed it).
+  if (item.latest_scrape_terminal === false && status === 'running') return { label: 'Running', variant: 'info', title }
+  if (item.latest_scrape_terminal === false) return { label: 'Queued', variant: 'neutral', title }
   if (errCode === 'bot_protection') return { label: 'Bot wall', variant: 'warn', title }
   if (status === 'site_unavailable') return { label: 'Unavailable', variant: 'fail', title }
   if (status.includes('failed')) return { label: 'Failed', variant: 'fail', title }
