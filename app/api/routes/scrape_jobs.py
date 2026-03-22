@@ -58,6 +58,7 @@ def list_scrape_jobs(
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     status_filter: Literal["all", "active", "completed", "failed"] = Query(default="all"),
+    search: str | None = Query(default=None, max_length=200),
 ) -> list[ScrapeJobRead]:
     statement = select(ScrapeJob)
     if status_filter == "active":
@@ -66,6 +67,8 @@ def list_scrape_jobs(
         statement = statement.where(col(ScrapeJob.status) == "completed")
     elif status_filter == "failed":
         statement = statement.where(col(ScrapeJob.status) == "failed")
+    if search:
+        statement = statement.where(col(ScrapeJob.domain).ilike(f"%{search.strip()}%"))
 
     jobs = list(
         session.exec(

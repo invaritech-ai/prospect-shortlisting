@@ -137,10 +137,10 @@ export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
 }
 
-export async function listScrapeJobs(limit = 50, offset = 0, statusFilter: ScrapeJobFilter = 'all'): Promise<ScrapeJobRead[]> {
-  return request<ScrapeJobRead[]>(
-    `/v1/scrape-jobs?limit=${limit}&offset=${offset}&status_filter=${encodeURIComponent(statusFilter)}`,
-  )
+export async function listScrapeJobs(limit = 50, offset = 0, statusFilter: ScrapeJobFilter = 'all', search = ''): Promise<ScrapeJobRead[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset), status_filter: statusFilter })
+  if (search.trim()) params.set('search', search.trim())
+  return request<ScrapeJobRead[]>(`/v1/scrape-jobs?${params}`)
 }
 
 export async function listScrapeJobPageContents(jobId: string, limit = 200, offset = 0): Promise<ScrapePageContentRead[]> {

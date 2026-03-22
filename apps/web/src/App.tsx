@@ -134,6 +134,7 @@ function App() {
   const [jobsOffset, setJobsOffset] = useState(0)
   const [jobsPageSize, setJobsPageSize] = useState(DEFAULT_JOBS_PAGE_SIZE)
   const [jobsFilter, setJobsFilter] = useState<JobFilter>('all')
+  const [jobsSearch, setJobsSearch] = useState('')
   const [isJobsLoading, setIsJobsLoading] = useState(false)
   const [jobsHasMore, setJobsHasMore] = useState(false)
 
@@ -292,7 +293,7 @@ function App() {
     async (offset = 0, limit = jobsPageSize) => {
       setIsJobsLoading(true)
       try {
-        const rows = await listScrapeJobs(limit + 1, offset, jobsFilter)
+        const rows = await listScrapeJobs(limit + 1, offset, jobsFilter, jobsSearch)
         setJobsHasMore(rows.length > limit)
         setScrapeJobs(rows.slice(0, limit))
         setJobsOffset(offset)
@@ -302,7 +303,7 @@ function App() {
         setIsJobsLoading(false)
       }
     },
-    [jobsFilter, jobsPageSize],
+    [jobsFilter, jobsPageSize, jobsSearch],
   )
 
   const loadRuns = useCallback(
@@ -462,7 +463,7 @@ function App() {
     void loadLetterCounts(decisionFilter, scrapeFilter)
   }, [decisionFilter, scrapeFilter, loadLetterCounts])
 
-  useEffect(() => { void loadScrapeJobs(0, jobsPageSize) }, [jobsFilter, jobsPageSize, loadScrapeJobs])
+  useEffect(() => { void loadScrapeJobs(0, jobsPageSize) }, [jobsFilter, jobsPageSize, jobsSearch, loadScrapeJobs])
   useEffect(() => { void loadRuns(0, runsPageSize) }, [runsPageSize, loadRuns])
   useEffect(() => { void loadPrompts() }, [loadPrompts])
 
@@ -1042,8 +1043,10 @@ function App() {
             jobsOffset={jobsOffset}
             jobsPageSize={jobsPageSize}
             jobsFilter={jobsFilter}
+            jobsSearch={jobsSearch}
             jobsHasMore={jobsHasMore}
             onSetJobsFilter={(f) => { setJobsFilter(f); setJobsOffset(0) }}
+            onSetJobsSearch={(s) => { setJobsSearch(s); setJobsOffset(0) }}
             onSetJobsPageSize={setJobsPageSize}
             onPagePrev={() => void loadScrapeJobs(Math.max(jobsOffset - jobsPageSize, 0), jobsPageSize)}
             onPageNext={() => void loadScrapeJobs(jobsOffset + jobsPageSize, jobsPageSize)}
