@@ -284,7 +284,14 @@ class SnovClient:
         if err:
             return [], 0, err
 
-        task_hash = str(start_data.get("id") or start_data.get("task_hash") or "")
+        meta = start_data.get("meta") or {}
+        task_hash = str(
+            start_data.get("id")
+            or start_data.get("task_hash")
+            or meta.get("task_hash")
+            or meta.get("id")
+            or ""
+        )
         if not task_hash:
             log_event(logger, "snov_no_task_hash", domain=domain, data=start_data)
             return [], 0, ERR_SNOV_FAILED

@@ -78,11 +78,12 @@ interface TitleRulesManagerProps {
   rules: TitleMatchRuleRead[]
   onAdd: (rule_type: 'include' | 'exclude', keywords: string) => void
   onDelete: (id: string) => void
+  deletingIds: Set<string>
   onSeed: () => void
   isSeeding: boolean
 }
 
-function TitleRulesManager({ rules, onAdd, onDelete, onSeed, isSeeding }: TitleRulesManagerProps) {
+function TitleRulesManager({ rules, onAdd, onDelete, deletingIds, onSeed, isSeeding }: TitleRulesManagerProps) {
   const [newType, setNewType] = useState<'include' | 'exclude'>('include')
   const [newKeywords, setNewKeywords] = useState('')
 
@@ -154,7 +155,8 @@ function TitleRulesManager({ rules, onAdd, onDelete, onSeed, isSeeding }: TitleR
                 <button
                   type="button"
                   onClick={() => onDelete(r.id)}
-                  className="ml-2 text-[var(--oc-muted)] transition hover:text-rose-600"
+                  disabled={deletingIds.has(r.id)}
+                  className="ml-2 text-[var(--oc-muted)] transition hover:text-rose-600 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <IconTrash size={13} />
                 </button>
@@ -177,7 +179,8 @@ function TitleRulesManager({ rules, onAdd, onDelete, onSeed, isSeeding }: TitleR
                 <button
                   type="button"
                   onClick={() => onDelete(r.id)}
-                  className="ml-2 text-rose-400 transition hover:text-rose-700"
+                  disabled={deletingIds.has(r.id)}
+                  className="ml-2 text-rose-400 transition hover:text-rose-700 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <IconTrash size={13} />
                 </button>
@@ -209,6 +212,7 @@ export function ContactsView() {
   const [isRulesLoading, setIsRulesLoading] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
   const [rulesError, setRulesError] = useState('')
+  const [deletingRuleIds, setDeletingRuleIds] = useState<Set<string>>(new Set())
 
   const loadContacts = useCallback(async (off = 0, tm = titleMatchFilter, es = emailStatusFilter, s = search) => {
     setIsLoading(true)
@@ -255,11 +259,15 @@ export function ContactsView() {
   }
 
   const handleDeleteRule = async (id: string) => {
+    if (deletingRuleIds.has(id)) return
+    setDeletingRuleIds((prev) => new Set([...prev, id]))
     try {
       await deleteTitleMatchRule(id)
       setRules((r) => r.filter((rule) => rule.id !== id))
     } catch {
       setRulesError('Failed to delete rule.')
+    } finally {
+      setDeletingRuleIds((prev) => { const s = new Set(prev); s.delete(id); return s })
     }
   }
 
@@ -368,6 +376,7 @@ export function ContactsView() {
                   rules={rules}
                   onAdd={(rt, kw) => void handleAddRule(rt, kw)}
                   onDelete={(id) => void handleDeleteRule(id)}
+                  deletingIds={deletingRuleIds}
                   onSeed={() => void handleSeed()}
                   isSeeding={isSeeding}
                 />
