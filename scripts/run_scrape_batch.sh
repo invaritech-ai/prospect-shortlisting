@@ -8,13 +8,8 @@ fi
 
 BASE="${BASE:-http://127.0.0.1:8001}"
 URL_FILE="${1:-data/url_batches/client_batch_2026-03-05.txt}"
-MAX_PAGES="${MAX_PAGES:-25}"
-MAX_DEPTH="${MAX_DEPTH:-2}"
 GENERAL_MODEL="${GENERAL_MODEL:-openai/gpt-5-nano}"
 CLASSIFY_MODEL="${CLASSIFY_MODEL:-inception/mercury-2}"
-OCR_MODEL="${OCR_MODEL:-google/gemini-3.1-flash-lite-preview}"
-ENABLE_OCR="${ENABLE_OCR:-true}"
-MAX_IMAGES_PER_PAGE="${MAX_IMAGES_PER_PAGE:-6}"
 
 if [[ ! -f "$URL_FILE" ]]; then
   echo "URL file not found: $URL_FILE"
@@ -27,7 +22,7 @@ PAGES_DIR="${OUT_DIR}/pages"
 mkdir -p "$PAGES_DIR"
 
 SUMMARY_CSV="${OUT_DIR}/summary.csv"
-echo "url,job_id,domain,status,stage1_status,stage2_status,pages_fetched_count,fetch_failures_count,markdown_pages_count,llm_used_count,llm_failed_count,ocr_images_processed_count,last_error_code" > "$SUMMARY_CSV"
+echo "url,job_id,domain,status,pages_fetched_count,fetch_failures_count,markdown_pages_count,llm_used_count,llm_failed_count,last_error_code" > "$SUMMARY_CSV"
 
 echo "Running batch from: $URL_FILE"
 echo "Output dir: $OUT_DIR"
@@ -52,22 +47,12 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
       --arg website_url "$url" \
       --arg general_model "$GENERAL_MODEL" \
       --arg classify_model "$CLASSIFY_MODEL" \
-      --arg ocr_model "$OCR_MODEL" \
-      --argjson max_pages "$MAX_PAGES" \
-      --argjson max_depth "$MAX_DEPTH" \
-      --argjson max_images_per_page "$MAX_IMAGES_PER_PAGE" \
-      --argjson enable_ocr "$ENABLE_OCR" \
       '{
         website_url: $website_url,
-        max_pages: $max_pages,
-        max_depth: $max_depth,
         js_fallback: true,
         include_sitemap: true,
         general_model: $general_model,
-        classify_model: $classify_model,
-        ocr_model: $ocr_model,
-        enable_ocr: $enable_ocr,
-        max_images_per_page: $max_images_per_page
+        classify_model: $classify_model
       }'
   )"
 
@@ -79,16 +64,13 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
   fi
   echo "  job_id=$job_id"
 
-  curl -sS -X POST "$BASE/v1/scrape-jobs/${job_id}/run-step1" > "${OUT_DIR}/${job_id}_step1.json"
-  curl -sS -X POST "$BASE/v1/scrape-jobs/${job_id}/run-step2" > "${OUT_DIR}/${job_id}_step2.json"
-
   job_json="$(curl -sS "$BASE/v1/scrape-jobs/${job_id}")"
   pages_json="$(curl -sS "$BASE/v1/scrape-jobs/${job_id}/pages?limit=2000")"
   echo "$job_json" > "${OUT_DIR}/${job_id}_job.json"
   echo "$pages_json" > "${PAGES_DIR}/${job_id}_pages.json"
 
   echo "$job_json" | jq -r --arg url "$url" \
-    '[ $url, .id, .domain, .status, .stage1_status, .stage2_status, .pages_fetched_count, .fetch_failures_count, .markdown_pages_count, .llm_used_count, .llm_failed_count, .ocr_images_processed_count, (.last_error_code // "") ] | @csv' \
+    '[ $url, .id, .domain, .status, .pages_fetched_count, .fetch_failures_count, .markdown_pages_count, .llm_used_count, .llm_failed_count, (.last_error_code // "") ] | @csv' \
     >> "$SUMMARY_CSV"
 done < "$URL_FILE"
 

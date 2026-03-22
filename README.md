@@ -29,14 +29,8 @@ curl -sS http://127.0.0.1:8000/v1/health/live
 
 ### 4) Queue scrape jobs (async)
 
-Use enqueue endpoints:
-
-- `POST /v1/scrape-jobs/{job_id}/enqueue-step1`
-- `POST /v1/scrape-jobs/{job_id}/enqueue-step2`
-- `POST /v1/scrape-jobs/{job_id}/enqueue-run-all`
-
-Example:
+Jobs are automatically enqueued when created via `POST /v1/scrape-jobs`. To retry a failed/terminal job:
 
 ```bash
-curl -sS -X POST "$BASE/v1/scrape-jobs/$JOB_ID/enqueue-run-all" | jq
+curl -sS -X POST "$BASE/v1/scrape-jobs/$JOB_ID/enqueue" | jq
 ```
