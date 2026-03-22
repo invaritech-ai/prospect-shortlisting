@@ -23,7 +23,14 @@ app.conf.update(
             socket.TCP_KEEPINTVL: 10,  # probe every 10 s
             socket.TCP_KEEPCNT: 3,     # declare dead after 3 failed probes
         },
+        # Send a Redis PING on any connection idle for this many seconds.
+        # This resets the Redis server's own idle-timeout clock (typically
+        # 600 s on managed Redis), which TCP keepalive alone cannot do.
+        "health_check_interval": 25,
     },
+    # Celery consumer heartbeat — keeps the consumer socket active between
+    # task arrivals so Redis server never sees it as idle for > 25 s.
+    broker_heartbeat=10,
     # No result backend — job state lives in the DB, not Celery results.
     result_backend=None,
     # ACK only after the task function returns so a crashed worker causes
