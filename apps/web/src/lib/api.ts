@@ -52,6 +52,10 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, init)
+  if (response.status === 204) {
+    if (!response.ok) throw new ApiError(response.status, null)
+    return undefined as T
+  }
   const contentType = response.headers.get('content-type') ?? ''
   const body = contentType.includes('application/json') ? await response.json() : await response.text()
   if (!response.ok) {
