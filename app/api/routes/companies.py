@@ -59,6 +59,17 @@ def _latest_classification_subquery():
 
 
 def _latest_scrape_subquery():
+    # Use MAX(created_at) grouping — works in both SQLite and PostgreSQL.
+    # DISTINCT ON (col) is Postgres-only and silently degrades in SQLite,
+    # causing stale/wrong jobs to be joined to companies.
+    latest_per_domain = (
+        select(
+            ScrapeJob.normalized_url.label("normalized_url"),
+            func.max(ScrapeJob.created_at).label("max_created_at"),
+        )
+        .group_by(ScrapeJob.normalized_url)
+        .subquery()
+    )
     return (
         select(
             ScrapeJob.normalized_url.label("normalized_url"),
@@ -67,13 +78,24 @@ def _latest_scrape_subquery():
             ScrapeJob.terminal_state.label("terminal_state"),
             ScrapeJob.last_error_code.label("last_error_code"),
         )
-        .distinct(ScrapeJob.normalized_url)
-        .order_by(ScrapeJob.normalized_url, ScrapeJob.created_at.desc())
+        .join(
+            latest_per_domain,
+            (ScrapeJob.normalized_url == latest_per_domain.c.normalized_url)
+            & (ScrapeJob.created_at == latest_per_domain.c.max_created_at),
+        )
         .subquery()
     )
 
 
 def _latest_analysis_subquery():
+    latest_per_company = (
+        select(
+            AnalysisJob.company_id.label("company_id"),
+            func.max(AnalysisJob.created_at).label("max_created_at"),
+        )
+        .group_by(AnalysisJob.company_id)
+        .subquery()
+    )
     return (
         select(
             AnalysisJob.company_id.label("company_id"),
@@ -82,8 +104,11 @@ def _latest_analysis_subquery():
             cast(AnalysisJob.state, String()).label("state"),
             AnalysisJob.terminal_state.label("terminal_state"),
         )
-        .distinct(AnalysisJob.company_id)
-        .order_by(AnalysisJob.company_id, AnalysisJob.created_at.desc())
+        .join(
+            latest_per_company,
+            (AnalysisJob.company_id == latest_per_company.c.company_id)
+            & (AnalysisJob.created_at == latest_per_company.c.max_created_at),
+        )
         .subquery()
     )
 
@@ -100,13 +125,24 @@ def _contact_count_subquery():
 
 
 def _latest_contact_fetch_subquery():
+    latest_per_company = (
+        select(
+            ContactFetchJob.company_id.label("company_id"),
+            func.max(ContactFetchJob.created_at).label("max_created_at"),
+        )
+        .group_by(ContactFetchJob.company_id)
+        .subquery()
+    )
     return (
         select(
             ContactFetchJob.company_id.label("company_id"),
             cast(ContactFetchJob.state, String()).label("state"),
         )
-        .distinct(ContactFetchJob.company_id)
-        .order_by(ContactFetchJob.company_id, ContactFetchJob.created_at.desc())
+        .join(
+            latest_per_company,
+            (ContactFetchJob.company_id == latest_per_company.c.company_id)
+            & (ContactFetchJob.created_at == latest_per_company.c.max_created_at),
+        )
         .subquery()
     )
 
