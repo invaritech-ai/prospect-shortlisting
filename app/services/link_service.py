@@ -12,7 +12,7 @@ from app.services.url_utils import canonical_internal_url, clean_text
 
 _classify_llm = LLMClient(purpose="classify_links", max_retries=2, default_timeout=60)
 
-_PAGE_KIND_KEYS = ("about", "products", "contact", "team", "leadership", "services")
+_PAGE_KIND_KEYS = ("about", "products", "contact", "team", "leadership", "services", "pricing")
 
 
 def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -> dict[str, str]:
@@ -46,9 +46,10 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
                     "- team: general team/people/staff page\n"
                     "- leadership: executive team/leadership/management/board/C-suite page\n"
                     "- services: services/capabilities/what-we-do page\n"
+                    "- pricing: pricing/plans/packages page\n"
                     "Ignore auth, legal, policy, cart, search, testimonial pages.\n\n"
                     f"Links:\n{links_block}\n\n"
-                    'Return JSON: {"about":"","products":"","contact":"","team":"","leadership":"","services":""}'
+                    'Return JSON: {"about":"","products":"","contact":"","team":"","leadership":"","services":"","pricing":""}'
                 ),
             },
         ],
@@ -133,7 +134,7 @@ async def discover_focus_targets(
     )
 
     result: dict[str, str] = {"home": home}
-    for kind in ("about", "products", "contact", "team", "leadership", "pricing"):
+    for kind in ("about", "products", "contact", "team", "leadership", "services", "pricing"):
         raw_url = kind_urls.get(kind, "")
         canonical_kind = canonical_internal_url(raw_url, domain) if raw_url else ""
         if not canonical_kind and kind in ("about", "products"):

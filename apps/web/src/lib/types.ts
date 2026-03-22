@@ -51,8 +51,6 @@ export type CompanyListItem = {
   latest_scrape_job_id: string | null
   latest_scrape_status: string | null
   latest_scrape_terminal: boolean | null
-  latest_scrape_stage1_status: string | null
-  latest_scrape_stage2_status: string | null
   latest_analysis_run_id: string | null
   latest_analysis_job_id: string | null
   latest_analysis_status: string | null
@@ -124,46 +122,31 @@ export type ScrapeJobRead = {
   normalized_url: string
   domain: string
   status: string
-  stage1_status: string
-  stage2_status: string
   terminal_state: boolean
-  max_pages: number
-  max_depth: number
   js_fallback: boolean
   include_sitemap: boolean
   general_model: string
   classify_model: string
-  ocr_model: string
-  enable_ocr: boolean
-  max_images_per_page: number
   discovered_urls_count: number
   pages_fetched_count: number
   fetch_failures_count: number
   markdown_pages_count: number
-  ocr_images_processed_count: number
   llm_used_count: number
   llm_failed_count: number
   last_error_code: string | null
   last_error_message: string | null
   created_at: string
   updated_at: string
-  step1_started_at: string | null
-  step1_finished_at: string | null
-  step2_started_at: string | null
-  step2_finished_at: string | null
+  started_at: string | null
+  finished_at: string | null
 }
 
 export type ScrapeJobCreate = {
   website_url: string
-  max_pages?: number
-  max_depth?: number
   js_fallback?: boolean
   include_sitemap?: boolean
   general_model?: string
   classify_model?: string
-  ocr_model?: string
-  enable_ocr?: boolean
-  max_images_per_page?: number
 }
 
 export type ScrapePageContentRead = {
@@ -180,9 +163,7 @@ export type ScrapePageContentRead = {
 
 export type JobEnqueueResult = {
   job_id: string
-  task_id: string
-  task_type: string
-  queue_key: string
+  celery_task_id: string
   message: string
 }
 
@@ -213,7 +194,6 @@ export type RunRead = {
   prompt_name: string
   general_model: string
   classify_model: string
-  ocr_model: string
   status: string
   total_jobs: number
   completed_jobs: number
@@ -229,7 +209,6 @@ export type RunCreateRequest = {
   company_ids?: string[]
   general_model?: string
   classify_model?: string
-  ocr_model?: string
 }
 
 export type RunCreateResult = {
@@ -276,9 +255,8 @@ export type StatsResponse = {
 }
 
 export type DrainQueueResult = {
-  drained: number
-  cancelled_db_jobs: number
-  queue_key: string
+  cancelled_scrape_jobs: number
+  cancelled_analysis_jobs: number
 }
 
 export type CompanyCounts = {

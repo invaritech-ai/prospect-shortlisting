@@ -11,7 +11,7 @@ const PAGE_KIND_LABELS: Record<string, string> = { home: 'Home', about: 'About',
 
 function badgeForJob(job: ScrapeJobRead): { variant: 'info' | 'success' | 'fail'; label: string } {
   if (!job.terminal_state) return { variant: 'info', label: 'Running' }
-  if (job.status.includes('failed') || job.stage1_status === 'failed' || job.stage2_status === 'failed') {
+  if (job.status === 'failed') {
     return { variant: 'fail', label: 'Failed' }
   }
   return { variant: 'success', label: 'Done' }

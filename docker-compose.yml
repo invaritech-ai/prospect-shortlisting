@@ -24,9 +24,11 @@ services:
       dockerfile: Dockerfile.scrape
     env_file:
       - .env
-    # Concurrency capped at 4: each Chromium instance uses ~200-400MB RAM.
-    # 8 concurrent browsers risks OOM-kills which cause silent task hangs.
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-c", "4", "--loglevel=info"]
+    # Concurrency capped at 2 (stability soak — raise to 4 once stable).
+    # Each Chromium instance uses ~200-400MB RAM.
+    # --without-mingle/gossip: reduces unnecessary broker I/O.
+    # --max-tasks-per-child=20: recycles workers to prevent Chromium memory leaks.
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:
@@ -38,7 +40,7 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat", "-c", "8", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat,contacts", "-c", "8", "--without-mingle", "--without-gossip", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:

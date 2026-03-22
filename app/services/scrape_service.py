@@ -50,10 +50,11 @@ _PAGE_KINDS = [
     ("home", 0),
     ("about", 1),
     ("products", 1),
+    ("services", 1),
+    ("pricing", 2),
     ("contact", 2),
     ("team", 2),
     ("leadership", 2),
-    ("pricing", 2),
 ]
 
 

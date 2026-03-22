@@ -7,7 +7,6 @@ import {
   createScrapeJob,
   deleteCompanies,
   drainQueue,
-  enqueueRunAll,
   fetchContactsForCompany,
   fetchContactsForRun,
   getAnalysisJobDetail,
@@ -565,8 +564,7 @@ function App() {
     setError(''); setNotice('')
     setActionState((c) => ({ ...c, [company.id]: 'Creating scrape job…' }))
     try {
-      const job = await createScrapeJob({ website_url: company.normalized_url })
-      await enqueueRunAll(job.id)
+      await createScrapeJob({ website_url: company.normalized_url })
       companyCacheRef.current = {}
       await loadCompanies(companyOffset, pageSize, decisionFilter)
       await loadScrapeJobs(0, jobsPageSize)
@@ -885,7 +883,7 @@ function App() {
     try {
       const result = await drainQueue()
       await Promise.all([loadScrapeJobs(0, jobsPageSize), loadStats()])
-      setNotice(`Drained ${result.drained.toLocaleString()} tasks from queue and cancelled ${result.cancelled_db_jobs.toLocaleString()} jobs.`)
+      setNotice(`Cancelled ${result.cancelled_scrape_jobs.toLocaleString()} scrape jobs and ${result.cancelled_analysis_jobs.toLocaleString()} analysis jobs.`)
     } catch (err) { setError(parseError(err)) }
     finally { setIsDrainingQueue(false) }
   }

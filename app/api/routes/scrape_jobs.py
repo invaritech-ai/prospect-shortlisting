@@ -48,7 +48,12 @@ def create_scrape_job(payload: ScrapeJobCreate, session: Session = Depends(get_s
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    celery_result = scrape_website.delay(str(job.id))
+    # Commit before enqueuing so the worker can find the row.
+    session.commit()
+    try:
+        scrape_website.delay(str(job.id))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
     return _as_job_read(job)
 
 
@@ -149,10 +154,26 @@ def list_job_page_contents(
 
 @router.post("/scrape-jobs/{job_id}/enqueue", response_model=JobEnqueueResult)
 def enqueue_scrape_job(job_id: UUID, session: Session = Depends(get_session)) -> JobEnqueueResult:
-    """Re-enqueue an existing scrape job (e.g., to retry a failed job)."""
+    """Re-enqueue an existing scrape job (retry a failed/terminal job)."""
     job = session.get(ScrapeJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
+    if not job.terminal_state:
+        raise HTTPException(status_code=409, detail="Job is still active. Cannot retry a non-terminal job.")
+
+    # Reset job state for retry.
+    job.status = "created"
+    job.terminal_state = False
+    job.lock_token = None
+    job.lock_expires_at = None
+    job.last_error_code = None
+    job.last_error_message = None
+    job.reconcile_count = 0
+    job.started_at = None
+    job.finished_at = None
+    session.add(job)
+    session.commit()
+
     try:
         result = scrape_website.delay(str(job_id))
     except Exception as exc:  # noqa: BLE001
@@ -160,5 +181,5 @@ def enqueue_scrape_job(job_id: UUID, session: Session = Depends(get_session)) ->
     return JobEnqueueResult(
         job_id=job_id,
         celery_task_id=result.id,
-        message="Scrape job enqueued.",
+        message="Scrape job re-enqueued for retry.",
     )

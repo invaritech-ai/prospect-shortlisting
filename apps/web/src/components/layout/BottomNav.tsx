@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ActiveView } from '../../lib/navigation'
-import { IconBuilding, IconGlobe, IconChart, IconTimeline, IconPulse, IconPencil, IconDots } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconTimeline, IconPulse, IconPencil, IconDots, IconUsers } from '../ui/icons'
 
 interface BottomNavProps {
   activeView: ActiveView
@@ -16,7 +16,7 @@ const NAV_ITEMS = [
 
 export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: BottomNavProps) {
   const [moreOpen, setMoreOpen] = useState(false)
-  const moreActive = activeView === 'operations' || activeView === 'analytics'
+  const moreActive = activeView === 'operations' || activeView === 'analytics' || activeView === 'contacts'
 
   return (
     <>
@@ -26,6 +26,21 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
 
       {moreOpen && (
         <div className="fixed bottom-[calc(var(--oc-bottom-nav-h)+10px)] right-3 z-[var(--z-drawer)] w-60 rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface-strong)] p-2 shadow-[0_10px_30px_rgba(7,21,31,0.2)] md:hidden">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('contacts')
+              setMoreOpen(false)
+            }}
+            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+              activeView === 'contacts'
+                ? 'bg-[var(--oc-accent-soft)] text-[var(--oc-accent-ink)]'
+                : 'text-[var(--oc-muted)] hover:bg-[var(--oc-surface)]'
+            }`}
+          >
+            <IconUsers size={16} />
+            Contacts
+          </button>
           <button
             type="button"
             onClick={() => {

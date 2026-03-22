@@ -9,27 +9,39 @@ from app.core.config import settings
 app = Celery("prospect")
 app.autodiscover_tasks(["app.tasks.scrape", "app.tasks.analysis", "app.tasks.beat", "app.tasks.contacts"])
 
+# Build TCP keepalive options conditionally — TCP_KEEPIDLE is Linux-only;
+# macOS/BSD uses TCP_KEEPALIVE instead.
+_keepalive_opts: dict[int, int] = {}
+_idle_const = getattr(socket, "TCP_KEEPIDLE", None) or getattr(socket, "TCP_KEEPALIVE", None)
+if _idle_const is not None:
+    _keepalive_opts[_idle_const] = 60       # start probing after 60 s of silence
+_intvl_const = getattr(socket, "TCP_KEEPINTVL", None)
+if _intvl_const is not None:
+    _keepalive_opts[_intvl_const] = 10      # probe every 10 s
+_cnt_const = getattr(socket, "TCP_KEEPCNT", None)
+if _cnt_const is not None:
+    _keepalive_opts[_cnt_const] = 3         # declare dead after 3 failed probes
+
 app.conf.update(
     broker_url=settings.redis_url,
     broker_connection_retry_on_startup=True,
-    # Keep the broker connection alive so Redis doesn't close it after its
-    # idle timeout (typically 10 min).  Without this, Celery cancels any
-    # in-flight tasks on disconnect and redelivers them on reconnect, causing
-    # jobs to be killed and restarted every 10 minutes when the queue is quiet.
     broker_transport_options={
         "socket_keepalive": True,
-        "socket_keepalive_options": {
-            socket.TCP_KEEPIDLE: 60,   # start probing after 60 s of silence
-            socket.TCP_KEEPINTVL: 10,  # probe every 10 s
-            socket.TCP_KEEPCNT: 3,     # declare dead after 3 failed probes
-        },
+        "socket_keepalive_options": _keepalive_opts,
         # Send a Redis PING on any connection idle for this many seconds.
-        # This resets the Redis server's own idle-timeout clock (typically
-        # 600 s on managed Redis), which TCP keepalive alone cannot do.
-        "health_check_interval": 25,
+        # Resets the Redis server's application-level idle-timeout clock
+        # (typically 600 s on managed Redis), which TCP keepalive cannot do.
+        "health_check_interval": 15,
+        "socket_connect_timeout": 10,
+        "socket_timeout": 30,
+        "retry_on_timeout": True,
+        # Must exceed the longest task hard time limit (31 min = 1860 s).
+        # Prevents Redis from redelivering a message while its worker is
+        # still executing.
+        "visibility_timeout": 7200,
     },
     # Celery consumer heartbeat — keeps the consumer socket active between
-    # task arrivals so Redis server never sees it as idle for > 25 s.
+    # task arrivals so Redis server never sees it as idle.
     broker_heartbeat=10,
     # No result backend — job state lives in the DB, not Celery results.
     result_backend=None,
@@ -37,9 +49,10 @@ app.conf.update(
     # automatic redelivery rather than silent message loss.
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    # Cancel in-flight tasks on broker disconnect so they are redelivered cleanly
-    # rather than silently continuing with no broker connection.
-    worker_cancel_long_running_tasks_on_connection_loss=True,
+    # Let running tasks finish on broker disconnect.  CAS locks protect
+    # against duplicate execution if the same message is redelivered after
+    # reconnect, so cancelling in-flight work is unnecessary and destructive.
+    worker_cancel_long_running_tasks_on_connection_loss=False,
     # One task at a time per worker process — prevents head-of-line blocking
     # where a slow task starves everything behind it.
     worker_prefetch_multiplier=1,

@@ -108,7 +108,7 @@ class AnalysisService:
         Uses two short-lived DB sessions so the connection is not held open
         during the (potentially long) LLM call.
         """
-        _ANALYSIS_LOCK_TTL = timedelta(minutes=20)
+        _ANALYSIS_LOCK_TTL = timedelta(minutes=35)
 
         # ── Phase 1: CAS-claim + load all context ──────────────────────────
         now = utcnow()

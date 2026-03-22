@@ -66,12 +66,8 @@ export function ScrapeDiagnosticsPanel({
       <div className="space-y-4 p-5">
         <section className="grid gap-3 rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4 sm:grid-cols-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Stage 1</p>
-            <p className="mt-1.5 text-sm font-semibold text-[var(--oc-accent-ink)]">{job.stage1_status}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Stage 2</p>
-            <p className="mt-1.5 text-sm font-semibold text-[var(--oc-accent-ink)]">{job.stage2_status}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Status</p>
+            <p className="mt-1.5 text-sm font-semibold text-[var(--oc-accent-ink)]">{job.status}</p>
           </div>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Job ID</p>

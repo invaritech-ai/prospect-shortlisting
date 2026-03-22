@@ -29,8 +29,6 @@ export function runStatus(run: RunRead): OperationsEventStatus {
 export function buildOperationsEvents(scrapeJobs: ScrapeJobRead[], runs: RunRead[]): OperationsEvent[] {
   const scrapeEvents: OperationsEvent[] = scrapeJobs.map((job) => {
     const status = scrapeStatus(job)
-    const stage1 = job.stage1_status || '-'
-    const stage2 = job.stage2_status || '-'
     const errorCode = job.last_error_code ?? null
     return {
       id: `scrape:${job.id}`,
@@ -38,9 +36,9 @@ export function buildOperationsEvents(scrapeJobs: ScrapeJobRead[], runs: RunRead
       status,
       occurred_at: job.updated_at || job.created_at,
       title: job.domain,
-      subtitle: `${job.id.slice(0, 8)}… · S1:${stage1} · S2:${stage2}`,
+      subtitle: `${job.id.slice(0, 8)}… · ${job.status}`,
       error_code: errorCode,
-      search_blob: `${job.domain} ${job.id} ${stage1} ${stage2} ${errorCode ?? ''}`.toLowerCase(),
+      search_blob: `${job.domain} ${job.id} ${job.status} ${errorCode ?? ''}`.toLowerCase(),
       scrape_job: job,
       run: null,
     }

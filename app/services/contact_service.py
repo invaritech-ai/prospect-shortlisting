@@ -8,6 +8,7 @@ Three-phase pattern (same as AnalysisService):
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -58,10 +59,10 @@ def match_title(
     if not title:
         return False
     lowered = title.lower()
-    if any(word in lowered for word in exclude_words):
+    if any(re.search(r'\b' + re.escape(word) + r'\b', lowered) for word in exclude_words):
         return False
     return any(
-        all(kw in lowered for kw in keywords)
+        all(re.search(r'\b' + re.escape(kw) + r'\b', lowered) for kw in keywords)
         for keywords in include_rules
     )
 

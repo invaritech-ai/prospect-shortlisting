@@ -20,7 +20,7 @@ from app.models.pipeline import CrawlJobState
 
 # Controls context assembly order for the classification prompt.
 # Pages are sorted by this order; any page kind not listed is appended after.
-ANALYSIS_PAGE_ORDER = ("home", "about", "products", "contact", "team", "leadership", "services")
+ANALYSIS_PAGE_ORDER = ("home", "about", "products", "services", "pricing", "contact", "team", "leadership")
 
 MAX_CHARS_PER_PAGE = 12000
 MAX_TOTAL_CONTEXT_CHARS = 30000

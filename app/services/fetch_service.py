@@ -217,6 +217,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
     canonicalization step can combine it.
     """
     last_error = "unknown_fetch_error"
+    detected_bot_wall = False
     variants = _url_variants(url)
 
     static_result: FetchResult | None = None
@@ -253,6 +254,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
 
             if is_wall:
                 last_error = "bot_wall_static"
+                detected_bot_wall = True
                 logger.info("fetch_static_bot_wall url=%s preview=%.150s", attempt, t)
                 continue  # try http variant
 
@@ -315,6 +317,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
 
                 if is_wall:
                     last_error = "bot_wall_dynamic"
+                    detected_bot_wall = True
                     logger.info("fetch_dynamic_bot_wall url=%s preview=%.150s", attempt, t)
                     continue
 
@@ -386,6 +389,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                         url, status, len(t), is_wall,
                     )
                     if is_wall:
+                        detected_bot_wall = True
                         logger.info("fetch_stealth_bot_wall url=%s preview=%.150s", url, t)
                     elif len(t) < 250:
                         logger.info("fetch_stealth_too_thin url=%s text_len=%d", url, len(t))
@@ -429,7 +433,7 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
 
     error_code = (
         "bot_protection"
-        if is_bot_wall(last_error)
+        if detected_bot_wall
         else classify_fetch_error(last_error)
     )
     logger.info(

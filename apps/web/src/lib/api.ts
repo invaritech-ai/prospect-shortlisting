@@ -12,7 +12,7 @@ import type {
   DrainQueueResult,
   FeedbackRead,
   FeedbackUpsert,
-  JobEnqueueResult,
+
   LetterCounts,
   PromptCreate,
   PromptRead,
@@ -127,11 +127,6 @@ export async function createScrapeJob(payload: ScrapeJobCreate): Promise<ScrapeJ
   })
 }
 
-export async function enqueueRunAll(jobId: string): Promise<JobEnqueueResult> {
-  return request<JobEnqueueResult>(`/v1/scrape-jobs/${jobId}/enqueue-run-all`, {
-    method: 'POST',
-  })
-}
 
 export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)

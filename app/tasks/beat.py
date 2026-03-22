@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Jobs not updated within these windows are considered stuck.
 _SCRAPE_STUCK_MINUTES = 35    # normal max runtime ~30 min (soft_time_limit)
-_ANALYSIS_STUCK_MINUTES = 20  # normal max runtime < 10 min
+_ANALYSIS_STUCK_MINUTES = 35  # lock TTL is 35 min; must match
 _CONTACT_STUCK_MINUTES = 15   # normal max runtime < 10 min (polling)
 
 # After this many reconciler re-queues a scrape job is marked terminal so it
@@ -43,10 +43,34 @@ def reconcile_stuck_jobs() -> None:
 
     engine = get_engine()
     with Session(engine) as session:
+        # ── Scrape jobs ──────────────────────────────────────────────
+        # "Never started" = still waiting in the queue (started_at IS NULL).
+        # Re-enqueue without incrementing reconcile_count since they may
+        # have simply fallen off Redis.
+        never_started_scrapes = session.exec(
+            select(ScrapeJob).where(
+                col(ScrapeJob.terminal_state).is_(False),
+                col(ScrapeJob.started_at).is_(None),
+                col(ScrapeJob.updated_at) < scrape_cutoff,
+            )
+        ).all()
+
+        # "Started but stalled" = worker claimed but never finished.
         stuck_scrapes = session.exec(
             select(ScrapeJob).where(
                 col(ScrapeJob.terminal_state).is_(False),
+                col(ScrapeJob.started_at).is_not(None),
                 col(ScrapeJob.updated_at) < scrape_cutoff,
+            )
+        ).all()
+
+        # ── Analysis jobs ────────────────────────────────────────────
+        never_started_analysis = session.exec(
+            select(AnalysisJob).where(
+                col(AnalysisJob.terminal_state).is_(False),
+                col(AnalysisJob.state).in_([AnalysisJobState.QUEUED.value]),
+                col(AnalysisJob.started_at).is_(None),
+                col(AnalysisJob.updated_at) < analysis_cutoff,
             )
         ).all()
 
@@ -54,7 +78,18 @@ def reconcile_stuck_jobs() -> None:
             select(AnalysisJob).where(
                 col(AnalysisJob.terminal_state).is_(False),
                 col(AnalysisJob.state).in_([AnalysisJobState.RUNNING.value, AnalysisJobState.QUEUED.value]),
+                col(AnalysisJob.started_at).is_not(None),
                 col(AnalysisJob.updated_at) < analysis_cutoff,
+            )
+        ).all()
+
+        # ── Contact jobs ─────────────────────────────────────────────
+        never_started_contacts = session.exec(
+            select(ContactFetchJob).where(
+                col(ContactFetchJob.terminal_state).is_(False),
+                col(ContactFetchJob.state).in_([ContactFetchJobState.QUEUED.value]),
+                col(ContactFetchJob.started_at).is_(None),
+                col(ContactFetchJob.updated_at) < contact_cutoff,
             )
         ).all()
 
@@ -65,24 +100,36 @@ def reconcile_stuck_jobs() -> None:
                     ContactFetchJobState.RUNNING.value,
                     ContactFetchJobState.QUEUED.value,
                 ]),
+                col(ContactFetchJob.started_at).is_not(None),
                 col(ContactFetchJob.updated_at) < contact_cutoff,
             )
         ).all()
 
-        # Capture IDs before commit (objects expire after commit in SQLAlchemy).
-        # Only re-queue jobs that were reset (not those just flagged as terminal).
-        scrape_ids = [
+        # Capture IDs before commit (objects expire after commit).
+        # Never-started jobs: re-enqueue without penalty.
+        ns_scrape_ids = [str(job.id) for job in never_started_scrapes]
+        # Stuck jobs: only re-queue those under the max reconcile attempts.
+        stuck_scrape_ids = [
             str(job.id) for job in stuck_scrapes
             if (job.reconcile_count or 0) <= _SCRAPE_MAX_RECONCILE_ATTEMPTS
         ]
-        analysis_ids = [str(job.id) for job in stuck_analysis]
-        contact_ids = [str(job.id) for job in stuck_contacts]
+        ns_analysis_ids = [str(job.id) for job in never_started_analysis]
+        stuck_analysis_ids = [str(job.id) for job in stuck_analysis]
+        ns_contact_ids = [str(job.id) for job in never_started_contacts]
+        stuck_contact_ids = [str(job.id) for job in stuck_contacts]
 
+        # Reset never-started scrapes (no reconcile_count increment).
+        for job in never_started_scrapes:
+            job.status = "created"
+            job.lock_token = None
+            job.lock_expires_at = None
+            job.updated_at = now
+            session.add(job)
+
+        # Reset stuck scrapes (increment reconcile_count, may mark terminal).
         for job in stuck_scrapes:
             job.reconcile_count = (job.reconcile_count or 0) + 1
             if job.reconcile_count > _SCRAPE_MAX_RECONCILE_ATTEMPTS:
-                # Site consistently fails to scrape — mark terminal so it is
-                # not re-queued again.  Flag for manual review.
                 job.status = "failed"
                 job.terminal_state = True
                 job.last_error_code = "needs_manual_review"
@@ -100,7 +147,7 @@ def reconcile_stuck_jobs() -> None:
             job.updated_at = now
             session.add(job)
 
-        for job in stuck_analysis:
+        for job in never_started_analysis + stuck_analysis:
             job.state = AnalysisJobState.QUEUED
             job.started_at = None
             job.lock_token = None
@@ -108,7 +155,7 @@ def reconcile_stuck_jobs() -> None:
             job.updated_at = now
             session.add(job)
 
-        for job in stuck_contacts:
+        for job in never_started_contacts + stuck_contacts:
             job.state = ContactFetchJobState.QUEUED
             job.lock_token = None
             job.lock_expires_at = None
@@ -117,22 +164,30 @@ def reconcile_stuck_jobs() -> None:
 
         session.commit()
 
-    for job_id in scrape_ids:
+    # Enqueue after commit.
+    for job_id in ns_scrape_ids + stuck_scrape_ids:
         scrape_website.delay(job_id)
         log_event(logger, "reconciler_requeued_scrape", job_id=job_id)
 
-    for job_id in analysis_ids:
+    for job_id in ns_analysis_ids + stuck_analysis_ids:
         run_analysis_job.delay(job_id)
         log_event(logger, "reconciler_requeued_analysis", job_id=job_id)
 
-    for job_id in contact_ids:
+    for job_id in ns_contact_ids + stuck_contact_ids:
         fetch_contacts.delay(job_id)
         log_event(logger, "reconciler_requeued_contact", job_id=job_id)
 
+    total_scrape = len(ns_scrape_ids) + len(stuck_scrape_ids)
+    total_analysis = len(ns_analysis_ids) + len(stuck_analysis_ids)
+    total_contacts = len(ns_contact_ids) + len(stuck_contact_ids)
     log_event(
         logger,
         "reconciler_done",
-        stuck_scrapes=len(scrape_ids),
-        stuck_analysis=len(analysis_ids),
-        stuck_contacts=len(contact_ids),
+        never_started_scrapes=len(ns_scrape_ids),
+        stuck_scrapes=len(stuck_scrape_ids),
+        never_started_analysis=len(ns_analysis_ids),
+        stuck_analysis=len(stuck_analysis_ids),
+        never_started_contacts=len(ns_contact_ids),
+        stuck_contacts=len(stuck_contact_ids),
+        total_requeued=total_scrape + total_analysis + total_contacts,
     )
