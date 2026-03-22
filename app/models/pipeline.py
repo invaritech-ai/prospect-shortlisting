@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Numeric, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -237,7 +237,20 @@ class ContactFetchJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
 
-    state: ContactFetchJobState = Field(default=ContactFetchJobState.QUEUED, index=True)
+    state: ContactFetchJobState = Field(
+        default=ContactFetchJobState.QUEUED,
+        sa_column=Column(
+            SAEnum(
+                ContactFetchJobState,
+                values_callable=lambda x: [e.value for e in x],
+                name="contactfetchjobstate",
+                create_type=False,
+            ),
+            default=ContactFetchJobState.QUEUED,
+            nullable=False,
+            index=True,
+        ),
+    )
     terminal_state: bool = Field(default=False)
     attempt_count: int = Field(default=0, ge=0)
     max_attempts: int = Field(default=3, ge=1)
