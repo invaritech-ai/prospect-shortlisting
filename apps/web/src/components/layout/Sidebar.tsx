@@ -51,6 +51,21 @@ function PipelineDot({ stats }: { stats: StatsResponse | null }) {
   )
 }
 
+function SegmentedBar({ s }: { s: StatsResponse['scrape'] }) {
+  const { total, completed, failed, site_unavailable } = s
+  if (total === 0) return null
+  const donePct = (completed / total) * 100
+  const failPct = (failed / total) * 100
+  const downPct = (site_unavailable / total) * 100
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-border) flex">
+      <div className="h-full bg-emerald-500 transition-[width] duration-500 shrink-0" style={{ width: `${donePct}%` }} />
+      <div className="h-full bg-red-400 transition-[width] duration-500 shrink-0" style={{ width: `${failPct}%` }} />
+      <div className="h-full bg-slate-400 transition-[width] duration-500 shrink-0" style={{ width: `${downPct}%` }} />
+    </div>
+  )
+}
+
 function PipelineMini({ stats }: { stats: StatsResponse | null }) {
   if (!stats) return null
   const { scrape, analysis } = stats
@@ -60,37 +75,48 @@ function PipelineMini({ stats }: { stats: StatsResponse | null }) {
   return (
     <div className="rounded-xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-3">
       <div className="mb-2 flex items-center gap-2">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Pipeline</p>
+        <p className="text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Pipeline</p>
         {hasActive && <PipelineDot stats={stats} />}
       </div>
-      <div className="space-y-2">
-        {[
+      <div className="space-y-3">
+        {([
           { label: 'Scrape', s: scrape },
           { label: 'Analysis', s: analysis },
-        ].map(({ label, s }) => (
+        ] as const).map(({ label, s }) => (
           <div key={label}>
+            {/* Header: label + done/total */}
             <div className="mb-1 flex items-center justify-between gap-1">
-              <span className="text-[11px] text-[var(--oc-muted)]">{label}</span>
-              <span className="font-mono text-[10px] tabular-nums text-[var(--oc-muted)]">{s.pct_done}%</span>
+              <span className="text-[11px] text-(--oc-muted)">{label}</span>
+              <span className="font-mono text-[10px] tabular-nums text-(--oc-muted)">
+                <span className="text-emerald-600 font-semibold">{s.completed.toLocaleString()}</span>
+                <span className="text-(--oc-border)">/{s.total.toLocaleString()}</span>
+              </span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[var(--oc-border)]">
-              <div
-                className="h-full rounded-full bg-[var(--oc-accent)] transition-[width] duration-500"
-                style={{ width: `${Math.min(s.pct_done, 100)}%` }}
-              />
+
+            {/* Segmented bar: green=done, red=failed, gray=down, bg=remaining */}
+            <SegmentedBar s={s} />
+
+            {/* Legend row */}
+            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-(--oc-muted)">
+              {s.failed > 0 && (
+                <span className="text-red-500">{s.failed.toLocaleString()} failed</span>
+              )}
+              {s.site_unavailable > 0 && (
+                <span className="text-slate-400">{s.site_unavailable.toLocaleString()} down</span>
+              )}
+              {(s.running > 0 || s.queued > 0) && (
+                <span className="text-(--oc-info-text)">
+                  {s.running > 0 && `${s.running} running`}
+                  {s.running > 0 && s.queued > 0 && ' · '}
+                  {s.queued > 0 && `${s.queued} queued`}
+                </span>
+              )}
             </div>
-            {(s.running > 0 || s.queued > 0 || s.failed > 0 || s.site_unavailable > 0) && (
-              <p className="mt-0.5 text-[10px] text-[var(--oc-muted)]">
-                {s.running > 0 && <span className="text-[var(--oc-info-text)]">{s.running} running</span>}
-                {s.running > 0 && s.queued > 0 && ' · '}
-                {s.queued > 0 && `${s.queued} queued`}
-                {s.failed > 0 && <span className="text-[var(--oc-fail-text)]"> · {s.failed} failed</span>}
-                {s.site_unavailable > 0 && ` · ${s.site_unavailable} down`}
-              </p>
-            )}
+
+            {/* ETA */}
             {s.eta_seconds != null && s.eta_seconds > 0 && (
-              <p className="mt-0.5 text-[10px] text-[var(--oc-muted)]">
-                ETA: {Math.floor(s.eta_seconds / 60)}m {Math.round(s.eta_seconds % 60)}s
+              <p className="mt-0.5 text-[10px] text-(--oc-muted)">
+                ETA {Math.floor(s.eta_seconds / 60)}m {Math.round(s.eta_seconds % 60)}s
               </p>
             )}
           </div>
@@ -138,7 +164,7 @@ export function Sidebar({
               whiteSpace: 'nowrap',
             }}
           >
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--oc-muted)]">Prospect</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-(--oc-muted)">Prospect</p>
             <p className="text-sm font-extrabold text-[var(--oc-accent-ink)] leading-none">Console</p>
           </div>
         </div>
@@ -181,7 +207,7 @@ export function Sidebar({
             </button>
           ) : (
             <div className="rounded-xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-3">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Active Prompt</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Active Prompt</p>
               {selectedPrompt ? (
                 <>
                   <p className="mt-1.5 truncate text-xs font-semibold text-[var(--oc-accent-ink)]">
@@ -192,7 +218,7 @@ export function Sidebar({
                   </span>
                 </>
               ) : (
-                <p className="mt-1.5 text-xs text-[var(--oc-muted)]">No prompt selected</p>
+                <p className="mt-1.5 text-xs text-(--oc-muted)">No prompt selected</p>
               )}
               <button
                 type="button"
