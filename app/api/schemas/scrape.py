@@ -11,11 +11,11 @@ class ScrapeJobCreate(BaseModel):
     website_url: str = Field(min_length=3, max_length=2048)
     js_fallback: bool = True
     include_sitemap: bool = True
-    general_model: str = Field(
-        default="openai/gpt-5-nano", min_length=2, max_length=128
+    general_model: str | None = Field(
+        default=None, min_length=2, max_length=128
     )
-    classify_model: str = Field(
-        default="inception/mercury-2", min_length=2, max_length=128
+    classify_model: str | None = Field(
+        default=None, min_length=2, max_length=128
     )
 
     @model_validator(mode="before")

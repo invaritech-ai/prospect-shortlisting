@@ -16,6 +16,7 @@ from app.api.schemas.scrape import (
 from app.db.session import get_session
 from app.models import ScrapeJob, ScrapePage
 from app.services.scrape_service import ScrapeJobAlreadyRunningError, ScrapeService
+from app.core.config import settings
 from app.tasks.scrape import scrape_website
 
 
@@ -35,8 +36,8 @@ def create_scrape_job(payload: ScrapeJobCreate, session: Session = Depends(get_s
             website_url=payload.website_url,
             js_fallback=payload.js_fallback,
             include_sitemap=payload.include_sitemap,
-            general_model=payload.general_model,
-            classify_model=payload.classify_model,
+            general_model=payload.general_model or settings.general_model,
+            classify_model=payload.classify_model or settings.classify_model,
         )
     except ScrapeJobAlreadyRunningError as exc:
         raise HTTPException(
