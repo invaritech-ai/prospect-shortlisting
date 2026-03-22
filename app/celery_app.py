@@ -11,6 +11,18 @@ app.autodiscover_tasks(["app.tasks.scrape", "app.tasks.analysis", "app.tasks.bea
 app.conf.update(
     broker_url=settings.redis_url,
     broker_connection_retry_on_startup=True,
+    # Keep the broker connection alive so Redis doesn't close it after its
+    # idle timeout (typically 10 min).  Without this, Celery cancels any
+    # in-flight tasks on disconnect and redelivers them on reconnect, causing
+    # jobs to be killed and restarted every 10 minutes when the queue is quiet.
+    broker_transport_options={
+        "socket_keepalive": True,
+        "socket_keepalive_options": {
+            "TCP_KEEPIDLE": 60,   # start probing after 60 s of silence
+            "TCP_KEEPINTVL": 10,  # probe every 10 s
+            "TCP_KEEPCNT": 3,     # declare dead after 3 failed probes
+        },
+    },
     # No result backend — job state lives in the DB, not Celery results.
     result_backend=None,
     # ACK only after the task function returns so a crashed worker causes
