@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from celery import Celery
 from celery.schedules import crontab
 
@@ -18,9 +19,9 @@ app.conf.update(
     broker_transport_options={
         "socket_keepalive": True,
         "socket_keepalive_options": {
-            "TCP_KEEPIDLE": 60,   # start probing after 60 s of silence
-            "TCP_KEEPINTVL": 10,  # probe every 10 s
-            "TCP_KEEPCNT": 3,     # declare dead after 3 failed probes
+            socket.TCP_KEEPIDLE: 60,   # start probing after 60 s of silence
+            socket.TCP_KEEPINTVL: 10,  # probe every 10 s
+            socket.TCP_KEEPCNT: 3,     # declare dead after 3 failed probes
         },
     },
     # No result backend — job state lives in the DB, not Celery results.
