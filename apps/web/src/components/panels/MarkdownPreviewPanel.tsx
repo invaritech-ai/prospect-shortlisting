@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ScrapeJobRead, ScrapePageContentRead } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -50,7 +51,7 @@ export function MarkdownPreviewPanel({
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={jobBadge.variant}>{jobBadge.label}</Badge>
         <span className="text-xs text-[var(--oc-muted)]">
-          {new Date(markdownJob.updated_at).toLocaleString()}
+          {parseUTC(markdownJob.updated_at).toLocaleString()}
         </span>
       </div>
       {!isMarkdownLoading && markdownPages.length > 0 && (

@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.api.schemas.base import UTCReadModel
+
 
 class UploadValidationError(BaseModel):
     row_number: int = Field(ge=1)
@@ -14,7 +16,7 @@ class UploadValidationError(BaseModel):
     error_message: str
 
 
-class UploadRead(BaseModel):
+class UploadRead(UTCReadModel):
     id: UUID
     filename: str
     checksum: str
@@ -41,7 +43,7 @@ class UploadList(BaseModel):
     items: list[UploadRead]
 
 
-class CompanyRead(BaseModel):
+class CompanyRead(UTCReadModel):
     id: UUID
     upload_id: UUID
     raw_url: str
@@ -58,7 +60,7 @@ class UploadCompanyList(BaseModel):
     items: list[CompanyRead]
 
 
-class CompanyListItem(BaseModel):
+class CompanyListItem(UTCReadModel):
     id: UUID
     upload_id: UUID
     upload_filename: str

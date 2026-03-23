@@ -6,8 +6,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, field_validator
 
+from app.api.schemas.base import UTCReadModel
 
-class AnalysisRunJobRead(BaseModel):
+
+class AnalysisRunJobRead(UTCReadModel):
     analysis_job_id: UUID
     run_id: UUID
     company_id: UUID
@@ -43,14 +45,14 @@ class FeedbackUpsert(BaseModel):
         return v
 
 
-class FeedbackRead(BaseModel):
+class FeedbackRead(UTCReadModel):
     thumbs: str | None = None
     comment: str | None = None
     manual_label: str | None = None
     updated_at: datetime
 
 
-class AnalysisJobDetailRead(BaseModel):
+class AnalysisJobDetailRead(UTCReadModel):
     analysis_job_id: UUID
     run_id: UUID
     company_id: UUID

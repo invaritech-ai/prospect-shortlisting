@@ -1,4 +1,5 @@
 import type { PromptRead } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -56,7 +57,7 @@ function PromptListItem({
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-[var(--oc-accent-ink)]">{prompt.name}</p>
             <p className="mt-0.5 text-[11px] text-[var(--oc-muted)]">
-              {new Date(prompt.created_at).toLocaleString()}
+              {parseUTC(prompt.created_at).toLocaleString()}
             </p>
           </div>
           {isSelected && <Badge variant="info">Active</Badge>}

@@ -5,6 +5,9 @@ Fetch strategy (per URL, when use_js=True):
   Tier 2 — Dynamic (DynamicFetcher): JS-rendered.  Upgrade if more content.
   Tier 3 — Stealth (StealthyFetcher): Playwright + Cloudflare bypass.
             Only triggered when Tier 1+2 both produced < 600 chars of text.
+            When PS_BROWSERLESS_URL is set, connects to a remote real-Chrome
+            instance via CDP (better fingerprint, different egress IP) and falls
+            back to local headless Chromium if the connection fails.
 
 When use_js=False only Tier 1 runs.
 
@@ -23,12 +26,33 @@ from urllib.parse import urlparse
 from scrapling import AsyncFetcher, DynamicFetcher, Selector, StealthyFetcher
 
 from app.core.config import settings
+from app.services.llm_client import LLMClient
 from app.services.url_utils import absolute_url, canonical_internal_url, clean_text
 
 logger = logging.getLogger(__name__)
 
+# Lightweight LLM client used only for tier-upgrade decisions.
+# 1 retry, 15-second timeout — fast fail so it never slows a page fetch.
+_tier_llm = LLMClient(purpose="fetch_tier_decision", max_retries=1, default_timeout=15)
 
-USER_AGENT = "ProspectShortlistingBot/1.0 (+https://example.com)"
+_TIER_DECISION_PROMPT = """\
+You are evaluating a web page to decide if it needs a more powerful fetch method.
+
+URL: {url}
+
+Content ({char_count} chars total, showing first 1500):
+---
+{preview}
+---
+
+Respond with JSON only — no explanation:
+{{"status": "good" | "needs_js" | "blocked"}}
+
+- "good"     → real website content (company info, products, services, about, team, etc.)
+- "needs_js" → near-empty shell, spinner, or redirect that needs JavaScript to render
+- "blocked"  → bot-protection wall, CAPTCHA, Cloudflare challenge, access-denied, or parked domain\
+"""
+
 
 SKIP_HINTS: frozenset[str] = frozenset({
     "/login",
@@ -202,7 +226,86 @@ def _url_variants(url: str) -> list[str]:
     return [url]
 
 
-async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
+async def _decide_tier(text: str, url: str, model: str) -> str:
+    """Ask the LLM whether the fetched content is usable or needs a better tier.
+
+    Returns one of: "good", "needs_js", "blocked".
+    Falls back to a char-count heuristic if the LLM call fails.
+    """
+    import json as _json
+
+    prompt = _TIER_DECISION_PROMPT.format(
+        url=url,
+        char_count=len(text),
+        preview=text[:1500],
+    )
+    try:
+        raw, err = await asyncio.to_thread(
+            _tier_llm.chat,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            timeout=15,
+        )
+        if not err:
+            parsed = _json.loads(raw)
+            status = parsed.get("status", "")
+            if status in ("good", "needs_js", "blocked"):
+                logger.info("fetch_tier_decision url=%s model=%s status=%s", url, model, status)
+                return status
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Fallback: char count heuristic
+    fallback = "good" if len(text) >= _STEALTH_CONTENT_THRESHOLD else "needs_js"
+    logger.info("fetch_tier_decision_fallback url=%s text_len=%d status=%s", url, len(text), fallback)
+    return fallback
+
+
+async def _stealth_fetch(url: str, timeout_sec: float) -> object | None:
+    """Run StealthyFetcher, preferring Browserless CDP when configured.
+
+    If PS_BROWSERLESS_URL is set, attempt to connect via CDP (real Chrome,
+    different egress IP).  On any connection failure fall back to a local
+    headless Chromium session so the tier always has a best-effort attempt.
+    Returns the raw scrapling Response, or None on total failure.
+    """
+    _common = dict(
+        headless=True,
+        timeout=settings.scrape_stealth_timeout_ms,
+        network_idle=True,
+        solve_cloudflare=True,
+        block_webrtc=True,
+        hide_canvas=True,
+    )
+
+    if settings.browserless_url:
+        try:
+            logger.info("fetch_stealth_browserless url=%s", url)
+            return await asyncio.wait_for(
+                StealthyFetcher.async_fetch(url, cdp_url=settings.browserless_url, **_common),
+                timeout=timeout_sec,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("fetch_stealth_browserless_timeout url=%s", url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fetch_stealth_browserless_error url=%s error=%.200s", url, str(exc))
+        logger.info("fetch_stealth_browserless_fallback url=%s", url)
+
+    # Local Chromium fallback (or primary path when browserless_url not set).
+    try:
+        return await asyncio.wait_for(
+            StealthyFetcher.async_fetch(url, **_common),
+            timeout=timeout_sec,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("fetch_stealth_timeout url=%s timeout_sec=%.1f", url, timeout_sec)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fetch_stealth_error url=%s error=%.200s", url, str(exc))
+    return None
+
+
+async def fetch_with_fallback(url: str, use_js: bool, classify_model: str = "") -> FetchResult:
     """Fetch in up to three tiers; keep both static and dynamic results.
 
     Strategy:
@@ -235,7 +338,6 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                 timeout=settings.scrape_static_timeout_sec,
                 retries=settings.scrape_static_retries,
                 verify=False,
-                headers={"user-agent": USER_AGENT},
             )
             if not is_html_selector_response(static_response):
                 last_error = "non_html_static"
@@ -280,19 +382,17 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
     )
 
     # ── Tier 2: Dynamic ─────────────────────────────────────────────────────
-    # Skip dynamic when static already gave us enough content AND was not a
-    # bot-wall.  Dynamic (Playwright) takes 30–120 s per URL; there is no
-    # point paying that cost when static already has substantial text.
-    _static_sufficient = (
-        static_result is not None
-        and len(static_text) >= _STEALTH_CONTENT_THRESHOLD
-    )
-    if use_js and _static_sufficient:
-        logger.info(
-            "fetch_dynamic_skipped url=%s static_len=%d threshold=%d",
-            url, len(static_text), _STEALTH_CONTENT_THRESHOLD,
-        )
-    if use_js and not _static_sufficient:
+    # Ask the LLM if static content is good enough, falling back to char count.
+    # Dynamic (Playwright) is expensive; only pay for it when needed.
+    _static_decision = "needs_js"  # default: always try dynamic
+    if use_js and static_result and static_text:
+        _model = classify_model or settings.classify_model
+        _static_decision = await _decide_tier(static_text, url, _model)
+        logger.info("fetch_static_decision url=%s decision=%s", url, _static_decision)
+
+    if use_js and _static_decision == "good":
+        logger.info("fetch_dynamic_skipped url=%s reason=llm_good static_len=%d", url, len(static_text))
+    if use_js and _static_decision != "good":
         _dynamic_timeout_sec = settings.scrape_dynamic_timeout_ms / 1000 + 30
         for attempt in variants:
             try:
@@ -308,7 +408,6 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                         load_dom=True,
                         retries=settings.scrape_dynamic_retries,
                         retry_delay=1,
-                        extra_headers={"user-agent": USER_AGENT},
                     ),
                     timeout=_dynamic_timeout_sec,
                 )
@@ -364,18 +463,23 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
         )
 
     # ── Tier 3: Stealth ─────────────────────────────────────────────────────
-    # Stealth only when BOTH static AND dynamic individually produced thin content.
     stealth_result: FetchResult | None = None
     stealth_text: str = ""
 
     if use_js:
-        s_len = len(static_text)
-        d_len = len(dynamic_text)
-        if s_len >= _STEALTH_CONTENT_THRESHOLD or d_len >= _STEALTH_CONTENT_THRESHOLD:
-            logger.info(
-                "fetch_stealth_skipped url=%s static_len=%d dynamic_len=%d threshold=%d",
-                url, s_len, d_len, _STEALTH_CONTENT_THRESHOLD,
-            )
+        # Ask LLM if dynamic content is good enough; fall back on timeout.
+        _best_text = dynamic_text or static_text
+        _dynamic_decision = "needs_js"  # default: run stealth if dynamic ran
+        if dynamic_result and _best_text:
+            _model = classify_model or settings.classify_model
+            _dynamic_decision = await _decide_tier(_best_text, url, _model)
+            logger.info("fetch_dynamic_decision url=%s decision=%s", url, _dynamic_decision)
+        elif not dynamic_result:
+            # Dynamic never ran (static was "good" or static failed) — no stealth needed.
+            _dynamic_decision = "good"
+
+        if _dynamic_decision == "good":
+            logger.info("fetch_stealth_skipped url=%s reason=llm_good", url)
         elif dynamic_timed_out:
             # Dynamic timed out → server is hung or unreachable.  Stealth uses
             # the same network path and will also time out.  Skip to fail fast.
@@ -386,22 +490,12 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
         else:
             _stealth_timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
             logger.info(
-                "fetch_stealth_attempt url=%s static_len=%d dynamic_len=%d threshold=%d timeout_sec=%.1f",
+                "fetch_stealth_attempt url=%s static_len=%d dynamic_len=%d threshold=%d timeout_sec=%.1f browserless=%s",
                 url, s_len, d_len, _STEALTH_CONTENT_THRESHOLD, _stealth_timeout_sec,
+                bool(settings.browserless_url),
             )
-            try:
-                stealth_response = await asyncio.wait_for(
-                    StealthyFetcher.async_fetch(
-                        url,
-                        headless=True,
-                        timeout=settings.scrape_stealth_timeout_ms,
-                        network_idle=True,
-                        solve_cloudflare=True,
-                        block_webrtc=True,
-                        hide_canvas=True,
-                    ),
-                    timeout=_stealth_timeout_sec,
-                )
+            stealth_response = await _stealth_fetch(url, _stealth_timeout_sec)
+            if stealth_response is not None:
                 if not is_html_selector_response(stealth_response):
                     logger.info("fetch_stealth_non_html url=%s", url)
                 else:
@@ -427,10 +521,6 @@ async def fetch_with_fallback(url: str, use_js: bool) -> FetchResult:
                             error_code="",
                             error_message="",
                         )
-            except asyncio.TimeoutError:
-                logger.warning("fetch_stealth_timeout url=%s timeout_sec=%.1f", url, _stealth_timeout_sec)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("fetch_stealth_error url=%s error=%.300s", url, str(exc))
 
     # ── Assemble final result ────────────────────────────────────────────────
     # Primary selector: stealth > dynamic > static (highest tier that succeeded).

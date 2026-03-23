@@ -29,7 +29,7 @@ from app.services.url_utils import canonical_internal_url, clean_text, domain_fr
 logger = logging.getLogger(__name__)
 
 # Re-export so existing importers of scrape_service don't break.
-from app.services.fetch_service import SKIP_HINTS, USER_AGENT  # noqa: E402, F401
+from app.services.fetch_service import SKIP_HINTS  # noqa: E402, F401
 
 # Lock TTL covers the full single-pass scrape (DNS + fetches + markdown).
 # Set above the Celery soft_time_limit (30 min) so the lock outlives the task.
@@ -238,7 +238,7 @@ class ScrapeService:
                 continue
             seen_urls.add(canonical)
 
-            fetch = await fetch_with_fallback(canonical, use_js=js_fallback)
+            fetch = await fetch_with_fallback(canonical, use_js=js_fallback, classify_model=classify_model)
             if fetch.selector is None:
                 failure_count += 1
                 # Classify 404 / 403 from the HTTP status when no error_code was set.

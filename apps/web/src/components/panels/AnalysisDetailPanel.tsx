@@ -1,4 +1,5 @@
 import type { AnalysisJobDetailRead, AnalysisRunJobRead, RunRead } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -364,7 +365,7 @@ export function AnalysisDetailPanel({
             {inspectedRun.completed_jobs + inspectedRun.failed_jobs}/{inspectedRun.total_jobs}
           </span>
           <span className="text-xs text-[var(--oc-muted)]">
-            {new Date(inspectedRun.created_at).toLocaleString()}
+            {parseUTC(inspectedRun.created_at).toLocaleString()}
           </span>
         </>
       )}

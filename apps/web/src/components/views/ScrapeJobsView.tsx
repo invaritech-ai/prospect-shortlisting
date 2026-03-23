@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScrapeJobRead } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { SkeletonTable } from '../ui/Skeleton'
@@ -81,7 +82,7 @@ function sortJobs(jobs: ScrapeJobRead[], field: SortField, dir: SortDir): Scrape
   return [...jobs].sort((a, b) => {
     let cmp = 0
     switch (field) {
-      case 'updated_at': cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime(); break
+      case 'updated_at': cmp = parseUTC(a.updated_at).getTime() - parseUTC(b.updated_at).getTime(); break
       case 'domain': cmp = a.domain.localeCompare(b.domain); break
       case 'pages': cmp = a.pages_fetched_count - b.pages_fetched_count; break
       case 'failures': cmp = a.fetch_failures_count - b.fetch_failures_count; break
@@ -91,7 +92,7 @@ function sortJobs(jobs: ScrapeJobRead[], field: SortField, dir: SortDir): Scrape
 }
 
 function relativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
+  const diff = Date.now() - parseUTC(dateStr).getTime()
   if (diff < 60_000) return 'just now'
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
@@ -204,7 +205,7 @@ function JobRow({ job, onViewMarkdown }: { job: ScrapeJobRead; onViewMarkdown: (
         />
       </td>
       <td><IssueCell failures={job.fetch_failures_count} errorCode={job.last_error_code} /></td>
-      <td className="text-[12px] text-(--oc-muted) whitespace-nowrap" title={new Date(job.updated_at).toLocaleString()}>
+      <td className="text-[12px] text-(--oc-muted) whitespace-nowrap" title={parseUTC(job.updated_at).toLocaleString()}>
         {relativeTime(job.updated_at)}
       </td>
       <td>
@@ -253,7 +254,7 @@ function JobCard({ job, onViewMarkdown }: { job: ScrapeJobRead; onViewMarkdown: 
         )}
       </div>
       <div className="mt-2.5 flex items-center justify-between gap-2">
-        <span className="text-[11px] text-(--oc-muted)" title={new Date(job.updated_at).toLocaleString()}>
+        <span className="text-[11px] text-(--oc-muted)" title={parseUTC(job.updated_at).toLocaleString()}>
           {relativeTime(job.updated_at)}
         </span>
         {job.markdown_pages_count > 0 && (

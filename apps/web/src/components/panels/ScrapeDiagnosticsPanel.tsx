@@ -1,4 +1,5 @@
 import type { ScrapeJobRead, ScrapePageContentRead } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -44,7 +45,7 @@ export function ScrapeDiagnosticsPanel({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={badge.variant}>{badge.label}</Badge>
           <span className="text-xs text-[var(--oc-muted)]">
-            {new Date(job.updated_at).toLocaleString()}
+            {parseUTC(job.updated_at).toLocaleString()}
           </span>
           <span className="text-xs text-[var(--oc-muted)]">
             {job.markdown_pages_count}/{job.pages_fetched_count} markdown pages
@@ -144,7 +145,7 @@ export function ScrapeDiagnosticsPanel({
                         {page.markdown_content.trim().length.toLocaleString()}
                       </td>
                       <td className="text-[12px] text-[var(--oc-muted)]">
-                        {new Date(page.updated_at).toLocaleString()}
+                        {parseUTC(page.updated_at).toLocaleString()}
                       </td>
                     </tr>
                   ))}

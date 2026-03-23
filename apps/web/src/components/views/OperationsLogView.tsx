@@ -1,4 +1,5 @@
 import type { OperationsEvent, OperationsEventKind, OperationsEventStatus } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { SkeletonTable } from '../ui/Skeleton'
@@ -177,7 +178,7 @@ export function OperationsLogView({
                     </div>
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-[var(--oc-muted)]">{new Date(event.occurred_at).toLocaleString()}</p>
+                    <p className="text-[11px] text-[var(--oc-muted)]">{parseUTC(event.occurred_at).toLocaleString()}</p>
                     <Button variant="secondary" size="xs" onClick={() => onInspectEvent(event)}>
                       <IconEye size={13} />
                       Inspect
@@ -208,7 +209,7 @@ export function OperationsLogView({
                   return (
                     <tr key={event.id}>
                       <td className="text-[12px] text-[var(--oc-muted)]">
-                        {new Date(event.occurred_at).toLocaleString()}
+                        {parseUTC(event.occurred_at).toLocaleString()}
                       </td>
                       <td><Badge variant={kBadge.variant}>{kBadge.label}</Badge></td>
                       <td><Badge variant={sBadge.variant}>{sBadge.label}</Badge></td>

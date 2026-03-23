@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.api.schemas.base import UTCReadModel
+
 
 class RunCreateRequest(BaseModel):
     prompt_id: UUID
@@ -21,7 +23,7 @@ class RunCreateRequest(BaseModel):
         return self
 
 
-class RunRead(BaseModel):
+class RunRead(UTCReadModel):
     id: UUID
     upload_id: UUID
     prompt_id: UUID

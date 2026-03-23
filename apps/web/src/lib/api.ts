@@ -314,3 +314,16 @@ export async function deleteTitleMatchRule(ruleId: string): Promise<void> {
 export async function seedTitleMatchRules(): Promise<TitleRuleSeedResult> {
   return request<TitleRuleSeedResult>('/v1/title-match-rules/seed', { method: 'POST' })
 }
+
+/** Parse a date string as UTC.
+ * The API returns TIMESTAMP WITHOUT TIME ZONE values without a 'Z' suffix.
+ * Bare ISO strings (no Z / offset) are treated as local time by browsers,
+ * so we force UTC by appending 'Z' when no timezone info is present.
+ */
+export function parseUTC(dateStr: string): Date {
+  const s =
+    dateStr.endsWith('Z') || dateStr.includes('+') || /[+-]\d{2}:\d{2}$/.test(dateStr)
+      ? dateStr
+      : dateStr + 'Z'
+  return new Date(s)
+}

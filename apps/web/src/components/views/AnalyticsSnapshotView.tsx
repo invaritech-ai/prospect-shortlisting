@@ -1,5 +1,6 @@
 import type { AnalyticsSnapshot, CompanyCounts, StatsResponse } from '../../lib/types'
 import type { CountBucket } from '../../lib/telemetry'
+import { parseUTC } from '../../lib/api'
 import { Button } from '../ui/Button'
 import { IconPulse, IconRefresh, IconChart } from '../ui/icons'
 
@@ -116,7 +117,7 @@ export function AnalyticsSnapshotView({
 }: AnalyticsSnapshotViewProps) {
   const scrapePctDone = stats ? `${stats.scrape.pct_done.toFixed(1)}%` : 'N/A'
   const analysisPctDone = stats ? `${stats.analysis.pct_done.toFixed(1)}%` : 'N/A'
-  const asOf = stats ? new Date(stats.as_of).toLocaleString() : null
+  const asOf = stats ? parseUTC(stats.as_of).toLocaleString() : null
 
   return (
     <div className="space-y-3">

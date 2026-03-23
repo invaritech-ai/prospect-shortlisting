@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { RunRead } from '../../lib/types'
+import { parseUTC } from '../../lib/api'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { SkeletonTable } from '../ui/Skeleton'
@@ -70,7 +71,7 @@ function RunCard({ run, onInspect, onFetchContacts, isFetching }: { run: RunRead
         </div>
       </div>
       <p className="mt-1 text-[11px] text-[var(--oc-muted)]">
-        {new Date(run.created_at).toLocaleString()}
+        {parseUTC(run.created_at).toLocaleString()}
       </p>
     </div>
   )
@@ -217,7 +218,7 @@ export function AnalysisRunsView({
                       </td>
                       <td className="text-[12px] text-[var(--oc-muted)]">{run.failed_jobs}</td>
                       <td className="text-[12px] text-[var(--oc-muted)]">
-                        {new Date(run.created_at).toLocaleString()}
+                        {parseUTC(run.created_at).toLocaleString()}
                       </td>
                       <td>
                         <div className="flex items-center gap-1.5">

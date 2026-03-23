@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.api.schemas.base import UTCReadModel
+
 
 class ScrapeJobCreate(BaseModel):
     website_url: str = Field(min_length=3, max_length=2048)
@@ -27,7 +29,7 @@ class ScrapeJobCreate(BaseModel):
         return data
 
 
-class ScrapeJobRead(BaseModel):
+class ScrapeJobRead(UTCReadModel):
     id: UUID
     website_url: str
     normalized_url: str
@@ -52,7 +54,7 @@ class ScrapeJobRead(BaseModel):
     finished_at: datetime | None = None
 
 
-class ScrapePageRead(BaseModel):
+class ScrapePageRead(UTCReadModel):
     id: int
     job_id: UUID
     url: str
@@ -69,7 +71,7 @@ class ScrapePageRead(BaseModel):
     updated_at: datetime
 
 
-class ScrapePageContentRead(BaseModel):
+class ScrapePageContentRead(UTCReadModel):
     id: int
     job_id: UUID
     url: str

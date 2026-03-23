@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.api.schemas.base import UTCReadModel
+
 
 class PromptCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
@@ -18,7 +20,7 @@ class PromptUpdate(BaseModel):
     enabled: bool | None = None
 
 
-class PromptRead(BaseModel):
+class PromptRead(UTCReadModel):
     id: UUID
     name: str
     enabled: bool

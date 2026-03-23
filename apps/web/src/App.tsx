@@ -28,6 +28,7 @@ import {
   updatePrompt,
   uploadFile,
   upsertCompanyFeedback,
+  parseUTC,
 } from './lib/api'
 import type {
   AnalyticsSnapshot,
@@ -1120,7 +1121,7 @@ function App() {
             <p className="mr-2 text-xs font-bold text-[var(--oc-muted)]">
               Pipeline ops ·{' '}
               <span className="font-normal text-[var(--oc-muted)]">
-                as of {new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' }).format(new Date(stats.as_of))}
+                as of {new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' }).format(parseUTC(stats.as_of))}
               </span>
             </p>
             <button
