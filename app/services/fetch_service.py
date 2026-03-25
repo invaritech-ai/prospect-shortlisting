@@ -191,7 +191,7 @@ def _selector_text(selector: object) -> str:
                          (separator=" ") if callable(getattr(selector, "get_all_text", None)) else ""))
 
 
-async def _stealth_fetch(url: str, timeout_sec: float) -> object | None:
+async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
     """Run StealthyFetcher, preferring Browserless CDP when configured.
 
     If PS_BROWSERLESS_URL is set, attempt to connect via CDP (real Chrome,
@@ -199,20 +199,22 @@ async def _stealth_fetch(url: str, timeout_sec: float) -> object | None:
     headless Chromium session so the tier always has a best-effort attempt.
     Returns the raw scrapling Response, or None on total failure.
     """
-    _common = dict(
-        headless=True,
-        timeout=settings.scrape_stealth_timeout_ms,
-        network_idle=True,
-        solve_cloudflare=True,
-        block_webrtc=True,
-        hide_canvas=True,
-    )
+    _timeout_ms: int = settings.scrape_stealth_timeout_ms
 
     if settings.browserless_url:
         try:
             logger.info("fetch_stealth_browserless url=%s", url)
             return await asyncio.wait_for(
-                StealthyFetcher.async_fetch(url, cdp_url=settings.browserless_url, **_common),
+                StealthyFetcher.async_fetch(
+                    url,
+                    cdp_url=settings.browserless_url,
+                    headless=True,
+                    timeout=_timeout_ms,
+                    network_idle=True,
+                    solve_cloudflare=True,
+                    block_webrtc=True,
+                    hide_canvas=True,
+                ),
                 timeout=timeout_sec,
             )
         except asyncio.TimeoutError:
@@ -224,7 +226,15 @@ async def _stealth_fetch(url: str, timeout_sec: float) -> object | None:
     # Local Chromium fallback (or primary path when browserless_url not set).
     try:
         return await asyncio.wait_for(
-            StealthyFetcher.async_fetch(url, **_common),
+            StealthyFetcher.async_fetch(
+                url,
+                headless=True,
+                timeout=_timeout_ms,
+                network_idle=True,
+                solve_cloudflare=True,
+                block_webrtc=True,
+                hide_canvas=True,
+            ),
             timeout=timeout_sec,
         )
     except asyncio.TimeoutError:
