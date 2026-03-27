@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     upload_file_ttl_hours: int = 24
     scrape_static_timeout_sec: float = 12.0
     scrape_stealth_timeout_ms: int = 120000  # 2 min — CAPTCHA solving + slow pages
-    markdown_model: str = "openai/gpt-4.1-nano"
+    markdown_model: str = "stepfun/step-3.5-flash"
     # Browserless CDP URL, e.g. wss://production-sfo.browserless.io?token=YOUR_TOKEN
     # When set, the stealth fetch tier connects to this remote real-Chrome instance
     # instead of launching a local headless Chromium.
