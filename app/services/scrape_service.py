@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -17,10 +18,12 @@ from app.core.logging import log_event
 from app.models import ScrapeJob, ScrapePage
 from app.services.fetch_service import (
     FetchResult,  # re-exported for backwards compat
+    _static_fetch,
     fetch_with_fallback,
     is_parked_domain,
     resolve_domain,
     should_skip_url,
+    stealth_fetch_many,
 )
 from app.services.link_service import discover_focus_targets
 from app.services.markdown_service import MarkdownService
@@ -230,29 +233,89 @@ class ScrapeService:
         failure_count = 0
 
         # ── Phase 5: fetch each target page ─────────────────────────────────
-        log_event(logger, "scrape_fetch_start", job_id=str(job_id), domain=domain,
-                  page_count=len([k for k, v in targets.items() if v]))
-        from app.core.config import settings as _settings
-        _page_delay = _settings.scrape_page_delay_sec
-        _is_first_page = True
-
+        # Build ordered page list: home first, then remaining pages shuffled
+        # to avoid a predictable crawl pattern that bot detectors can fingerprint.
+        page_plan: list[tuple[str, str, int]] = []  # (kind, canonical_url, depth)
         for kind, depth in _PAGE_KINDS:
             target_url = targets.get(kind, "")
             canonical = canonical_internal_url(target_url, domain) if target_url else ""
             if not canonical or canonical in seen_urls:
                 continue
             seen_urls.add(canonical)
+            page_plan.append((kind, canonical, depth))
 
-            # Delay between page fetches on the same domain to avoid triggering
-            # rate limits or bot detection from rapid sequential requests.
-            if not _is_first_page and _page_delay > 0:
-                await asyncio.sleep(_page_delay)
-            _is_first_page = False
+        log_event(logger, "scrape_fetch_start", job_id=str(job_id), domain=domain,
+                  page_count=len(page_plan))
 
-            fetch = await fetch_with_fallback(canonical, use_js=js_fallback, classify_model=classify_model)
+        if len(page_plan) > 1:
+            home_entry = page_plan[0] if page_plan[0][0] == "home" else None
+            rest = page_plan[1:] if home_entry else page_plan[:]
+            random.shuffle(rest)
+            page_plan = ([home_entry] if home_entry else []) + rest
+
+        # 5a. Try static fetch first for all pages (fast, parallel-safe, ~1-2s each)
+        from app.core.config import settings as _settings
+        static_results: dict[str, FetchResult] = {}
+        stealth_needed: list[tuple[str, str, int]] = []  # pages that need stealth
+
+        for kind, canonical, depth in page_plan:
+            static_result = await _static_fetch(canonical, timeout_sec=_settings.scrape_static_timeout_sec)
+            if static_result.selector is not None:
+                static_results[canonical] = static_result
+                logger.info("scrape_static_hit kind=%s url=%s", kind, canonical)
+            elif static_result.error_code in ("dns_not_resolved", "tls_error"):
+                # Permanent error — don't bother with stealth
+                static_results[canonical] = static_result
+            else:
+                stealth_needed.append((kind, canonical, depth))
+
+        # 5b. Stealth fetch remaining pages in a single browser session
+        stealth_results: dict[str, FetchResult] = {}
+        if stealth_needed:
+            stealth_urls = [canonical for _, canonical, _ in stealth_needed]
+            logger.info("scrape_stealth_batch job_id=%s count=%d urls=%s",
+                        str(job_id), len(stealth_urls), stealth_urls)
+            batch_results = await stealth_fetch_many(
+                stealth_urls,
+                delay_range=(1.5, 3.5),
+                per_page_timeout_sec=_settings.scrape_stealth_timeout_ms / 1000 + 30,
+            )
+            for url, result in zip(stealth_urls, batch_results):
+                stealth_results[url] = result
+
+        # 5c. Process results and apply per-page retry for transient failures
+        _RETRY_ERROR_CODES = {"fetch_failed", "timeout", "too_thin"}
+
+        for kind, canonical, depth in page_plan:
+            fetch = static_results.get(canonical) or stealth_results.get(canonical)
+            if fetch is None:
+                # Should not happen, but guard against it
+                fetch = FetchResult(
+                    final_url=canonical, status_code=0, selector=None,
+                    fetch_mode="none", error_code="fetch_failed",
+                    error_message="no_fetch_result",
+                )
+
+            # Per-page retry: if stealth failed with a transient error, retry once
+            # with a fresh single-page stealth fetch after a short backoff.
+            if (fetch.selector is None
+                    and fetch.error_code in _RETRY_ERROR_CODES
+                    and canonical in stealth_results):
+                backoff = random.uniform(5.0, 10.0)
+                logger.info("scrape_page_retry kind=%s url=%s error=%s backoff=%.1f",
+                            kind, canonical, fetch.error_code, backoff)
+                await asyncio.sleep(backoff)
+                retry_results = await stealth_fetch_many(
+                    [canonical],
+                    delay_range=(0, 0),
+                    per_page_timeout_sec=_settings.scrape_stealth_timeout_ms / 1000 + 30,
+                )
+                if retry_results and retry_results[0].selector is not None:
+                    fetch = retry_results[0]
+                    logger.info("scrape_page_retry_success kind=%s url=%s", kind, canonical)
+
             if fetch.selector is None:
                 failure_count += 1
-                # Classify 404 / 403 from the HTTP status when no error_code was set.
                 error_code = fetch.error_code or "fetch_failed"
                 if not error_code or error_code == "fetch_failed":
                     if fetch.status_code == 404:
@@ -276,8 +339,7 @@ class ScrapeService:
                     "fetch_error_code": error_code,
                     "fetch_error_message": fetch.error_message,
                 })
-                # If the home page fails with a permanent error, the whole site is
-                # unreachable — no point trying subpages.
+                # If the home page fails with a permanent error, stop trying subpages.
                 if kind == "home" and error_code in PERMANENT_SCRAPE_ERROR_CODES:
                     log_event(logger, "scrape_aborted_permanent_home_error",
                               job_id=str(job_id), domain=domain, error_code=error_code)
@@ -300,7 +362,6 @@ class ScrapeService:
             title = clean_text(str(selector.css("title::text").get(default="")))[:300]
             description = clean_text(str(selector.css("meta[name='description']::attr(content)").get(default="")))[:800]
             text = clean_text(str(selector.get_all_text(separator=" ")))
-            # Append text from other tiers (static + dynamic kept together for LLM combination).
             if fetch.extra_text:
                 text = text + "\n\n" + fetch.extra_text
 

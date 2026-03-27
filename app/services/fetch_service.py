@@ -1,26 +1,29 @@
-"""HTTP fetch utilities: stealth fetch, DNS resolution, HTML detection.
+"""HTTP fetch utilities: static fetch, stealth fetch, DNS resolution, HTML detection.
 
-Fetch strategy (all URLs):
-  Stealth (StealthyFetcher): Playwright + Cloudflare bypass.
+Fetch strategy (two tiers):
+  1. Static (httpx): fast GET, no JS — works for sites without bot protection.
+  2. Stealth (StealthyFetcher): Playwright + Cloudflare bypass — for JS-heavy / protected sites.
 
-  Mode is **deterministic per worker** — no cross-fallback:
-    - Workers with PS_BROWSERLESS_URL set → Browserless CDP only.
-    - Workers without PS_BROWSERLESS_URL  → local headless Chromium only.
-  This is designed for split-worker deployment (e.g. 2 browserless + 2 local).
+Stealth mode is **deterministic per worker** — no cross-fallback:
+  - Workers with PS_BROWSERLESS_URL set → Browserless CDP only.
+  - Workers without PS_BROWSERLESS_URL  → local headless Chromium only.
 
-DNS is checked before fetching; unresolvable domains short-circuit immediately.
-The fetch is wrapped in asyncio.wait_for() so a hung browser process cannot
-block the worker indefinitely.
+For multi-page fetches on the same domain, use `stealth_fetch_many()` which keeps
+a single browser session alive across all pages (faster + looks more natural to
+bot detectors).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import httpx
 from scrapling import Selector, StealthyFetcher
+from scrapling.engines._browsers._stealth import AsyncStealthySession
 
 from app.core.config import settings
 from app.services.url_utils import absolute_url, canonical_internal_url, clean_text
@@ -193,6 +196,88 @@ def _selector_text(selector: object) -> str:
                          (separator=" ") if callable(getattr(selector, "get_all_text", None)) else ""))
 
 
+# ── Static fetch (httpx) ─────────────────────────────────────────────────────
+
+_STATIC_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
+
+async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
+    """Fast static GET via httpx. No JS execution — works for simple sites."""
+    try:
+        async with httpx.AsyncClient(
+            headers=_STATIC_HEADERS,
+            follow_redirects=True,
+            timeout=timeout_sec,
+            verify=True,
+        ) as client:
+            resp = await client.get(url)
+
+        ctype = resp.headers.get("content-type", "").lower()
+        if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
+            return FetchResult(
+                final_url=str(resp.url), status_code=resp.status_code,
+                selector=None, fetch_mode="static",
+                error_code="non_html", error_message="non_html response",
+            )
+
+        text = clean_text(resp.text)
+
+        if resp.status_code >= 400:
+            return FetchResult(
+                final_url=str(resp.url), status_code=resp.status_code,
+                selector=None, fetch_mode="static",
+                error_code="fetch_failed", error_message=f"HTTP {resp.status_code}",
+            )
+
+        if is_bot_wall(text):
+            return FetchResult(
+                final_url=str(resp.url), status_code=resp.status_code,
+                selector=None, fetch_mode="static",
+                error_code="bot_protection", error_message="bot_wall",
+            )
+
+        if len(text) < 250:
+            return FetchResult(
+                final_url=str(resp.url), status_code=resp.status_code,
+                selector=None, fetch_mode="static",
+                error_code="too_thin", error_message="too_thin",
+            )
+
+        selector = Selector(text=resp.text)
+        selector.url = str(resp.url)  # type: ignore[attr-defined]
+        selector.status = resp.status_code  # type: ignore[attr-defined]
+        logger.info("fetch_static_success url=%s status=%d text_len=%d", url, resp.status_code, len(text))
+        return FetchResult(
+            final_url=str(resp.url), status_code=resp.status_code,
+            selector=selector, fetch_mode="static",
+            error_code="", error_message="",
+        )
+
+    except httpx.TimeoutException:
+        logger.info("fetch_static_timeout url=%s", url)
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="static", error_code="timeout", error_message="static_timeout",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.info("fetch_static_error url=%s error=%.200s", url, str(exc))
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="static", error_code=classify_fetch_error(str(exc)),
+            error_message=str(exc)[:500],
+        )
+
+
+# ── Stealth fetch (single page, kept for backward compat) ────────────────────
+
 async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
     """Run StealthyFetcher via Browserless CDP *or* local Chromium.
 
@@ -227,60 +312,148 @@ async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
     return None
 
 
-async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str = "") -> FetchResult:
-    """Fetch using StealthyFetcher (Playwright + Cloudflare bypass).
+def _validate_stealth_response(url: str, response: Selector | None) -> FetchResult:
+    """Validate a stealth response and return a FetchResult."""
+    if response is None:
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="stealth", error_code="fetch_failed",
+            error_message="stealth_fetch_failed",
+        )
 
-    Uses Browserless CDP when PS_BROWSERLESS_URL is set, otherwise local
-    Chromium.  No cross-fallback — mode is deterministic per worker.
+    if not is_html_selector_response(response):
+        return FetchResult(
+            final_url=str(response.url), status_code=0, selector=None,
+            fetch_mode="stealth", error_code="non_html",
+            error_message="non_html",
+        )
+
+    t = clean_text(str(response.get_all_text(separator=" ")))
+    status = int(getattr(response, "status", 0) or 0)
+
+    if is_bot_wall(t):
+        logger.info("fetch_stealth_bot_wall url=%s preview=%.150s", url, t)
+        return FetchResult(
+            final_url=str(response.url), status_code=status, selector=None,
+            fetch_mode="stealth", error_code="bot_protection",
+            error_message="bot_wall",
+        )
+
+    if len(t) < 250:
+        return FetchResult(
+            final_url=str(response.url), status_code=status, selector=None,
+            fetch_mode="stealth", error_code="too_thin",
+            error_message="too_thin",
+        )
+
+    logger.info("fetch_success url=%s mode=stealth text_len=%d", url, len(t))
+    return FetchResult(
+        final_url=str(response.url), status_code=status, selector=response,
+        fetch_mode="stealth", error_code="", error_message="",
+    )
+
+
+# ── Session-reusing stealth multi-fetch ───────────────────────────────────────
+
+def _stealth_session_kwargs() -> dict:
+    """Build kwargs for AsyncStealthySession from settings."""
+    _timeout_ms: int = settings.scrape_stealth_timeout_ms
+    kwargs: dict = {
+        "headless": True,
+        "timeout": _timeout_ms,
+        "network_idle": True,
+        "solve_cloudflare": True,
+        "block_webrtc": True,
+        "hide_canvas": True,
+    }
+    if settings.browserless_url:
+        kwargs["cdp_url"] = settings.browserless_url
+    # Add parser config the same way StealthyFetcher.async_fetch does
+    kwargs["selector_config"] = {**StealthyFetcher._generate_parser_arguments()}
+    return kwargs
+
+
+async def stealth_fetch_many(
+    urls: list[str],
+    *,
+    delay_range: tuple[float, float] = (1.5, 3.5),
+    per_page_timeout_sec: float = 150.0,
+) -> list[FetchResult]:
+    """Fetch multiple URLs in a single browser session (same context/cookies).
+
+    Opens one browser, fetches each URL sequentially with a randomized delay
+    between pages. This is faster (no browser restart per page) and looks more
+    natural to bot detectors.
     """
-    timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
-    detected_bot_wall = False
-    last_error = "stealth_fetch_failed"
+    if not urls:
+        return []
 
+    mode = "browserless" if settings.browserless_url else "local"
+    session_kwargs = _stealth_session_kwargs()
+    results: list[FetchResult] = []
+
+    try:
+        async with AsyncStealthySession(**session_kwargs) as engine:
+            for i, url in enumerate(urls):
+                # Jittered delay between pages (skip first)
+                if i > 0:
+                    delay = random.uniform(*delay_range)
+                    await asyncio.sleep(delay)
+
+                logger.info("fetch_stealth_session_%s url=%s page=%d/%d", mode, url, i + 1, len(urls))
+                try:
+                    response = await asyncio.wait_for(
+                        engine.fetch(url),
+                        timeout=per_page_timeout_sec,
+                    )
+                    result = _validate_stealth_response(url, response)
+                except asyncio.TimeoutError:
+                    logger.warning("fetch_stealth_session_timeout url=%s", url)
+                    result = FetchResult(
+                        final_url=url, status_code=0, selector=None,
+                        fetch_mode="stealth", error_code="timeout",
+                        error_message="stealth_session_timeout",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("fetch_stealth_session_error url=%s error=%.200s", url, str(exc))
+                    result = FetchResult(
+                        final_url=url, status_code=0, selector=None,
+                        fetch_mode="stealth", error_code=classify_fetch_error(str(exc)),
+                        error_message=str(exc)[:500],
+                    )
+                results.append(result)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fetch_stealth_session_start_error error=%.200s", str(exc))
+        # If the session itself fails to start, return failures for all remaining URLs
+        for url in urls[len(results):]:
+            results.append(FetchResult(
+                final_url=url, status_code=0, selector=None,
+                fetch_mode="stealth", error_code=classify_fetch_error(str(exc)),
+                error_message=str(exc)[:500],
+            ))
+
+    return results
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str = "") -> FetchResult:
+    """Fetch a single URL: try static first, fall back to stealth if needed."""
+    # Tier 1: static fetch (fast, ~1-2s)
+    static_result = await _static_fetch(url, timeout_sec=settings.scrape_static_timeout_sec)
+    if static_result.selector is not None:
+        return static_result
+
+    # Static failed — if it's a permanent error (DNS, TLS), don't bother with stealth
+    if static_result.error_code in ("dns_not_resolved", "tls_error"):
+        return static_result
+
+    # Tier 2: stealth fetch (browser, ~30-60s)
+    timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
     logger.info(
         "fetch_stealth_attempt url=%s timeout_sec=%.1f browserless=%s",
         url, timeout_sec, bool(settings.browserless_url),
     )
-
     response = await _stealth_fetch(url, timeout_sec)
-
-    if response is not None:
-        if not is_html_selector_response(response):
-            logger.info("fetch_stealth_non_html url=%s", url)
-            last_error = "non_html"
-        else:
-            t = clean_text(str(response.get_all_text(separator=" ")))
-            status = int(getattr(response, "status", 0) or 0)
-            is_wall = is_bot_wall(t)
-            logger.info(
-                "fetch_stealth_result url=%s status=%d text_len=%d is_bot_wall=%s",
-                url, status, len(t), is_wall,
-            )
-            if is_wall:
-                detected_bot_wall = True
-                last_error = "bot_wall"
-                logger.info("fetch_stealth_bot_wall url=%s preview=%.150s", url, t)
-            elif len(t) < 250:
-                last_error = "too_thin"
-                logger.info("fetch_stealth_too_thin url=%s text_len=%d", url, len(t))
-            else:
-                logger.info("fetch_success url=%s mode=stealth text_len=%d", url, len(t))
-                return FetchResult(
-                    final_url=str(response.url),
-                    status_code=status,
-                    selector=response,
-                    fetch_mode="stealth",
-                    error_code="",
-                    error_message="",
-                )
-
-    error_code = "bot_protection" if detected_bot_wall else classify_fetch_error(last_error)
-    logger.info("fetch_all_failed url=%s last_error=%s error_code=%s", url, last_error, error_code)
-    return FetchResult(
-        final_url=url,
-        status_code=0,
-        selector=None,
-        fetch_mode="none",
-        error_code=error_code,
-        error_message=last_error,
-    )
+    return _validate_stealth_response(url, response)
