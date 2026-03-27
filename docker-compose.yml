@@ -18,10 +18,10 @@ services:
       retries: 5
       start_period: 20s
 
-  # Scrape worker: local headless Chromium only.
-  # Browserless disabled until paid plan — free tier (1000 credits/mo) insufficient for volume.
-  # To re-enable: split into worker-scrape-browserless (c=2) + worker-scrape-local (c=2).
-  worker-scrape:
+  # Scrape workers: both local-only until Browserless paid plan.
+  # Keeping original service names so Coolify doesn't break on rename.
+  # To re-enable Browserless: remove PS_BROWSERLESS_URL override from worker-scrape-browserless.
+  worker-scrape-browserless:
     build:
       context: .
       dockerfile: Dockerfile.scrape
@@ -29,7 +29,21 @@ services:
       - .env
     environment:
       PS_BROWSERLESS_URL: ""
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "scrape@%h", "-c", "4", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "browserless@%h", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-scrape-local:
+    build:
+      context: .
+      dockerfile: Dockerfile.scrape
+    env_file:
+      - .env
+    environment:
+      PS_BROWSERLESS_URL: ""
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "local@%h", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:
