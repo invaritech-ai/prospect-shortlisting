@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 
 from app.services.fetch_service import fetch_with_fallback, should_skip_url
 from app.services.llm_client import LLMClient
+from app.services.redis_client import get_redis
 from app.services.url_utils import canonical_internal_url, clean_text
+
+_LINK_CACHE_TTL = 86400  # 24 hours
 
 
 _classify_llm = LLMClient(purpose="classify_links", max_retries=2, default_timeout=60)
@@ -20,11 +24,27 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
 
     Returns a dict with keys matching _PAGE_KIND_KEYS.
     Missing or unmatched kinds are set to "".
+    Results are cached in Redis for 24h — same domain + candidate set skips the LLM.
     """
     if not candidates:
         return {}
 
     links_block = "\n".join(f"- {url}" for url in candidates[:200])
+
+    # Check Redis cache — key is based on domain + sorted candidate fingerprint
+    redis = get_redis()
+    cache_key = ""
+    if redis:
+        try:
+            fingerprint = hashlib.sha256(
+                (domain + "\n" + "\n".join(sorted(candidates[:200]))).encode()
+            ).hexdigest()[:16]
+            cache_key = f"link_classify:{fingerprint}"
+            cached = redis.get(cache_key)
+            if cached:
+                return json.loads(cached.decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            pass
     content, error = _classify_llm.chat(
         model=model,
         messages=[
@@ -59,9 +79,17 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
         return {}
     try:
         parsed = json.loads(content) if content else {}
-        return {k: str(parsed.get(k, "") or "").strip() for k in _PAGE_KIND_KEYS}
+        result = {k: str(parsed.get(k, "") or "").strip() for k in _PAGE_KIND_KEYS}
     except Exception:  # noqa: BLE001
         return {}
+
+    if redis and cache_key:
+        try:
+            redis.setex(cache_key, _LINK_CACHE_TTL, json.dumps(result))
+        except Exception:  # noqa: BLE001
+            pass
+
+    return result
 
 
 async def fetch_sitemap_urls(domain: str, limit: int = 200) -> list[str]:

@@ -16,12 +16,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     upload_file_ttl_hours: int = 24
     scrape_static_timeout_sec: float = 12.0
-    scrape_static_retries: int = 1
-    scrape_dynamic_timeout_ms: int = 60000   # 1 min — fail fast; bot-wall pages load in <30s
-    scrape_dynamic_wait_ms: int = 3000
-    scrape_dynamic_retries: int = 1
     scrape_stealth_timeout_ms: int = 120000  # 2 min — CAPTCHA solving + slow pages
-    scrape_page_delay_sec: float = 2.0      # delay between page fetches on same domain
+    markdown_model: str = "openai/gpt-4.1-nano"
     # Browserless CDP URL, e.g. wss://production-sfo.browserless.io?token=YOUR_TOKEN
     # When set, the stealth fetch tier connects to this remote real-Chrome instance
     # instead of launching a local headless Chromium.

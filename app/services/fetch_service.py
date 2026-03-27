@@ -18,6 +18,7 @@ import asyncio
 import logging
 import random
 import socket
+import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -158,18 +159,30 @@ def should_skip_url(url: str) -> bool:
     return False
 
 
+_dns_cache: dict[str, tuple[bool, float]] = {}  # domain → (resolved, expires_at)
+_DNS_CACHE_TTL = 300.0  # 5 minutes
+
+
 async def resolve_domain(domain: str, timeout_sec: float = 3.0) -> bool:
     if not domain:
         return False
+
+    now = time.monotonic()
+    cached = _dns_cache.get(domain)
+    if cached and now < cached[1]:
+        return cached[0]
+
     targets = [domain]
     if not domain.startswith("www."):
         targets.append(f"www.{domain}")
     for target in targets:
         try:
             await asyncio.wait_for(asyncio.to_thread(socket.getaddrinfo, target, 443), timeout=timeout_sec)
+            _dns_cache[domain] = (True, now + _DNS_CACHE_TTL)
             return True
         except Exception:  # noqa: BLE001
             continue
+    _dns_cache[domain] = (False, now + _DNS_CACHE_TTL)
     return False
 
 

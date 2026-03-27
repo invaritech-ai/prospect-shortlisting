@@ -75,7 +75,7 @@ app.conf.update(
     beat_schedule={
         "reconcile-stuck-jobs": {
             "task": "app.tasks.beat.reconcile_stuck_jobs",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="*/10"),
         },
     },
     timezone="UTC",

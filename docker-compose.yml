@@ -29,7 +29,7 @@ services:
       - .env
     environment:
       PS_BROWSERLESS_URL: ""
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "browserless@%h", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "browserless@%h", "-c", "6", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:
@@ -43,7 +43,7 @@ services:
       - .env
     environment:
       PS_BROWSERLESS_URL: ""
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "local@%h", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "local@%h", "-c", "6", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:

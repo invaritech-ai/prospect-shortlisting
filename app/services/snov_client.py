@@ -27,6 +27,7 @@ from urllib.request import Request, urlopen
 
 from app.core.config import settings
 from app.core.logging import log_event
+from app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +44,6 @@ ERR_SNOV_FAILED              = "snov_failed"
 # ── In-memory token fallback (per-process) ────────────────────────────────────
 _mem_token: str = ""
 _mem_token_expires_at: float = 0.0  # monotonic
-
-
-def _redis_client():  # type: ignore[return]
-    """Return a Redis client, or None if Redis is unavailable."""
-    try:
-        import redis  # type: ignore[import]
-        r = redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
-        r.ping()
-        return r
-    except Exception:  # noqa: BLE001
-        return None
 
 
 _REDIS_TOKEN_KEY = "snov:access_token"
@@ -168,7 +158,7 @@ class SnovClient:
             return "", ERR_SNOV_CREDENTIALS_MISSING
 
         # 1. Try Redis cache
-        redis = _redis_client()
+        redis = get_redis()
         if redis:
             try:
                 cached = redis.get(_REDIS_TOKEN_KEY)

@@ -457,29 +457,49 @@ class ScrapeService:
                     session.commit()
             return
 
-        # ── Phase 6: markdown conversion (rule-based + LLM fallback) ────────
-        page_updates: list[dict] = []
+        # ── Phase 6: markdown conversion (batched rule-based + LLM) ────────────
+        from app.core.config import settings as _cfg
         markdown_pages = 0
         llm_used = 0
         llm_failed = 0
 
-        for snap in fetched_pages:
-            if not snap["success"] or snap["status_code"] >= 400 or snap.get("text_len", 0) < 80:
-                page_updates.append({"snap": snap, "markdown_content": ""})
-                continue
+        # Split into eligible (need markdown) and ineligible (failed/thin) pages
+        eligible_snaps = [
+            snap for snap in fetched_pages
+            if snap["success"] and snap["status_code"] < 400 and snap.get("text_len", 0) >= 80
+        ]
+        ineligible_snaps = [
+            snap for snap in fetched_pages
+            if not (snap["success"] and snap["status_code"] < 400 and snap.get("text_len", 0) >= 80)
+        ]
 
-            markdown, used_llm, llm_error = self.markdown_service.to_markdown(
-                url=snap["url"],
-                title=snap.get("title", ""),
-                page_text=snap.get("raw_text", ""),
-                model=general_model,
-            )
-            page_updates.append({"snap": snap, "markdown_content": markdown[:50000]})
+        # Batch-convert all eligible pages in a single LLM call
+        batch_input = [
+            {"url": snap["url"], "title": snap.get("title", ""), "page_text": snap.get("raw_text", "")}
+            for snap in eligible_snaps
+        ]
+        batch_results = self.markdown_service.to_markdown_batch(
+            pages=batch_input,
+            model=_cfg.markdown_model,
+        )
+
+        snap_to_markdown: dict[int, tuple[str, bool, str]] = {}
+        for i, (snap, result) in enumerate(zip(eligible_snaps, batch_results)):
+            snap_to_markdown[id(snap)] = result
+            _, used_llm_flag, llm_error = result
             markdown_pages += 1
-            if used_llm:
+            if used_llm_flag:
                 llm_used += 1
             if llm_error:
                 llm_failed += 1
+
+        page_updates: list[dict] = []
+        for snap in fetched_pages:
+            if id(snap) in snap_to_markdown:
+                markdown, _, _ = snap_to_markdown[id(snap)]
+                page_updates.append({"snap": snap, "markdown_content": markdown[:50000]})
+            else:
+                page_updates.append({"snap": snap, "markdown_content": ""})
 
         # ── Phase 7: write all results ───────────────────────────────────────
         with Session(engine) as session:
