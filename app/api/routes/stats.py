@@ -20,6 +20,7 @@ SCRAPE_RUNNING_STUCK_MINUTES = 35
 router = APIRouter(prefix="/v1", tags=["stats"])
 
 _SAMPLE_SIZE = 100  # recent completed jobs used to estimate average duration
+_THROUGHPUT_WINDOW_MINUTES = 60  # look back this far to measure jobs/sec throughput
 
 
 class PipelineStageStats(BaseModel):
@@ -140,9 +141,26 @@ def _scrape_stats(session: Session) -> PipelineStageStats:
 
     remaining = queued + running
     pct_done = (completed + failed + site_unavailable) / total if total else 0.0
+
+    # Throughput-based ETA: count jobs finished in the last N minutes,
+    # compute jobs/sec, divide remaining by that rate.
+    # This automatically reflects worker count and current site difficulty.
+    throughput_window = now - timedelta(minutes=_THROUGHPUT_WINDOW_MINUTES)
+    finished_in_window: int = session.exec(
+        select(func.count(ScrapeJob.id)).where(
+            col(ScrapeJob.terminal_state).is_(True),
+            col(ScrapeJob.finished_at) >= throughput_window,
+        )
+    ).one() or 0
+
     eta_seconds: float | None = None
     eta_at: datetime | None = None
-    if avg_job_sec and remaining > 0:
+    if finished_in_window > 0 and remaining > 0:
+        jobs_per_sec = finished_in_window / (_THROUGHPUT_WINDOW_MINUTES * 60)
+        eta_seconds = remaining / jobs_per_sec
+        eta_at = datetime.fromtimestamp(now.timestamp() + eta_seconds, tz=timezone.utc)
+    elif avg_job_sec and remaining > 0:
+        # Fallback: no recent throughput data (pipeline just started)
         eta_seconds = remaining * avg_job_sec
         eta_at = datetime.fromtimestamp(now.timestamp() + eta_seconds, tz=timezone.utc)
 
@@ -207,9 +225,22 @@ def _analysis_stats(session: Session) -> PipelineStageStats:
 
     remaining = queued + running
     pct_done = (completed + failed) / total if total else 0.0
+
+    throughput_window = now - timedelta(minutes=_THROUGHPUT_WINDOW_MINUTES)
+    finished_in_window_analysis: int = session.exec(
+        select(func.count(AnalysisJob.id)).where(
+            col(AnalysisJob.terminal_state).is_(True),
+            col(AnalysisJob.finished_at) >= throughput_window,
+        )
+    ).one() or 0
+
     eta_seconds = None
     eta_at = None
-    if avg_job_sec and remaining > 0:
+    if finished_in_window_analysis > 0 and remaining > 0:
+        jobs_per_sec = finished_in_window_analysis / (_THROUGHPUT_WINDOW_MINUTES * 60)
+        eta_seconds = remaining / jobs_per_sec
+        eta_at = datetime.fromtimestamp(now.timestamp() + eta_seconds, tz=timezone.utc)
+    elif avg_job_sec and remaining > 0:
         eta_seconds = remaining * avg_job_sec
         eta_at = datetime.fromtimestamp(now.timestamp() + eta_seconds, tz=timezone.utc)
 

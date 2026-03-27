@@ -116,7 +116,15 @@ function PipelineMini({ stats }: { stats: StatsResponse | null }) {
             {/* ETA */}
             {s.eta_seconds != null && s.eta_seconds > 0 && (
               <p className="mt-0.5 text-[10px] text-(--oc-muted)">
-                ETA {Math.floor(s.eta_seconds / 60)}m {Math.round(s.eta_seconds % 60)}s
+                ETA {(() => {
+                  const t = Math.round(s.eta_seconds!)
+                  const h = Math.floor(t / 3600)
+                  const m = Math.floor((t % 3600) / 60)
+                  const s = t % 60
+                  if (h > 0) return `${h}h ${m}m`
+                  if (m > 0) return `${m}m ${s}s`
+                  return `${s}s`
+                })()}
               </p>
             )}
           </div>
