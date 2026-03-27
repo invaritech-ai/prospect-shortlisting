@@ -18,16 +18,34 @@ services:
       retries: 5
       start_period: 20s
 
-  worker-scrape:
+  # Scrape workers are split by fetch mode (no cross-fallback).
+  # 2 workers use Browserless CDP (remote Chrome, different egress IP).
+  # 2 workers use local headless Chromium.
+  # Both consume from the same "scrape" queue — Redis round-robins tasks.
+  worker-scrape-browserless:
     build:
       context: .
       dockerfile: Dockerfile.scrape
     env_file:
       - .env
-    # Each Chromium instance uses ~200-400MB RAM.
-    # --without-mingle/gossip: reduces unnecessary broker I/O.
-    # --max-tasks-per-child=20: recycles workers to prevent Chromium memory leaks.
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-c", "4", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
+    # PS_BROWSERLESS_URL from .env is used as-is; concurrency=2 matches
+    # the Browserless plan's 2 concurrent session limit.
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "browserless@%h", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-scrape-local:
+    build:
+      context: .
+      dockerfile: Dockerfile.scrape
+    env_file:
+      - .env
+    environment:
+      # Override: clear browserless URL so this worker uses local Chromium only.
+      PS_BROWSERLESS_URL: ""
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "local@%h", "-c", "2", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:

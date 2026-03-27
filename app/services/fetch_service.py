@@ -2,9 +2,11 @@
 
 Fetch strategy (all URLs):
   Stealth (StealthyFetcher): Playwright + Cloudflare bypass.
-           When PS_BROWSERLESS_URL is set, connects to a remote real-Chrome
-           instance via CDP (better fingerprint, different egress IP) and falls
-           back to local headless Chromium if the connection fails.
+
+  Mode is **deterministic per worker** — no cross-fallback:
+    - Workers with PS_BROWSERLESS_URL set → Browserless CDP only.
+    - Workers without PS_BROWSERLESS_URL  → local headless Chromium only.
+  This is designed for split-worker deployment (e.g. 2 browserless + 2 local).
 
 DNS is checked before fetching; unresolvable domains short-circuit immediately.
 The fetch is wrapped in asyncio.wait_for() so a hung browser process cannot
@@ -192,63 +194,44 @@ def _selector_text(selector: object) -> str:
 
 
 async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
-    """Run StealthyFetcher, preferring Browserless CDP when configured.
+    """Run StealthyFetcher via Browserless CDP *or* local Chromium.
 
-    If PS_BROWSERLESS_URL is set, attempt to connect via CDP (real Chrome,
-    different egress IP).  On any connection failure fall back to a local
-    headless Chromium session so the tier always has a best-effort attempt.
-    Returns the raw scrapling Response, or None on total failure.
+    The mode is deterministic — based solely on whether PS_BROWSERLESS_URL is
+    set.  Workers are split by environment: browserless workers set the URL,
+    local workers leave it blank.  No cross-fallback between the two.
     """
     _timeout_ms: int = settings.scrape_stealth_timeout_ms
+    fetch_kwargs: dict = {
+        "headless": True,
+        "timeout": _timeout_ms,
+        "network_idle": True,
+        "solve_cloudflare": True,
+        "block_webrtc": True,
+        "hide_canvas": True,
+    }
 
+    mode = "browserless" if settings.browserless_url else "local"
     if settings.browserless_url:
-        try:
-            logger.info("fetch_stealth_browserless url=%s", url)
-            return await asyncio.wait_for(
-                StealthyFetcher.async_fetch(
-                    url,
-                    cdp_url=settings.browserless_url,
-                    headless=True,
-                    timeout=_timeout_ms,
-                    network_idle=True,
-                    solve_cloudflare=True,
-                    block_webrtc=True,
-                    hide_canvas=True,
-                ),
-                timeout=timeout_sec,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("fetch_stealth_browserless_timeout url=%s", url)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("fetch_stealth_browserless_error url=%s error=%.200s", url, str(exc))
-        logger.info("fetch_stealth_browserless_fallback url=%s", url)
+        fetch_kwargs["cdp_url"] = settings.browserless_url
 
-    # Local Chromium fallback (or primary path when browserless_url not set).
     try:
+        logger.info("fetch_stealth_%s url=%s", mode, url)
         return await asyncio.wait_for(
-            StealthyFetcher.async_fetch(
-                url,
-                headless=True,
-                timeout=_timeout_ms,
-                network_idle=True,
-                solve_cloudflare=True,
-                block_webrtc=True,
-                hide_canvas=True,
-            ),
+            StealthyFetcher.async_fetch(url, **fetch_kwargs),
             timeout=timeout_sec,
         )
     except asyncio.TimeoutError:
-        logger.warning("fetch_stealth_timeout url=%s timeout_sec=%.1f", url, timeout_sec)
+        logger.warning("fetch_stealth_%s_timeout url=%s timeout_sec=%.1f", mode, url, timeout_sec)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("fetch_stealth_error url=%s error=%.200s", url, str(exc))
+        logger.warning("fetch_stealth_%s_error url=%s error=%.200s", mode, url, str(exc))
     return None
 
 
 async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str = "") -> FetchResult:
     """Fetch using StealthyFetcher (Playwright + Cloudflare bypass).
 
-    Tries Browserless CDP first when PS_BROWSERLESS_URL is configured,
-    falls back to local headless Chromium on connection failure.
+    Uses Browserless CDP when PS_BROWSERLESS_URL is set, otherwise local
+    Chromium.  No cross-fallback — mode is deterministic per worker.
     """
     timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
     detected_bot_wall = False

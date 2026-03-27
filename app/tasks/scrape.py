@@ -29,6 +29,13 @@ def scrape_website(self, job_id: str) -> None:  # type: ignore[misc]
     log_event(logger, "scrape_celery_task_received",
               job_id=job_id, worker=self.request.hostname, retries=self.request.retries)
     engine = get_engine()
+
+    # Fast-exit: skip jobs already in terminal state (cancelled, done, failed).
+    # Avoids expensive asyncio.run + ScrapeService setup for stale queue entries.
+    if _is_terminal(engine, job_id):
+        log_event(logger, "scrape_task_skip_terminal", job_id=job_id)
+        return
+
     service = ScrapeService()
     t_start = time.monotonic()
     try:
@@ -46,6 +53,18 @@ def scrape_website(self, job_id: str) -> None:  # type: ignore[misc]
                   error=str(exc)[:500], elapsed_sec=round(elapsed, 1))
         _mark_failed(job_id, "task_exception", str(exc)[:500])
         raise
+
+
+def _is_terminal(engine, job_id: str) -> bool:  # type: ignore[type-arg]
+    """Lightweight check: is this job already in a terminal state?"""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT terminal_state FROM scrapejob WHERE id = :jid"),
+            {"jid": job_id},
+        ).first()
+        return bool(row and row[0])
 
 
 def _mark_failed(job_id: str, error_code: str, error_message: str) -> None:
