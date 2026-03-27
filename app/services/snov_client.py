@@ -12,6 +12,7 @@ Usage
     count, err = client.get_domain_email_count("example.com")
     prospects, total, err = client.search_prospects("example.com")
     emails, err = client.search_prospect_email(prospect_hash)
+    emails, err = client.find_email_by_name("John", "Smith", "example.com")
 """
 from __future__ import annotations
 
@@ -339,3 +340,40 @@ class SnovClient:
         data = result.get("data") or {}
         emails = data.get("emails") if isinstance(data, dict) else []
         return list(emails or []), ""
+
+    def find_email_by_name(self, first_name: str, last_name: str, domain: str) -> tuple[list[dict], str]:
+        """Find email by first name + last name + domain (pattern-based guess).
+
+        Uses /v2/emails-by-domain-by-name/start — costs 1 credit per email
+        found with valid/unknown status.  Returns (emails_list, error_code).
+        Each email dict has: email, smtp_status, is_valid_format, etc.
+        """
+        token, err = self._get_access_token()
+        if err:
+            return [], err
+
+        start_data, err = self._post("/v2/emails-by-domain-by-name/start", {
+            "rows": [{"first_name": first_name, "last_name": last_name, "domain": domain}],
+        }, bearer=token)
+        if err:
+            return [], err
+
+        task_hash = str((start_data.get("meta") or {}).get("task_hash") or "")
+        if not task_hash:
+            log_event(logger, "snov_no_email_finder_hash",
+                      first_name=first_name, last_name=last_name, domain=domain, data=start_data)
+            return [], ERR_SNOV_FAILED
+
+        result, err = self._poll_task(
+            f"/v2/emails-by-domain-by-name/result?task_hash={task_hash}",
+            bearer=token,
+        )
+        if err:
+            return [], err
+
+        # Response: {"data": [{"emails": [{"email": "...", "smtp_status": "valid", ...}]}]}
+        rows = result.get("data") or []
+        if rows and isinstance(rows, list) and isinstance(rows[0], dict):
+            emails = rows[0].get("emails") or []
+            return list(emails), ""
+        return [], ""

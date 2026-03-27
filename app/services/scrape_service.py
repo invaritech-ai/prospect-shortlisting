@@ -1,6 +1,7 @@
 """ScrapeJob lifecycle: create, claim (CAS), run the full scrape pipeline, write results."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -231,12 +232,22 @@ class ScrapeService:
         # ── Phase 5: fetch each target page ─────────────────────────────────
         log_event(logger, "scrape_fetch_start", job_id=str(job_id), domain=domain,
                   page_count=len([k for k, v in targets.items() if v]))
+        from app.core.config import settings as _settings
+        _page_delay = _settings.scrape_page_delay_sec
+        _is_first_page = True
+
         for kind, depth in _PAGE_KINDS:
             target_url = targets.get(kind, "")
             canonical = canonical_internal_url(target_url, domain) if target_url else ""
             if not canonical or canonical in seen_urls:
                 continue
             seen_urls.add(canonical)
+
+            # Delay between page fetches on the same domain to avoid triggering
+            # rate limits or bot detection from rapid sequential requests.
+            if not _is_first_page and _page_delay > 0:
+                await asyncio.sleep(_page_delay)
+            _is_first_page = False
 
             fetch = await fetch_with_fallback(canonical, use_js=js_fallback, classify_model=classify_model)
             if fetch.selector is None:

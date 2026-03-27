@@ -2,7 +2,7 @@
 
 Three-phase pattern (same as AnalysisService):
   Phase 1 — CAS-claim job + load company domain + load title rules (short DB session)
-  Phase 2 — Snov API calls: count → prospects → filter by title → fetch emails (no DB)
+  Phase 2 — Snov API calls: count → prospects → filter by title → fetch emails → fallback email finder (no DB)
   Phase 3 — Upsert ProspectContact rows + mark job terminal (new short DB session)
 """
 from __future__ import annotations
@@ -274,7 +274,9 @@ class ContactService:
                 "snov_email_raw": None,
             }
 
-            # 2d. Fetch email only for title-matched prospects (saves credits)
+            # 2d. Fetch email for title-matched prospects.
+            #   Step 1: Snov database lookup (free if no result).
+            #   Step 2: If empty, email finder by name+domain (1 credit if found).
             if title_matched and prospect_hash:
                 emails, email_err = _snov.search_prospect_email(prospect_hash)
                 if not email_err and emails:
@@ -282,6 +284,18 @@ class ContactService:
                     contact_entry["email"] = str(best.get("email") or "").strip() or None
                     contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
                     contact_entry["snov_email_raw"] = emails
+
+            # Fallback: guess email by name+domain if lookup returned nothing
+            if title_matched and not contact_entry["email"] and first_name and last_name:
+                finder_emails, finder_err = _snov.find_email_by_name(first_name, last_name, domain)
+                if not finder_err and finder_emails:
+                    best = finder_emails[0]
+                    contact_entry["email"] = str(best.get("email") or "").strip() or None
+                    contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
+                    contact_entry["snov_email_raw"] = finder_emails
+                    log_event(logger, "contact_email_found_by_name",
+                              domain=domain, name=f"{first_name} {last_name}",
+                              email=contact_entry["email"])
 
             contacts_to_write.append(contact_entry)
 
