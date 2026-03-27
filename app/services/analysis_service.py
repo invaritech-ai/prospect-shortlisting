@@ -1,6 +1,7 @@
 """AnalysisJob execution: CAS-claim, LLM call, write ClassificationResult."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 _analysis_llm = LLMClient(purpose="analysis", min_interval_sec=0.5)
 
 # Re-export for code that imports these from analysis_service directly.
-from app.services.context_service import ANALYSIS_PAGE_ORDER, MAX_CHARS_PER_PAGE, MAX_TOTAL_CONTEXT_CHARS  # noqa: E402, F401
+from app.services.context_service import ANALYSIS_PAGE_ORDER, MAX_CHARS_PER_PAGE  # noqa: E402, F401
 
 
 def utcnow() -> datetime:
@@ -171,6 +172,7 @@ class AnalysisService:
                 early_fail = ("scrape_missing", "No completed scrape job found for company.")
                 classify_model = ""
                 rendered_prompt = ""
+                input_hash = None
             else:
                 pages = analysis_pages_for_job(session=session, job_id=latest_scrape.id)
                 context = build_context(pages)
@@ -178,6 +180,7 @@ class AnalysisService:
                     early_fail = ("analysis_context_empty", "No markdown content found for analysis.")
                     classify_model = ""
                     rendered_prompt = ""
+                    input_hash = None
                 else:
                     classify_model = run.classify_model
                     rendered_prompt = render_prompt(
@@ -185,6 +188,51 @@ class AnalysisService:
                         domain=company.domain,
                         context=context,
                     )
+                    input_hash = hashlib.sha256(
+                        f"{analysis_job.prompt_hash}:{context}".encode()
+                    ).hexdigest()[:32]
+
+                    # ── Cache lookup: skip LLM if same prompt+content seen before ──
+                    cached = session.exec(
+                        select(ClassificationResult)
+                        .where(
+                            col(ClassificationResult.input_hash) == input_hash,
+                            col(ClassificationResult.analysis_job_id) != analysis_job.id,
+                        )
+                    ).first()
+                    if cached:
+                        existing_result = session.exec(
+                            select(ClassificationResult).where(
+                                col(ClassificationResult.analysis_job_id) == analysis_job.id
+                            )
+                        ).first()
+                        if existing_result:
+                            existing_result.predicted_label = cached.predicted_label
+                            existing_result.confidence = cached.confidence
+                            existing_result.reasoning_json = cached.reasoning_json
+                            existing_result.evidence_json = cached.evidence_json
+                            existing_result.input_hash = input_hash
+                            existing_result.from_cache = True
+                            session.add(existing_result)
+                        else:
+                            session.add(ClassificationResult(
+                                analysis_job_id=analysis_job.id,
+                                predicted_label=cached.predicted_label,
+                                confidence=cached.confidence,
+                                reasoning_json=cached.reasoning_json,
+                                evidence_json=cached.evidence_json,
+                                input_hash=input_hash,
+                                from_cache=True,
+                            ))
+                        analysis_job.state = AnalysisJobState.SUCCEEDED
+                        analysis_job.terminal_state = True
+                        analysis_job.finished_at = utcnow()
+                        session.add(analysis_job)
+                        session.commit()
+                        log_event(logger, "analysis_cache_hit", analysis_job_id=str(analysis_job_id))
+                        self._run_service.refresh_run_status(session=session, run_id=run_id)
+                        session.refresh(analysis_job)
+                        return analysis_job
         # ── session closed; connection returned to pool ──────────────────────
 
         if early_fail:
@@ -248,6 +296,8 @@ class AnalysisService:
                 existing_result.confidence = confidence
                 existing_result.reasoning_json = reasoning
                 existing_result.evidence_json = {"evidence": evidence}
+                existing_result.input_hash = input_hash
+                existing_result.from_cache = False
                 session.add(existing_result)
             else:
                 session.add(
@@ -257,6 +307,8 @@ class AnalysisService:
                         confidence=confidence,
                         reasoning_json=reasoning,
                         evidence_json={"evidence": evidence},
+                        input_hash=input_hash,
+                        from_cache=False,
                     )
                 )
 

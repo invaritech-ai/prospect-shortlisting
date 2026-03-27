@@ -201,6 +201,10 @@ class ClassificationResult(SQLModel, table=True):
     confidence: Decimal | None = Field(default=None, sa_column=Column(Numeric(5, 4), nullable=True))
     reasoning_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     evidence_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # SHA-256[:32] of (prompt_hash + ":" + context). Used to skip LLM re-calls when
+    # content hasn't changed between runs. Null for results written before this feature.
+    input_hash: str | None = Field(default=None, max_length=64, index=True)
+    from_cache: bool = Field(default=False)
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

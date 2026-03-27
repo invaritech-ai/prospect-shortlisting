@@ -23,7 +23,6 @@ from app.models.pipeline import CrawlJobState
 ANALYSIS_PAGE_ORDER = ("home", "about", "products", "services", "pricing", "contact", "team", "leadership")
 
 MAX_CHARS_PER_PAGE = 12000
-MAX_TOTAL_CONTEXT_CHARS = 30000
 
 
 def utcnow() -> datetime:
@@ -85,22 +84,19 @@ def analysis_pages_for_job(*, session: Session, job_id: UUID) -> list[ScrapePage
 
 def build_context(pages: list[ScrapePage]) -> str:
     parts: list[str] = []
-    total_chars = 0
     for page in pages:
         markdown = (page.markdown_content or "").strip()
         if not markdown:
             continue
         chunk = markdown[:MAX_CHARS_PER_PAGE]
         block = f"## {page.page_kind.upper()} PAGE\nURL: {page.url}\n\n{chunk}"
-        projected = total_chars + len(block)
-        if projected > MAX_TOTAL_CONTEXT_CHARS and parts:
-            break
         parts.append(block)
-        total_chars += len(block)
     return "\n\n".join(parts).strip()
 
 
 def render_prompt(*, prompt_text: str, domain: str, context: str) -> str:
+    if "{context}" not in prompt_text:
+        prompt_text = prompt_text + "\n\n{context}"
     rendered = prompt_text.replace("{domain}", domain)
     rendered = rendered.replace("{org}", domain)
     rendered = rendered.replace("{context}", context)
