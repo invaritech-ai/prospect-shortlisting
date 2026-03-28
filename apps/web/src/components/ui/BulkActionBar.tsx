@@ -84,8 +84,9 @@ export function BulkActionBar({
             className="!border-white/20 !text-white hover:!bg-white/15"
             onClick={onScrapeSelected}
             loading={isScrapingSelected}
+            aria-label="Scrape selected companies"
           >
-            <IconGlobe size={14} />
+            <IconGlobe size={14} aria-hidden />
             Scrape
           </Button>
           <Button
@@ -96,8 +97,9 @@ export function BulkActionBar({
             loading={isClassifyingSelected}
             disabled={!canClassify}
             title={canClassify ? undefined : 'Select an enabled prompt first'}
+            aria-label="Classify selected companies"
           >
-            <IconZap size={14} />
+            <IconZap size={14} aria-hidden />
             Classify
           </Button>
           <Button

@@ -74,7 +74,8 @@ import { CompanyReviewPanel } from './components/panels/CompanyReviewPanel'
 import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPanel'
 
 // UI
-import { Toast } from './components/ui/Toast'
+import { ConfirmDialog } from './components/ui/ConfirmDialog'
+import { Toast, type ToastNoticeAction } from './components/ui/Toast'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -220,6 +221,16 @@ function App() {
   // ── Toasts ───────────────────────────────────────────────────────────────
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [noticeAction, setNoticeAction] = useState<ToastNoticeAction | null>(null)
+
+  /** Bulk-action confirm: scrape all / classify all (Companies toolbar). */
+  const [bulkConfirm, setBulkConfirm] = useState<null | 'scrape_all' | 'classify_all'>(null)
+
+  useEffect(() => {
+    if (!error) return
+    setNotice('')
+    setNoticeAction(null)
+  }, [error])
 
   // ── Error parsing ─────────────────────────────────────────────────────────
   const parseError = (err: unknown): string => {
@@ -644,8 +655,8 @@ function App() {
     finally { setIsScrapingSelected(false) }
   }
 
-  const onScrapeAll = async () => {
-    setError(''); setNotice(''); setIsScrapingAll(true)
+  const runScrapeAll = async () => {
+    setError(''); setNotice(''); setNoticeAction(null); setIsScrapingAll(true)
     try {
       const result = await scrapeAllCompanies()
       companyCacheRef.current = {}
@@ -654,8 +665,23 @@ function App() {
       void loadCompanyCounts()
       setSelectedCompanyIds([])
       const msg = `Queued ${result.queued_count}/${result.requested_count} companies for scraping.`
-      if (result.failed_company_ids.length > 0) setError(`${msg} ${result.failed_company_ids.length} failed.`)
-      else setNotice(msg)
+      if (result.failed_company_ids.length > 0) {
+        setError(`${msg} ${result.failed_company_ids.length} failed.`)
+      } else {
+        setNotice(msg)
+        if (result.queued_count > 0) {
+          setNoticeAction({
+            label: 'View scrape jobs',
+            onClick: () => {
+              setNoticeAction(null)
+              setNotice('')
+              setActiveView('jobs')
+              setJobsOffset(0)
+              void loadScrapeJobs(0, jobsPageSize)
+            },
+          })
+        }
+      }
     } catch (err) { setError(parseError(err)) }
     finally { setIsScrapingAll(false) }
   }
@@ -665,7 +691,7 @@ function App() {
       setError('Select an enabled prompt before starting classification.')
       return
     }
-    setError(''); setNotice('')
+    setError(''); setNotice(''); setNoticeAction(null)
     if (scope === 'all') setIsClassifyingAll(true)
     else setIsClassifyingSelected(true)
     try {
@@ -680,6 +706,18 @@ function App() {
       const runCount = result.runs.length
       const msg = `Created ${runCount} run${runCount === 1 ? '' : 's'} and queued ${result.queued_count}/${result.requested_count} classifications.`
       setNotice(result.skipped_company_ids.length > 0 ? `${msg} Skipped ${result.skipped_company_ids.length} without markdown.` : msg)
+      if (scope === 'all' && result.queued_count > 0) {
+        setNoticeAction({
+          label: 'View analysis runs',
+          onClick: () => {
+            setNoticeAction(null)
+            setNotice('')
+            setActiveView('runs')
+            setRunsOffset(0)
+            void loadRuns(0, runsPageSize)
+          },
+        })
+      }
       if (scope === 'selected') {
         setAnalysisActionState((cur) => {
           const next = { ...cur }
@@ -994,6 +1032,7 @@ function App() {
             scrapeFilter={scrapeFilter}
             selectedCompanyIds={selectedCompanyIds}
             companyCounts={companyCounts}
+            stats={stats}
             actionState={actionState}
             analysisActionState={analysisActionState}
             isScrapingSelected={isScrapingSelected}
@@ -1021,10 +1060,10 @@ function App() {
             onClearSelection={() => setSelectedCompanyIds([])}
             onScrape={(c) => void onScrape(c)}
             onScrapeSelected={() => void onScrapeSelected()}
-            onScrapeAll={() => void onScrapeAll()}
+            onRequestScrapeAllConfirm={() => setBulkConfirm('scrape_all')}
             onClassify={(c) => void onClassify(c)}
             onClassifySelected={() => void onClassifySelected()}
-            onClassifyAll={() => void startClassification('all')}
+            onRequestClassifyAllConfirm={() => setBulkConfirm('classify_all')}
             onDeleteSelected={() => void onDeleteSelected()}
             onSetFile={setFile}
             onSetIsDragActive={setIsDragActive}
@@ -1035,6 +1074,11 @@ function App() {
             onFetchContacts={(c) => onFetchContacts(c)}
             isFetchingContactsSelected={isFetchingContactsSelected}
             onFetchContactsSelected={() => void onFetchContactsSelected()}
+            onGoToScrapeJobs={() => {
+              setActiveView('jobs')
+              setJobsOffset(0)
+              void loadScrapeJobs(0, jobsPageSize)
+            }}
           />
         )}
 
@@ -1220,7 +1264,47 @@ function App() {
         onSave={(thumbs, comment) => void saveFeedback(thumbs, comment)}
       />
 
-      <Toast error={error} notice={notice} />
+      <ConfirmDialog
+        open={bulkConfirm === 'scrape_all'}
+        title="Queue scrapes for all companies?"
+        confirmLabel="Queue scrapes"
+        onClose={() => setBulkConfirm(null)}
+        onConfirm={() => {
+          setBulkConfirm(null)
+          void runScrapeAll()
+        }}
+      >
+        <p>
+          You have approximately{' '}
+          <strong>{companyCounts != null ? companyCounts.total.toLocaleString() : '—'}</strong> companies. New
+          scrape jobs are created in the background and may take a long time to finish.
+        </p>
+        <p className="mt-3">
+          Any domain that already has an <strong>active</strong> scrape (queued or running) is skipped, so the
+          number queued can be smaller than your company count.
+        </p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={bulkConfirm === 'classify_all'}
+        title="Run classification for all companies?"
+        confirmLabel="Queue classifications"
+        onClose={() => setBulkConfirm(null)}
+        onConfirm={() => {
+          setBulkConfirm(null)
+          void startClassification('all')
+        }}
+      >
+        <p>
+          Prompt: <strong>{selectedPrompt?.name ?? '—'}</strong>
+        </p>
+        <p className="mt-3">
+          Only companies with a <strong>completed</strong> scrape are queued. Others are skipped (no markdown yet).
+        </p>
+        <p className="mt-3 text-(--oc-muted)">Analysis jobs also run in the background.</p>
+      </ConfirmDialog>
+
+      <Toast error={error} notice={notice} noticeAction={noticeAction} />
     </>
   )
 }

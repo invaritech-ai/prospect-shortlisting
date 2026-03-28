@@ -45,7 +45,7 @@ function PipelineDot({ stats }: { stats: StatsResponse | null }) {
   if (!hasActive) return null
   return (
     <span className="relative flex h-2 w-2 flex-shrink-0">
-      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--oc-accent)] opacity-60" />
+      <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--oc-accent)] opacity-60" />
       <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--oc-accent)]" />
     </span>
   )

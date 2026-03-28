@@ -36,6 +36,16 @@
   /* ── Transitions ─────────────────────────────────────── */
   --oc-transition: 160ms cubic-bezier(0.4, 0, 0.2, 1);
   --oc-transition-slow: 280ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Page headings (toolbar titles) ───────────────────── */
+  --oc-heading-page-size: 1.125rem;
+  --oc-heading-page-size-md: 1.25rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oc-motion-ping {
+    animation: none !important;
+  }
 }
 
 @layer base {
@@ -316,5 +326,17 @@
   .oc-markdown td {
     @apply border-b px-3 py-2 text-sm text-left align-top;
     border-color: color-mix(in srgb, var(--oc-border) 78%, white);
+  }
+
+  .oc-heading-page {
+    font-size: var(--oc-heading-page-size);
+    letter-spacing: -0.02em;
+    color: var(--oc-accent-ink);
+  }
+
+  @media (min-width: 768px) {
+    .oc-heading-page {
+      font-size: var(--oc-heading-page-size-md);
+    }
   }
 }

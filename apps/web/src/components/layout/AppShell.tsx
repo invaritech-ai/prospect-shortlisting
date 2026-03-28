@@ -93,7 +93,7 @@ export function AppShell({
           </div>
           {stats && (stats.scrape.running > 0 || stats.analysis.running > 0) && (
             <span className="ml-auto relative flex h-2.5 w-2.5 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-(--oc-accent) opacity-60" />
+              <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-(--oc-accent) opacity-60" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-(--oc-accent)" />
             </span>
           )}

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { DragEvent, FormEvent } from 'react'
 import type {
   CompanyList,
@@ -8,6 +8,7 @@ import type {
   ManualLabel,
   ScrapeFilter,
   PromptRead,
+  StatsResponse,
 } from '../../lib/types'
 import { Badge } from '../ui/Badge'
 import { decisionBgClass } from '../ui/badgeUtils'
@@ -16,6 +17,7 @@ import { BulkActionBar } from '../ui/BulkActionBar'
 import { LetterStrip } from '../ui/LetterStrip'
 import { SkeletonRows } from '../ui/Skeleton'
 import {
+  IconBuilding,
   IconChevronLeft,
   IconChevronRight,
   IconUpload,
@@ -39,6 +41,7 @@ interface CompaniesViewProps {
   scrapeFilter: ScrapeFilter
   selectedCompanyIds: string[]
   companyCounts: CompanyCounts | null
+  stats: StatsResponse | null
   actionState: Record<string, string>
   analysisActionState: Record<string, string>
   isScrapingSelected: boolean
@@ -66,10 +69,10 @@ interface CompaniesViewProps {
   onClearSelection: () => void
   onScrape: (company: CompanyListItem) => void
   onScrapeSelected: () => void
-  onScrapeAll: () => void
+  onRequestScrapeAllConfirm: () => void
   onClassify: (company: CompanyListItem) => void
   onClassifySelected: () => void
-  onClassifyAll: () => void
+  onRequestClassifyAllConfirm: () => void
   onDeleteSelected: () => void
   onSetFile: (file: File | null) => void
   onSetIsDragActive: (active: boolean) => void
@@ -80,6 +83,7 @@ interface CompaniesViewProps {
   onFetchContacts: (company: CompanyListItem) => Promise<void>
   isFetchingContactsSelected: boolean
   onFetchContactsSelected: () => void
+  onGoToScrapeJobs: () => void
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -100,6 +104,53 @@ const SCRAPE_FILTERS: Array<{ value: ScrapeFilter; label: string; countKey: keyo
   { value: 'failed', label: 'Failed', countKey: 'scrape_failed' },
   { value: 'none', label: 'Not scraped', countKey: 'not_scraped' },
 ]
+
+function ScrapePipelineBanner({
+  stats,
+  onViewJobs,
+  dismissed,
+  onDismiss,
+}: {
+  stats: StatsResponse | null
+  onViewJobs: () => void
+  dismissed: boolean
+  onDismiss: () => void
+}) {
+  const q = stats?.scrape.queued ?? 0
+  const r = stats?.scrape.running ?? 0
+  const n = q + r
+  if (n === 0 || dismissed) return null
+  const parts: string[] = []
+  if (q > 0) parts.push(`${q} queued`)
+  if (r > 0) parts.push(`${r} running`)
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-2xl border border-(--oc-info-bg) px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+      style={{ background: 'color-mix(in srgb, var(--oc-info-bg) 35%, white)' }}
+    >
+      <p className="text-sm text-(--oc-info-text)">
+        <span className="font-bold">Scrape pipeline active:</span> {parts.join(', ')} — continues in the background.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onViewJobs}
+          className="rounded-lg border border-(--oc-accent) bg-white px-3 py-1.5 text-xs font-bold text-(--oc-accent-ink) transition hover:bg-(--oc-accent-soft)"
+        >
+          View scrape jobs
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss scrape activity banner"
+          className="rounded-lg px-2 py-1 text-xs font-bold text-(--oc-muted) hover:bg-white/80"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // ── Badge helpers ──────────────────────────────────────────────────────────
 
@@ -482,6 +533,7 @@ export function CompaniesView({
   scrapeFilter,
   selectedCompanyIds,
   companyCounts,
+  stats,
   actionState,
   analysisActionState,
   isScrapingSelected,
@@ -509,10 +561,10 @@ export function CompaniesView({
   onClearSelection,
   onScrape,
   onScrapeSelected,
-  onScrapeAll,
+  onRequestScrapeAllConfirm,
   onClassify,
   onClassifySelected,
-  onClassifyAll,
+  onRequestClassifyAllConfirm,
   onDeleteSelected,
   onSetFile,
   onSetIsDragActive,
@@ -523,7 +575,14 @@ export function CompaniesView({
   onFetchContacts,
   isFetchingContactsSelected,
   onFetchContactsSelected,
+  onGoToScrapeJobs,
 }: CompaniesViewProps) {
+  const [scrapeBannerDismissed, setScrapeBannerDismissed] = useState(false)
+  const activeScrapePipeline = (stats?.scrape.queued ?? 0) + (stats?.scrape.running ?? 0)
+  useEffect(() => {
+    if (activeScrapePipeline === 0) setScrapeBannerDismissed(false)
+  }, [activeScrapePipeline])
+
   // Derived state
   const effectiveTotal = companies?.total ?? companyCounts?.total ?? null
   const rangeLabel =
@@ -545,43 +604,59 @@ export function CompaniesView({
         {/* Top row: title + primary actions */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-base font-bold tracking-tight md:text-lg">Companies</h2>
+            <h2 className="oc-heading-page font-extrabold">Companies</h2>
             <p className="hidden text-xs text-[var(--oc-muted)] sm:block">
               {rangeLabel} · {selectedCompanyIds.length > 0 ? `${selectedCompanyIds.length} selected` : 'none selected'}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:gap-3">
             <Button
               variant="secondary"
               size="sm"
               onClick={onToggleUtilities}
+              aria-label={utilitiesOpen ? 'Hide ingest panel' : 'Open ingest panel to upload CSV'}
             >
-              <IconUpload size={15} />
+              <IconUpload size={15} aria-hidden />
               <span className="hidden sm:inline">{utilitiesOpen ? 'Hide ingest' : 'Ingest'}</span>
             </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={onScrapeAll}
-              loading={isScrapingAll}
-              disabled={isLoading}
-            >
-              <IconGlobe size={15} />
-              <span className="hidden sm:inline">Scrape all</span>
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onClassifyAll}
-              loading={isClassifyingAll}
-              disabled={!canClassifyAll}
-              title={!selectedPrompt?.enabled ? 'Select an enabled prompt first' : undefined}
-            >
-              <IconZap size={15} />
-              <span className="hidden sm:inline">Classify all</span>
-            </Button>
+            <span className="hidden h-7 w-px shrink-0 bg-(--oc-border) sm:block" aria-hidden />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="hidden text-[10px] font-bold uppercase tracking-widest text-(--oc-muted) lg:inline">
+                Batch
+              </span>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={onRequestScrapeAllConfirm}
+                loading={isScrapingAll}
+                disabled={isLoading}
+                aria-label="Queue scrapes for all companies"
+              >
+                <IconGlobe size={15} aria-hidden />
+                <span className="hidden sm:inline">Scrape all</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onRequestClassifyAllConfirm}
+                loading={isClassifyingAll}
+                disabled={!canClassifyAll}
+                title={!selectedPrompt?.enabled ? 'Select an enabled prompt first' : undefined}
+                aria-label="Queue classification for all companies that have a completed scrape"
+              >
+                <IconZap size={15} aria-hidden />
+                <span className="hidden sm:inline">Classify all</span>
+              </Button>
+            </div>
           </div>
         </div>
+
+        <ScrapePipelineBanner
+          stats={stats}
+          onViewJobs={onGoToScrapeJobs}
+          dismissed={scrapeBannerDismissed}
+          onDismiss={() => setScrapeBannerDismissed(true)}
+        />
 
         {/* A–Z letter strip */}
         <LetterStrip active={letterFilter} counts={letterCounts} onChange={onSetLetterFilter} />
@@ -829,15 +904,5 @@ export function CompaniesView({
         selectedPrompt={selectedPrompt}
       />
     </div>
-  )
-}
-
-// ── Missing import fix ─────────────────────────────────────────────────────
-function IconBuilding({ size = 20, className = '' }: { size?: number; className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect x="2" y="3" width="16" height="14" rx="1.5" />
-      <path d="M6 7h2M6 10h2M12 7h2M12 10h2M8 17v-4h4v4" />
-    </svg>
   )
 }

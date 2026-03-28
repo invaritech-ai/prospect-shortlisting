@@ -1,3 +1,5 @@
+Architecture and data pipeline overview: [docs/repository-mental-model.md](docs/repository-mental-model.md).
+
 ## Run with Docker (API + Worker)
 
 This setup runs two app processes:
