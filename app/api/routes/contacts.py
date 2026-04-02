@@ -16,6 +16,7 @@ from app.api.schemas.contacts import (
     ContactFetchResult,
     ContactListResponse,
     ProspectContactRead,
+    RematchResult,
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
     TitleRuleSeedResult,
@@ -23,7 +24,7 @@ from app.api.schemas.contacts import (
 from app.db.session import get_session
 from app.models import AnalysisJob, ClassificationResult, Company, ContactFetchJob, ProspectContact, Run, TitleMatchRule
 from app.models.pipeline import AnalysisJobState, ContactFetchJobState, PredictedLabel
-from app.services.contact_service import seed_title_rules
+from app.services.contact_service import rematch_existing_contacts, seed_title_rules
 from app.tasks.contacts import fetch_contacts
 
 
@@ -327,6 +328,7 @@ def create_title_rule(
     session.add(rule)
     session.commit()
     session.refresh(rule)
+    rematch_existing_contacts(session)  # side-effect: re-evaluates existing contacts
     return TitleMatchRuleRead.model_validate(rule, from_attributes=True)
 
 
@@ -340,6 +342,22 @@ def delete_title_rule(
         raise HTTPException(status_code=404, detail="Rule not found.")
     session.delete(rule)
     session.commit()
+    rematch_existing_contacts(session)
+
+
+@router.post("/title-match-rules/rematch", response_model=RematchResult)
+def rematch_contacts(session: Session = Depends(get_session)) -> RematchResult:
+    """Re-apply current title rules to all stored contacts and enqueue email fetches for newly-matched contacts."""
+    updated, company_ids = rematch_existing_contacts(session)
+    fetch_result = ContactFetchResult(requested_count=0, queued_count=0, already_fetching_count=0, queued_job_ids=[])
+    if company_ids:
+        companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
+        fetch_result = _enqueue_contact_fetches(session=session, companies=companies)
+    return RematchResult(
+        updated=updated,
+        fetch_jobs_queued=fetch_result.queued_count,
+        message=f"Re-evaluated all contacts; {updated} title_match flags changed, {fetch_result.queued_count} email fetch jobs queued.",
+    )
 
 
 @router.post("/title-match-rules/seed", response_model=TitleRuleSeedResult)

@@ -205,6 +205,7 @@ class ClassificationResult(SQLModel, table=True):
     # content hasn't changed between runs. Null for results written before this feature.
     input_hash: str | None = Field(default=None, max_length=64, index=True)
     from_cache: bool = Field(default=False)
+    is_stale: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

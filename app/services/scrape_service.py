@@ -15,7 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
 from app.core.logging import log_event
-from app.models import ScrapeJob, ScrapePage
+from sqlalchemy import update as sa_update
+from app.models import AnalysisJob, ClassificationResult, Company, ScrapeJob, ScrapePage
 from app.services.fetch_service import (
     FetchResult,  # re-exported for backwards compat
     _static_fetch,
@@ -66,11 +67,24 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Number of consecutive permanent failures before the circuit breaker opens.
+_CIRCUIT_BREAKER_THRESHOLD = 3
+
+
 class ScrapeJobAlreadyRunningError(ValueError):
     def __init__(self, *, normalized_url: str, existing_job_id: Any) -> None:
         self.normalized_url = normalized_url
         self.existing_job_id = existing_job_id
         super().__init__(f"Scrape already in progress for {normalized_url}.")
+
+
+class CircuitBreakerOpenError(ValueError):
+    def __init__(self, *, domain: str) -> None:
+        self.domain = domain
+        super().__init__(
+            f"Circuit breaker open for {domain}: last {_CIRCUIT_BREAKER_THRESHOLD} "
+            "scrape attempts all ended in permanent failure."
+        )
 
 
 class ScrapeService:
@@ -108,6 +122,23 @@ class ScrapeService:
                 normalized_url=normalized,
                 existing_job_id=active_job.id,
             )
+
+        # Circuit breaker: if the last N terminal jobs all have permanent error
+        # codes, refuse to create a new job to avoid wasting queue capacity.
+        recent_terminal = list(session.exec(
+            select(ScrapeJob)
+            .where(
+                col(ScrapeJob.domain) == domain,
+                col(ScrapeJob.terminal_state).is_(True),
+            )
+            .order_by(col(ScrapeJob.created_at).desc())
+            .limit(_CIRCUIT_BREAKER_THRESHOLD)
+        ).all())
+        if (
+            len(recent_terminal) >= _CIRCUIT_BREAKER_THRESHOLD
+            and all(j.last_error_code in PERMANENT_SCRAPE_ERROR_CODES for j in recent_terminal)
+        ):
+            raise CircuitBreakerOpenError(domain=domain)
 
         job = ScrapeJob(
             website_url=website_url,
@@ -561,6 +592,21 @@ class ScrapeService:
                 job.status = "completed"
                 job.last_error_code = None
                 job.last_error_message = None
+
+                # Mark existing ClassificationResults stale: newer scrape content
+                # is available so prior analysis should be re-run.
+                company_ids_subq = select(Company.id).where(col(Company.domain) == domain)
+                aj_ids_subq = select(AnalysisJob.id).where(
+                    col(AnalysisJob.company_id).in_(company_ids_subq)
+                )
+                session.execute(
+                    sa_update(ClassificationResult)
+                    .where(
+                        col(ClassificationResult.analysis_job_id).in_(aj_ids_subq),
+                        col(ClassificationResult.is_stale).is_(False),
+                    )
+                    .values(is_stale=True)
+                )
 
             session.add(job)
             session.commit()

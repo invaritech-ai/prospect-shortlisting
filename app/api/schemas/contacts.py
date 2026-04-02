@@ -56,6 +56,12 @@ class TitleRuleSeedResult(BaseModel):
     message: str
 
 
+class RematchResult(BaseModel):
+    updated: int
+    fetch_jobs_queued: int
+    message: str
+
+
 class ContactCompanySummary(BaseModel):
     company_id: UUID
     domain: str

@@ -120,6 +120,31 @@ SEED_EXCLUDE_RULES: list[str] = [
 ]
 
 
+def rematch_existing_contacts(session: Session) -> tuple[int, list[UUID]]:
+    """Re-apply current title rules to all existing ProspectContact rows.
+
+    Returns (updated_count, company_ids_needing_email_fetch).
+    company_ids_needing_email_fetch contains companies that now have title_match=True
+    contacts with no email — callers should enqueue a ContactFetchJob for these.
+    """
+    include_rules, exclude_words = load_title_rules(session)
+    contacts = list(session.exec(select(ProspectContact)))
+    updated = 0
+    companies_needing_fetch: set[UUID] = set()
+    for contact in contacts:
+        new_match = match_title(contact.title or "", include_rules, exclude_words) if include_rules else False
+        if contact.title_match != new_match:
+            contact.title_match = new_match
+            contact.updated_at = utcnow()
+            session.add(contact)
+            updated += 1
+        if new_match and not contact.email:
+            companies_needing_fetch.add(contact.company_id)
+    if updated:
+        session.commit()
+    return updated, list(companies_needing_fetch)
+
+
 def seed_title_rules(session: Session) -> int:
     """Insert default title match rules. Skips rows that already exist. Returns count inserted."""
     existing = set(session.exec(select(TitleMatchRule.keywords)).all())

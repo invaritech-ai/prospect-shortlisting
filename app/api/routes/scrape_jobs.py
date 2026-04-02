@@ -15,7 +15,7 @@ from app.api.schemas.scrape import (
 )
 from app.db.session import get_session
 from app.models import ScrapeJob, ScrapePage
-from app.services.scrape_service import ScrapeJobAlreadyRunningError, ScrapeService
+from app.services.scrape_service import CircuitBreakerOpenError, ScrapeJobAlreadyRunningError, ScrapeService
 from app.core.config import settings
 from app.tasks.scrape import scrape_website
 
@@ -42,10 +42,12 @@ def create_scrape_job(payload: ScrapeJobCreate, session: Session = Depends(get_s
     except ScrapeJobAlreadyRunningError as exc:
         raise HTTPException(
             status_code=409,
-            detail={
-                "message": str(exc),
-                "existing_job_id": str(exc.existing_job_id),
-            },
+            detail={"message": str(exc), "existing_job_id": str(exc.existing_job_id)},
+        ) from exc
+    except CircuitBreakerOpenError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "error": "circuit_breaker_open", "domain": exc.domain},
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
