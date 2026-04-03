@@ -29,6 +29,7 @@ services:
       - .env
     environment:
       PS_BROWSERLESS_URL: ""
+      PS_WORKER_PROCESS: "1"
     command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "browserless@%h", "-c", "6", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
@@ -43,6 +44,7 @@ services:
       - .env
     environment:
       PS_BROWSERLESS_URL: ""
+      PS_WORKER_PROCESS: "1"
     command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "local@%h", "-c", "6", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
@@ -55,6 +57,8 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
     command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat,contacts", "-c", "8", "--without-mingle", "--without-gossip", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
