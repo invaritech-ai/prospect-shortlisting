@@ -241,6 +241,7 @@ class ContactFetchJob(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
+    provider: str = Field(default="snov", max_length=32, index=True)
 
     state: ContactFetchJobState = Field(
         default=ContactFetchJobState.QUEUED,
@@ -276,7 +277,7 @@ class ContactFetchJob(SQLModel, table=True):
 
 
 class ProspectContact(SQLModel, table=True):
-    """Contact record fetched from Snov.io for a company."""
+    """Contact record fetched from a contact provider for a company."""
 
     __tablename__ = "prospect_contacts"
 
@@ -297,6 +298,9 @@ class ProspectContact(SQLModel, table=True):
     snov_confidence: float | None = Field(default=None)
 
     snov_prospect_raw: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    apollo_prospect_raw: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
     snov_email_raw: dict[str, Any] | None = Field(

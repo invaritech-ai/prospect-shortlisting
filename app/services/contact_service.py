@@ -1,8 +1,8 @@
-"""ContactFetchJob execution: CAS-claim, Snov.io prospect/email fetch, write results.
+"""ContactFetchJob execution: CAS-claim, Snov.io/Apollo prospect fetch, write results.
 
 Three-phase pattern (same as AnalysisService):
   Phase 1 — CAS-claim job + load company domain + load title rules (short DB session)
-  Phase 2 — Snov API calls: count → prospects → filter by title → fetch emails → fallback email finder (no DB)
+  Phase 2 — Provider API calls: fetch prospects → filter by title → fetch emails (no DB)
   Phase 3 — Upsert ProspectContact rows + mark job terminal (new short DB session)
 """
 from __future__ import annotations
@@ -20,6 +20,11 @@ from sqlmodel import Session, col, select
 from app.core.logging import log_event
 from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule
 from app.models.pipeline import ContactFetchJobState
+from app.services.apollo_client import (
+    ERR_APOLLO_AUTH_FAILED,
+    ERR_APOLLO_CREDENTIALS_MISSING,
+    ApolloClient,
+)
 from app.services.snov_client import (
     ERR_SNOV_AUTH_FAILED,
     ERR_SNOV_CREDENTIALS_MISSING,
@@ -34,9 +39,12 @@ _CONTACT_LOCK_TTL = timedelta(minutes=15)
 _PERMANENT_ERROR_CODES: frozenset[str] = frozenset({
     ERR_SNOV_CREDENTIALS_MISSING,
     ERR_SNOV_AUTH_FAILED,
+    ERR_APOLLO_CREDENTIALS_MISSING,
+    ERR_APOLLO_AUTH_FAILED,
 })
 
 _snov = SnovClient()
+_apollo = ApolloClient()
 
 
 def utcnow() -> datetime:
@@ -44,6 +52,31 @@ def utcnow() -> datetime:
 
 
 # ── Title matching ────────────────────────────────────────────────────────────
+
+_TITLE_SYNONYMS: dict[str, str] = {
+    "vp": "vice president",
+    "svp": "senior vice president",
+    "evp": "executive vice president",
+    "avp": "assistant vice president",
+    "cmo": "chief marketing officer",
+    "cto": "chief technology officer",
+    "cio": "chief information officer",
+    "cdo": "chief digital officer",
+    "coo": "chief operating officer",
+    "cfo": "chief financial officer",
+    "cro": "chief revenue officer",
+    "cpo": "chief product officer",
+    "ceo": "chief executive officer",
+    "gm": "general manager",
+}
+
+
+def _normalize_title(title: str) -> str:
+    normalized = title.lower()
+    for abbreviation, replacement in _TITLE_SYNONYMS.items():
+        normalized = re.sub(r"\b" + re.escape(abbreviation) + r"\b", replacement, normalized)
+    return normalized
+
 
 def match_title(
     title: str,
@@ -58,11 +91,12 @@ def match_title(
     """
     if not title:
         return False
-    lowered = title.lower()
-    if any(re.search(r'\b' + re.escape(word) + r'\b', lowered) for word in exclude_words):
+    lowered = _normalize_title(title.lower())
+    normalized_excludes = [_normalize_title(word.strip()) for word in exclude_words if word.strip()]
+    if any(re.search(r"\b" + re.escape(word) + r"\b", lowered) for word in normalized_excludes):
         return False
     return any(
-        all(re.search(r'\b' + re.escape(kw) + r'\b', lowered) for kw in keywords)
+        all(re.search(r"\b" + re.escape(_normalize_title(kw)) + r"\b", lowered) for kw in keywords)
         for keywords in include_rules
     )
 
@@ -75,7 +109,7 @@ def load_title_rules(
     include_rules: list[list[str]] = []
     exclude_words: list[str] = []
     for rule in rules:
-        kws = [k.strip().lower() for k in rule.keywords.split(",") if k.strip()]
+        kws = [_normalize_title(k.strip()) for k in rule.keywords.split(",") if k.strip()]
         if rule.rule_type == "include" and kws:
             include_rules.append(kws)
         elif rule.rule_type == "exclude":
@@ -165,6 +199,12 @@ def seed_title_rules(session: Session) -> int:
 
 class ContactService:
     def run_contact_fetch(self, *, engine: Any, job_id: UUID) -> ContactFetchJob | None:
+        return self._run_contact_fetch(engine=engine, job_id=job_id, provider="snov")
+
+    def run_apollo_fetch(self, *, engine: Any, job_id: UUID) -> ContactFetchJob | None:
+        return self._run_contact_fetch(engine=engine, job_id=job_id, provider="apollo")
+
+    def _run_contact_fetch(self, *, engine: Any, job_id: UUID, provider: str) -> ContactFetchJob | None:
         """Fetch contacts for a single ContactFetchJob.
 
         Returns the job object (terminal), or None if the CAS lock was lost.
@@ -204,10 +244,20 @@ class ContactService:
                 log_event(logger, "contact_fetch_skipped_not_owner", job_id=str(job_id))
                 return None
 
-            if not job.started_at:
-                job.started_at = now
-                session.add(job)
-                session.commit()
+            job_provider = str(getattr(job, "provider", provider) or provider).lower()
+            if job_provider not in {"snov", "apollo"}:
+                return self._fail_job(
+                    engine=engine, job_id=job_id, lock_token=lock_token,
+                    error_code="contact_provider_invalid",
+                    error_message=f"Unsupported contact provider: {job_provider}",
+                    attempt_count=job.attempt_count,
+                    max_attempts=1,
+                )
+
+        if not job.started_at:
+            job.started_at = now
+            session.add(job)
+            session.commit()
 
             company = session.get(Company, job.company_id)
             if not company:
@@ -224,107 +274,185 @@ class ContactService:
             include_rules, exclude_words = load_title_rules(session)
         # ── session closed ────────────────────────────────────────────────────
 
-        # ── Phase 2: Snov API calls (no DB session held) ─────────────────────
-        # 2a. Free check — skip domains with 0 known emails
-        count, err = _snov.get_domain_email_count(domain)
-        if err in _PERMANENT_ERROR_CODES:
-            return self._fail_job(
-                engine=engine, job_id=job_id, lock_token=lock_token,
-                error_code=err, error_message=f"Snov credentials error: {err}",
-                attempt_count=1, max_attempts=1,  # force terminal immediately
-            )
-        if err:
-            return self._fail_job(
-                engine=engine, job_id=job_id, lock_token=lock_token,
-                error_code=err, error_message=f"Snov domain count failed: {err}",
-                attempt_count=1, max_attempts=3,
-            )
-
-        if count == 0:
-            log_event(logger, "contact_fetch_no_emails", domain=domain)
-            return self._complete_job(
-                engine=engine, job_id=job_id, lock_token=lock_token,
-                contacts_found=0, title_matched_count=0,
-            )
-
-        # 2b. Fetch prospects (paginate up to 2 pages = 40 prospects)
         all_prospects: list[dict] = []
-        for page in range(1, 3):
-            prospects, total, err = _snov.search_prospects(domain, page=page)
-            if err:
-                log_event(logger, "contact_fetch_prospects_error", domain=domain, page=page, err=err)
-                break
-            all_prospects.extend(prospects)
-            if len(all_prospects) >= total or len(prospects) == 0:
-                break
+        contacts_to_write: list[dict] = []
+        fetch_error_code = ""
+        contacts_written = 0
+        title_matched_count = 0
 
-        if not all_prospects:
+        if job_provider == "apollo":
+            for page in range(1, 4):
+                prospects = _apollo.search_people(domain, page=page)
+                apollo_err = _apollo.last_error_code
+                if not prospects:
+                    if apollo_err in _PERMANENT_ERROR_CODES:
+                        return self._fail_job(
+                            engine=engine, job_id=job_id, lock_token=lock_token,
+                            error_code=apollo_err,
+                            error_message=f"Apollo search failed: {apollo_err}",
+                            attempt_count=1, max_attempts=1,
+                        )
+                    break
+                all_prospects.extend(prospects)
+                if len(prospects) < 100:
+                    break
+
+            if not all_prospects:
+                if _apollo.last_error_code in _PERMANENT_ERROR_CODES:
+                    return self._fail_job(
+                        engine=engine, job_id=job_id, lock_token=lock_token,
+                        error_code=_apollo.last_error_code,
+                        error_message=f"Apollo search failed: {_apollo.last_error_code}",
+                        attempt_count=1, max_attempts=1,
+                    )
+                if _apollo.last_error_code:
+                    return self._fail_job(
+                        engine=engine, job_id=job_id, lock_token=lock_token,
+                        error_code=_apollo.last_error_code,
+                        error_message=f"Apollo search failed: {_apollo.last_error_code}",
+                        attempt_count=1, max_attempts=3,
+                    )
+                return self._complete_job(
+                    engine=engine, job_id=job_id, lock_token=lock_token,
+                    contacts_found=0, title_matched_count=0,
+                )
+
+            for prospect in all_prospects:
+                first_name = str(prospect.get("first_name") or "").strip()
+                last_name = str(prospect.get("last_name") or prospect.get("last_name_obfuscated") or "").strip()
+                title = str(prospect.get("title") or prospect.get("position") or "").strip()
+                linkedin_url = str(prospect.get("linkedin_url") or "").strip() or None
+                title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
+                if not title_matched:
+                    continue
+                title_matched_count += 1
+
+                person_id = str(prospect.get("id") or "").strip()
+                if not person_id or not prospect.get("has_email"):
+                    continue
+
+                person_details = _apollo.reveal_email(person_id)
+                if not person_details:
+                    continue
+
+                email = str(person_details.get("email") or "").strip() or None
+                if not email:
+                    continue
+
+                contact_entry = {
+                    "first_name": str(person_details.get("first_name") or first_name).strip(),
+                    "last_name": str(person_details.get("last_name") or last_name).strip(),
+                    "title": str(person_details.get("title") or title).strip() or None,
+                    "title_match": True,
+                    "linkedin_url": str(person_details.get("linkedin_url") or linkedin_url or "").strip() or None,
+                    "email": email,
+                    "email_status": str(person_details.get("email_status") or "verified").lower(),
+                    "snov_confidence": None,
+                    "snov_prospect_raw": None,
+                    "apollo_prospect_raw": prospect,
+                    "snov_email_raw": None,
+                }
+                contacts_to_write.append(contact_entry)
+        else:
+            # 2a. Free check — skip domains with 0 known emails
+            count, err = _snov.get_domain_email_count(domain)
             if err in _PERMANENT_ERROR_CODES:
                 return self._fail_job(
                     engine=engine, job_id=job_id, lock_token=lock_token,
-                    error_code=err, error_message=f"Snov prospects failed: {err}",
-                    attempt_count=1, max_attempts=1,
+                    error_code=err, error_message=f"Snov credentials error: {err}",
+                    attempt_count=1, max_attempts=1,  # force terminal immediately
                 )
-            return self._complete_job(
-                engine=engine, job_id=job_id, lock_token=lock_token,
-                contacts_found=0, title_matched_count=0,
-            )
+            if err:
+                return self._fail_job(
+                    engine=engine, job_id=job_id, lock_token=lock_token,
+                    error_code=err, error_message=f"Snov domain count failed: {err}",
+                    attempt_count=1, max_attempts=3,
+                )
 
-        # 2c. Collect matched contacts and fetch their emails
-        contacts_to_write: list[dict] = []
+            if count == 0:
+                log_event(logger, "contact_fetch_no_emails", domain=domain)
+                return self._complete_job(
+                    engine=engine, job_id=job_id, lock_token=lock_token,
+                    contacts_found=0, title_matched_count=0,
+                )
 
-        for prospect in all_prospects:
-            first_name = str(prospect.get("first_name") or "").strip()
-            last_name = str(prospect.get("last_name") or "").strip()
-            title = str(prospect.get("position") or "").strip()
-            linkedin_url = str(prospect.get("source_page") or "").strip() or None
+            # 2b. Fetch prospects (paginate up to 2 pages = 40 prospects)
+            for page in range(1, 3):
+                prospects, total, err = _snov.search_prospects(domain, page=page)
+                if err:
+                    fetch_error_code = err
+                    log_event(logger, "contact_fetch_prospects_error", domain=domain, page=page, err=err)
+                    break
+                all_prospects.extend(prospects)
+                if len(all_prospects) >= total or len(prospects) == 0:
+                    break
 
-            # Hash is embedded in the search_emails_start URL path, e.g.
-            # ".../search-emails/start/abc123def456"
-            search_emails_url = str(prospect.get("search_emails_start") or "")
-            prospect_hash = search_emails_url.rstrip("/").rsplit("/", 1)[-1] if search_emails_url else ""
+            if not all_prospects:
+                if fetch_error_code in _PERMANENT_ERROR_CODES:
+                    return self._fail_job(
+                        engine=engine, job_id=job_id, lock_token=lock_token,
+                        error_code=fetch_error_code, error_message=f"Snov prospects failed: {fetch_error_code}",
+                        attempt_count=1, max_attempts=1,
+                    )
+                return self._complete_job(
+                    engine=engine, job_id=job_id, lock_token=lock_token,
+                    contacts_found=0, title_matched_count=0,
+                )
 
-            title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
+            # 2c. Collect matched contacts and fetch their emails
+            for prospect in all_prospects:
+                first_name = str(prospect.get("first_name") or "").strip()
+                last_name = str(prospect.get("last_name") or "").strip()
+                title = str(prospect.get("position") or "").strip()
+                linkedin_url = str(prospect.get("source_page") or "").strip() or None
 
-            contact_entry: dict = {
-                "first_name": first_name,
-                "last_name": last_name,
-                "title": title or None,
-                "title_match": title_matched,
-                "linkedin_url": linkedin_url,
-                "email": None,
-                "email_status": "unverified",
-                "snov_confidence": None,
-                "snov_prospect_raw": prospect,
-                "snov_email_raw": None,
-            }
+                # Hash is embedded in the search_emails_start URL path, e.g.
+                # ".../search-emails/start/abc123def456"
+                search_emails_url = str(prospect.get("search_emails_start") or "")
+                prospect_hash = search_emails_url.rstrip("/").rsplit("/", 1)[-1] if search_emails_url else ""
 
-            # 2d. Fetch email for title-matched prospects.
-            #   Step 1: Snov database lookup (free if no result).
-            #   Step 2: If empty, email finder by name+domain (1 credit if found).
-            if title_matched and prospect_hash:
-                emails, email_err = _snov.search_prospect_email(prospect_hash)
-                if not email_err and emails:
-                    best = emails[0]
-                    contact_entry["email"] = str(best.get("email") or "").strip() or None
-                    contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
-                    contact_entry["snov_email_raw"] = emails
+                title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
+                if title_matched:
+                    title_matched_count += 1
 
-            # Fallback: guess email by name+domain if lookup returned nothing
-            if title_matched and not contact_entry["email"] and first_name and last_name:
-                finder_emails, finder_err = _snov.find_email_by_name(first_name, last_name, domain)
-                if not finder_err and finder_emails:
-                    best = finder_emails[0]
-                    contact_entry["email"] = str(best.get("email") or "").strip() or None
-                    contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
-                    contact_entry["snov_email_raw"] = finder_emails
-                    log_event(logger, "contact_email_found_by_name",
-                              domain=domain, name=f"{first_name} {last_name}",
-                              email=contact_entry["email"])
+                contact_entry: dict = {
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "title": title or None,
+                    "title_match": title_matched,
+                    "linkedin_url": linkedin_url,
+                    "email": None,
+                    "email_status": "unverified",
+                    "snov_confidence": None,
+                    "snov_prospect_raw": prospect,
+                    "apollo_prospect_raw": None,
+                    "snov_email_raw": None,
+                }
 
-            contacts_to_write.append(contact_entry)
+                # 2d. Fetch email for title-matched prospects.
+                #   Step 1: Snov database lookup (free if no result).
+                #   Step 2: If empty, email finder by name+domain (1 credit if found).
+                if title_matched and prospect_hash:
+                    emails, email_err = _snov.search_prospect_email(prospect_hash)
+                    if not email_err and emails:
+                        best = emails[0]
+                        contact_entry["email"] = str(best.get("email") or "").strip() or None
+                        contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
+                        contact_entry["snov_email_raw"] = emails
 
-        title_matched_count = sum(1 for c in contacts_to_write if c["title_match"])
+                # Fallback: guess email by name+domain if lookup returned nothing
+                if title_matched and not contact_entry["email"] and first_name and last_name:
+                    finder_emails, finder_err = _snov.find_email_by_name(first_name, last_name, domain)
+                    if not finder_err and finder_emails:
+                        best = finder_emails[0]
+                        contact_entry["email"] = str(best.get("email") or "").strip() or None
+                        contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
+                        contact_entry["snov_email_raw"] = finder_emails
+                        log_event(logger, "contact_email_found_by_name",
+                                  domain=domain, name=f"{first_name} {last_name}",
+                                  email=contact_entry["email"])
+
+                contacts_to_write.append(contact_entry)
         log_event(logger, "contact_fetch_done", domain=domain,
                   contacts=len(contacts_to_write), title_matched=title_matched_count)
 
@@ -347,6 +475,8 @@ class ContactService:
                     ).first()
 
                 if existing:
+                    if c.get("apollo_prospect_raw"):
+                        continue
                     existing.contact_fetch_job_id = job_id
                     existing.first_name = c["first_name"]
                     existing.last_name = c["last_name"]
@@ -355,14 +485,20 @@ class ContactService:
                     existing.linkedin_url = c["linkedin_url"]
                     existing.email_status = c["email_status"]
                     existing.snov_confidence = c["snov_confidence"]
-                    existing.snov_prospect_raw = c["snov_prospect_raw"]
-                    existing.snov_email_raw = c["snov_email_raw"]
+                    if c["snov_prospect_raw"] is not None:
+                        existing.snov_prospect_raw = c["snov_prospect_raw"]
+                    if c.get("apollo_prospect_raw") is not None:
+                        existing.apollo_prospect_raw = c.get("apollo_prospect_raw")
+                    if c["snov_email_raw"] is not None:
+                        existing.snov_email_raw = c["snov_email_raw"]
                     existing.updated_at = utcnow()
                     session.add(existing)
+                    contacts_written += 1
                 else:
                     session.add(ProspectContact(
                         company_id=company_id,
                         contact_fetch_job_id=job_id,
+                        source=job_provider,
                         first_name=c["first_name"],
                         last_name=c["last_name"],
                         title=c["title"],
@@ -372,13 +508,15 @@ class ContactService:
                         email_status=c["email_status"],
                         snov_confidence=c["snov_confidence"],
                         snov_prospect_raw=c["snov_prospect_raw"],
+                        apollo_prospect_raw=c.get("apollo_prospect_raw"),
                         snov_email_raw=c["snov_email_raw"],
                     ))
+                    contacts_written += 1
 
             now_finish = utcnow()
             job.state = ContactFetchJobState.SUCCEEDED
             job.terminal_state = True
-            job.contacts_found = len(contacts_to_write)
+            job.contacts_found = contacts_written
             job.title_matched_count = title_matched_count
             job.finished_at = now_finish
             job.updated_at = now_finish

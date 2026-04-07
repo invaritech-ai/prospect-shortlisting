@@ -39,7 +39,7 @@ def reconcile_stuck_jobs() -> None:
     # Import here to avoid circular imports at module load time.
     from app.tasks.scrape import scrape_website
     from app.tasks.analysis import run_analysis_job
-    from app.tasks.contacts import fetch_contacts
+    from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo
 
     engine = get_engine()
     with Session(engine) as session:
@@ -115,8 +115,8 @@ def reconcile_stuck_jobs() -> None:
         ]
         ns_analysis_ids = [str(job.id) for job in never_started_analysis]
         stuck_analysis_ids = [str(job.id) for job in stuck_analysis]
-        ns_contact_ids = [str(job.id) for job in never_started_contacts]
-        stuck_contact_ids = [str(job.id) for job in stuck_contacts]
+        ns_contact_jobs = [(str(job.id), str(job.provider or "snov")) for job in never_started_contacts]
+        stuck_contact_jobs = [(str(job.id), str(job.provider or "snov")) for job in stuck_contacts]
 
         # Reset never-started scrapes (no reconcile_count increment).
         for job in never_started_scrapes:
@@ -173,13 +173,16 @@ def reconcile_stuck_jobs() -> None:
         run_analysis_job.delay(job_id)
         log_event(logger, "reconciler_requeued_analysis", job_id=job_id)
 
-    for job_id in ns_contact_ids + stuck_contact_ids:
-        fetch_contacts.delay(job_id)
-        log_event(logger, "reconciler_requeued_contact", job_id=job_id)
+    for job_id, provider in ns_contact_jobs + stuck_contact_jobs:
+        if provider == "apollo":
+            fetch_contacts_apollo.delay(job_id)
+        else:
+            fetch_contacts.delay(job_id)
+        log_event(logger, "reconciler_requeued_contact", job_id=job_id, provider=provider)
 
     total_scrape = len(ns_scrape_ids) + len(stuck_scrape_ids)
     total_analysis = len(ns_analysis_ids) + len(stuck_analysis_ids)
-    total_contacts = len(ns_contact_ids) + len(stuck_contact_ids)
+    total_contacts = len(ns_contact_jobs) + len(stuck_contact_jobs)
     log_event(
         logger,
         "reconciler_done",
@@ -187,7 +190,7 @@ def reconcile_stuck_jobs() -> None:
         stuck_scrapes=len(stuck_scrape_ids),
         never_started_analysis=len(ns_analysis_ids),
         stuck_analysis=len(stuck_analysis_ids),
-        never_started_contacts=len(ns_contact_ids),
-        stuck_contacts=len(stuck_contact_ids),
+        never_started_contacts=len(ns_contact_jobs),
+        stuck_contacts=len(stuck_contact_jobs),
         total_requeued=total_scrape + total_analysis + total_contacts,
     )

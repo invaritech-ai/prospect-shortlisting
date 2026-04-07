@@ -70,6 +70,7 @@ app.conf.update(
         "app.tasks.analysis.run_analysis_job": {"queue": "analysis"},
         "app.tasks.beat.reconcile_stuck_jobs": {"queue": "beat"},
         "app.tasks.contacts.fetch_contacts": {"queue": "contacts"},
+        "app.tasks.contacts.fetch_contacts_apollo": {"queue": "contacts"},
     },
     # Celery Beat periodic schedule.
     beat_schedule={

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     snov_client_id: str = ""
     snov_client_secret: str = ""
+    apollo_api_key: str = ""
     zerobounce_api_key: str = ""
 
     model_config = SettingsConfigDict(

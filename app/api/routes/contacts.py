@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -23,9 +22,9 @@ from app.api.schemas.contacts import (
 )
 from app.db.session import get_session
 from app.models import AnalysisJob, ClassificationResult, Company, ContactFetchJob, ProspectContact, Run, TitleMatchRule
-from app.models.pipeline import AnalysisJobState, ContactFetchJobState, PredictedLabel
+from app.models.pipeline import AnalysisJobState, PredictedLabel
 from app.services.contact_service import rematch_existing_contacts, seed_title_rules
-from app.tasks.contacts import fetch_contacts
+from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo
 
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
@@ -34,7 +33,7 @@ router = APIRouter(prefix="/v1", tags=["contacts"])
 # ── Helper: bulk create + enqueue ─────────────────────────────────────────────
 
 def _enqueue_contact_fetches(
-    *, session: Session, companies: list[Company]
+    *, session: Session, companies: list[Company], provider: str = "snov"
 ) -> ContactFetchResult:
     if not companies:
         return ContactFetchResult(
@@ -57,16 +56,17 @@ def _enqueue_contact_fetches(
     for company in companies:
         if company.id in active_company_ids:
             continue
-        jobs_to_create.append(ContactFetchJob(company_id=company.id))
+        jobs_to_create.append(ContactFetchJob(company_id=company.id, provider=provider))
 
     if jobs_to_create:
         session.add_all(jobs_to_create)
         session.commit()
 
     queued_job_ids: list[UUID] = []
+    task = fetch_contacts_apollo if provider == "apollo" else fetch_contacts
     for job in jobs_to_create:
         if job.id:
-            fetch_contacts.delay(str(job.id))
+            task.delay(str(job.id))
             queued_job_ids.append(job.id)
 
     return ContactFetchResult(
@@ -91,7 +91,22 @@ def fetch_contacts_for_company(
     company = session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found.")
-    return _enqueue_contact_fetches(session=session, companies=[company])
+    return _enqueue_contact_fetches(session=session, companies=[company], provider="snov")
+
+
+@router.post(
+    "/companies/{company_id}/fetch-contacts/apollo",
+    response_model=ContactFetchResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def fetch_apollo_contacts_for_company(
+    company_id: UUID,
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    company = session.get(Company, company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found.")
+    return _enqueue_contact_fetches(session=session, companies=[company], provider="apollo")
 
 
 # ── Bulk: all "Possible" in a run ─────────────────────────────────────────────
@@ -121,7 +136,34 @@ def fetch_contacts_for_run(
         )
     ).all())
 
-    return _enqueue_contact_fetches(session=session, companies=possible_rows)
+    return _enqueue_contact_fetches(session=session, companies=possible_rows, provider="snov")
+
+
+@router.post(
+    "/runs/{run_id}/fetch-contacts/apollo",
+    response_model=ContactFetchResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def fetch_apollo_contacts_for_run(
+    run_id: UUID,
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    run = session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found.")
+
+    possible_rows = list(session.exec(
+        select(Company)
+        .join(AnalysisJob, col(AnalysisJob.company_id) == col(Company.id))
+        .join(ClassificationResult, col(ClassificationResult.analysis_job_id) == col(AnalysisJob.id))
+        .where(
+            col(AnalysisJob.run_id) == run_id,
+            col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED,
+            col(ClassificationResult.predicted_label) == PredictedLabel.POSSIBLE,
+        )
+    ).all())
+
+    return _enqueue_contact_fetches(session=session, companies=possible_rows, provider="apollo")
 
 
 # ── List contacts for a company ───────────────────────────────────────────────
@@ -324,11 +366,15 @@ def create_title_rule(
     payload: TitleMatchRuleCreate,
     session: Session = Depends(get_session),
 ) -> TitleMatchRuleRead:
+    """Create a rule, re-evaluate contacts, and queue Snov fetches for new matches."""
     rule = TitleMatchRule(rule_type=payload.rule_type, keywords=payload.keywords)
     session.add(rule)
     session.commit()
     session.refresh(rule)
-    rematch_existing_contacts(session)  # side-effect: re-evaluates existing contacts
+    _, company_ids = rematch_existing_contacts(session)
+    if company_ids:
+        companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
+        _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
     return TitleMatchRuleRead.model_validate(rule, from_attributes=True)
 
 
@@ -337,12 +383,16 @@ def delete_title_rule(
     rule_id: UUID,
     session: Session = Depends(get_session),
 ) -> None:
+    """Delete a rule, re-evaluate contacts, and queue Snov fetches for new matches."""
     rule = session.get(TitleMatchRule, rule_id)
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found.")
     session.delete(rule)
     session.commit()
-    rematch_existing_contacts(session)
+    _, company_ids = rematch_existing_contacts(session)
+    if company_ids:
+        companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
+        _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
 
 
 @router.post("/title-match-rules/rematch", response_model=RematchResult)
@@ -352,7 +402,7 @@ def rematch_contacts(session: Session = Depends(get_session)) -> RematchResult:
     fetch_result = ContactFetchResult(requested_count=0, queued_count=0, already_fetching_count=0, queued_job_ids=[])
     if company_ids:
         companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
-        fetch_result = _enqueue_contact_fetches(session=session, companies=companies)
+        fetch_result = _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
     return RematchResult(
         updated=updated,
         fetch_jobs_queued=fetch_result.queued_count,
