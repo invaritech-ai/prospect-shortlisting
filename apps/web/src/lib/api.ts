@@ -248,6 +248,14 @@ export async function fetchContactsForRun(runId: string): Promise<ContactFetchRe
   return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts`, { method: 'POST' })
 }
 
+export async function fetchContactsForCompanyApollo(companyId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo`, { method: 'POST' })
+}
+
+export async function fetchContactsForRunApollo(runId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo`, { method: 'POST' })
+}
+
 export async function listContacts(
   options: {
     titleMatch?: boolean

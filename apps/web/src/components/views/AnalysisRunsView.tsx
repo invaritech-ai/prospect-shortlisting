@@ -20,6 +20,7 @@ interface AnalysisRunsViewProps {
   onRefresh: () => void
   onInspectRun: (run: RunRead) => void
   onFetchContactsForRun: (run: RunRead) => Promise<void>
+  onFetchContactsForRunApollo: (run: RunRead) => Promise<void>
 }
 
 function runBadge(run: RunRead): { variant: 'info' | 'success' | 'fail'; label: string } {
@@ -44,7 +45,7 @@ function RunProgressBar({ run }: { run: RunRead }) {
   )
 }
 
-function RunCard({ run, onInspect, onFetchContacts, isFetching }: { run: RunRead; onInspect: () => void; onFetchContacts: () => void; isFetching: boolean }) {
+function RunCard({ run, onInspect, onFetchContacts, isFetching, onFetchContactsApollo, isFetchingApollo }: { run: RunRead; onInspect: () => void; onFetchContacts: () => void; isFetching: boolean; onFetchContactsApollo: () => void; isFetchingApollo: boolean }) {
   const badge = runBadge(run)
   const done = run.completed_jobs + run.failed_jobs
   return (
@@ -60,9 +61,13 @@ function RunCard({ run, onInspect, onFetchContacts, isFetching }: { run: RunRead
       <div className="mt-2 flex items-center justify-between gap-2 text-xs text-[var(--oc-muted)]">
         <span>{done}/{run.total_jobs} jobs · {run.failed_jobs} failed</span>
         <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="xs" onClick={onFetchContacts} loading={isFetching} title="Queue contact fetch for all Possible companies in this run">
+          <Button variant="ghost" size="xs" onClick={onFetchContacts} loading={isFetching} title="Queue Snov contact fetch for all Possible companies in this run">
             <IconUsers size={13} />
-            Contacts
+            Snov
+          </Button>
+          <Button variant="ghost" size="xs" onClick={onFetchContactsApollo} loading={isFetchingApollo} title="Queue Apollo contact fetch for all Possible companies in this run">
+            <IconUsers size={13} />
+            Apollo
           </Button>
           <Button variant="secondary" size="xs" onClick={onInspect}>
             <IconEye size={13} />
@@ -89,8 +94,10 @@ export function AnalysisRunsView({
   onRefresh,
   onInspectRun,
   onFetchContactsForRun,
+  onFetchContactsForRunApollo,
 }: AnalysisRunsViewProps) {
   const [fetchingRunIds, setFetchingRunIds] = useState<Set<string>>(new Set())
+  const [fetchingApolloRunIds, setFetchingApolloRunIds] = useState<Set<string>>(new Set())
 
   const handleFetchContacts = async (run: RunRead) => {
     setFetchingRunIds((prev) => new Set(prev).add(run.id))
@@ -98,6 +105,15 @@ export function AnalysisRunsView({
       await onFetchContactsForRun(run)
     } finally {
       setFetchingRunIds((prev) => { const next = new Set(prev); next.delete(run.id); return next })
+    }
+  }
+
+  const handleFetchContactsApollo = async (run: RunRead) => {
+    setFetchingApolloRunIds((prev) => new Set(prev).add(run.id))
+    try {
+      await onFetchContactsForRunApollo(run)
+    } finally {
+      setFetchingApolloRunIds((prev) => { const next = new Set(prev); next.delete(run.id); return next })
     }
   }
 
@@ -168,6 +184,8 @@ export function AnalysisRunsView({
                 onInspect={() => onInspectRun(run)}
                 onFetchContacts={() => void handleFetchContacts(run)}
                 isFetching={fetchingRunIds.has(run.id)}
+                onFetchContactsApollo={() => void handleFetchContactsApollo(run)}
+                isFetchingApollo={fetchingApolloRunIds.has(run.id)}
               />
             ))}
           </div>
@@ -222,9 +240,13 @@ export function AnalysisRunsView({
                       </td>
                       <td>
                         <div className="flex items-center gap-1.5">
-                          <Button variant="ghost" size="xs" onClick={() => void handleFetchContacts(run)} loading={fetchingRunIds.has(run.id)} title="Queue contact fetch for all Possible companies in this run">
+                          <Button variant="ghost" size="xs" onClick={() => void handleFetchContacts(run)} loading={fetchingRunIds.has(run.id)} title="Queue Snov contact fetch for all Possible companies in this run">
                             <IconUsers size={13} />
-                            Contacts
+                            Snov
+                          </Button>
+                          <Button variant="ghost" size="xs" onClick={() => void handleFetchContactsApollo(run)} loading={fetchingApolloRunIds.has(run.id)} title="Queue Apollo contact fetch for all Possible companies in this run">
+                            <IconUsers size={13} />
+                            Apollo
                           </Button>
                           <Button variant="secondary" size="xs" onClick={() => onInspectRun(run)}>
                             <IconEye size={13} />

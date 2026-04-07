@@ -81,6 +81,7 @@ interface CompaniesViewProps {
   onReviewCompany: (company: CompanyListItem) => void
   onSetManualLabel: (company: CompanyListItem, label: ManualLabel | null) => void
   onFetchContacts: (company: CompanyListItem) => Promise<void>
+  onFetchContactsApollo: (company: CompanyListItem) => Promise<void>
   isFetchingContactsSelected: boolean
   onFetchContactsSelected: () => void
   onGoToScrapeJobs: () => void
@@ -430,11 +431,13 @@ function CompanyCard({
   onReview: () => void
   onSetManualLabel: (label: ManualLabel | null) => void
   onFetchContacts: () => void
+  onFetchContactsApollo: () => void
   actionState: string
   analysisActionState: string
   selectedPrompt: PromptRead | null
 }) {
   const [isFetchingContacts, setIsFetchingContacts] = useState(false)
+  const [isFetchingContactsApollo, setIsFetchingContactsApollo] = useState(false)
   const scrapeBadge = scrapeBadgeForCompany(item)
   const isScraping = item.latest_scrape_terminal === false
   const isAnalysing = item.latest_analysis_terminal === false
@@ -443,6 +446,11 @@ function CompanyCard({
   const handleFetchContacts = async () => {
     setIsFetchingContacts(true)
     try { await onFetchContacts() } finally { setIsFetchingContacts(false) }
+  }
+
+  const handleFetchContactsApollo = async () => {
+    setIsFetchingContactsApollo(true)
+    try { await onFetchContactsApollo() } finally { setIsFetchingContactsApollo(false) }
   }
 
   return (
@@ -516,6 +524,11 @@ function CompanyCard({
         </Button>
         <Button variant="ghost" size="xs" onClick={() => void handleFetchContacts()} loading={isFetchingContacts} title="Fetch contacts via Snov.io">
           <IconUsers size={13} />
+          Snov
+        </Button>
+        <Button variant="ghost" size="xs" onClick={() => void handleFetchContactsApollo()} loading={isFetchingContactsApollo} title="Fetch contacts via Apollo">
+          <IconUsers size={13} />
+          Apollo
         </Button>
       </div>
     </div>
@@ -573,6 +586,7 @@ export function CompaniesView({
   onReviewCompany,
   onSetManualLabel,
   onFetchContacts,
+  onFetchContactsApollo,
   isFetchingContactsSelected,
   onFetchContactsSelected,
   onGoToScrapeJobs,
@@ -745,6 +759,7 @@ export function CompaniesView({
                 onReview={() => onReviewCompany(item)}
                 onSetManualLabel={(label) => onSetManualLabel(item, label)}
                 onFetchContacts={() => onFetchContacts(item)}
+                onFetchContactsApollo={() => onFetchContactsApollo(item)}
                 actionState={actionState[item.id] ?? ''}
                 analysisActionState={analysisActionState[item.id] ?? ''}
                 selectedPrompt={selectedPrompt}
@@ -861,7 +876,16 @@ export function CompaniesView({
                             title="Fetch contacts via Snov.io"
                           >
                             <IconUsers size={13} />
-                            {item.contact_count > 0 ? item.contact_count : ''}
+                            {item.contact_count > 0 ? item.contact_count : 'Snov'}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => void onFetchContactsApollo(item)}
+                            title="Fetch contacts via Apollo"
+                          >
+                            <IconUsers size={13} />
+                            Apollo
                           </Button>
                         </div>
                       </td>

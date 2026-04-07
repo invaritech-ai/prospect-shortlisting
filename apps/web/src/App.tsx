@@ -9,6 +9,8 @@ import {
   drainQueue,
   fetchContactsForCompany,
   fetchContactsForRun,
+  fetchContactsForCompanyApollo,
+  fetchContactsForRunApollo,
   getAnalysisJobDetail,
   getCompaniesExportUrl,
   getCompanyCounts,
@@ -988,6 +990,27 @@ function App() {
     } catch (err) { setError(parseError(err)) }
   }
 
+  const onFetchContactsApollo = async (company: CompanyListItem) => {
+    setError(''); setNotice('')
+    try {
+      const result = await fetchContactsForCompanyApollo(company.id)
+      const msg = result.queued_count > 0
+        ? `Queued Apollo fetch for ${company.domain}.`
+        : result.already_fetching_count > 0
+          ? `Apollo fetch already in progress for ${company.domain}.`
+          : `No Apollo contacts queued for ${company.domain}.`
+      setNotice(msg)
+    } catch (err) { setError(parseError(err)) }
+  }
+
+  const onFetchContactsForRunApollo = async (run: RunRead) => {
+    setError(''); setNotice('')
+    try {
+      const result = await fetchContactsForRunApollo(run.id)
+      setNotice(`Queued Apollo fetch for ${result.queued_count} Possible companies in run ${run.id.slice(0, 8)}….`)
+    } catch (err) { setError(parseError(err)) }
+  }
+
   // ── Derived ────────────────────────────────────────────────────────────
   const selectedPrompt = prompts.find((p) => p.id === selectedPromptId) ?? null
   const operationsEvents = buildOperationsEvents(operationsScrapeJobs, operationsRuns)
@@ -1072,6 +1095,7 @@ function App() {
             onReviewCompany={(c) => void openCompanyReview(c)}
             onSetManualLabel={(c, label) => void setManualLabel(c, label)}
             onFetchContacts={(c) => onFetchContacts(c)}
+            onFetchContactsApollo={(c) => onFetchContactsApollo(c)}
             isFetchingContactsSelected={isFetchingContactsSelected}
             onFetchContactsSelected={() => void onFetchContactsSelected()}
             onGoToScrapeJobs={() => {
@@ -1114,6 +1138,7 @@ function App() {
             onRefresh={() => void loadRuns(runsOffset, runsPageSize)}
             onInspectRun={(run) => void loadRunJobs(run)}
             onFetchContactsForRun={(run) => onFetchContactsForRun(run)}
+            onFetchContactsForRunApollo={(run) => onFetchContactsForRunApollo(run)}
           />
         )}
 
