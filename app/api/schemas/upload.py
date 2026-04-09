@@ -49,6 +49,7 @@ class CompanyRead(UTCReadModel):
     raw_url: str
     normalized_url: str
     domain: str
+    pipeline_stage: str
     created_at: datetime
 
 
@@ -67,6 +68,7 @@ class CompanyListItem(UTCReadModel):
     raw_url: str
     normalized_url: str
     domain: str
+    pipeline_stage: str
     created_at: datetime
     latest_decision: str | None = None
     latest_confidence: Decimal | None = None
@@ -122,6 +124,10 @@ class CompanyIdsResult(BaseModel):
 
 class CompanyCounts(BaseModel):
     total: int
+    uploaded: int
+    scraped: int
+    classified: int
+    contact_ready: int
     unlabeled: int
     possible: int
     unknown: int

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 import html2text
 
@@ -29,6 +30,57 @@ def _html_to_markdown(html_or_text: str) -> str:
 
 
 class MarkdownService:
+    def __init__(self) -> None:
+        self._client = None
+        self._init_error = ""
+        self._openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        self._openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        self._cache_enabled = True
+        self._init_openai_client()
+
+    def _init_openai_client(self) -> None:
+        """Compatibility hook for tests and older call sites."""
+        return None
+
+    def _call_openrouter(
+        self,
+        *,
+        url: str,
+        title: str,
+        page_text: str,
+        model: str,
+    ) -> tuple[str, str]:
+        return _markdown_llm.chat(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Convert webpage extraction to clean content-only markdown. "
+                        "Keep headings, lists, and tables where possible. Remove nav/footer/cookie boilerplate. "
+                        "Do not add facts."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"URL: {url}\n"
+                        f"TITLE: {title}\n\n"
+                        "PAGE_TEXT:\n"
+                        f"{page_text[:20000]}\n\n"
+                        "Return markdown only."
+                    ),
+                },
+            ],
+        )
+
+    def _llm_unavailable_error(self) -> str:
+        if getattr(self, "_init_error", ""):
+            return str(self._init_error)
+        if not getattr(self, "_openai_key", "") and not getattr(self, "_openrouter_key", ""):
+            return "llm_api_key_missing"
+        return ""
+
     def _assemble_rule_based(self, url: str, title: str, rule_md: str, page_text: str) -> str:
         """Build final rule-based markdown from an already-converted string."""
         md = rule_md or clean_text(page_text)[:18000]
@@ -40,6 +92,8 @@ class MarkdownService:
         return f"md_llm:{digest}"
 
     def _cache_get(self, key: str) -> str | None:
+        if not getattr(self, "_cache_enabled", False):
+            return None
         redis = get_redis()
         if not redis:
             return None
@@ -50,6 +104,8 @@ class MarkdownService:
             return None
 
     def _cache_set(self, key: str, value: str) -> None:
+        if not getattr(self, "_cache_enabled", False):
+            return
         redis = get_redis()
         if not redis:
             return
@@ -85,30 +141,12 @@ class MarkdownService:
         if cached:
             return cached, True, ""
 
+        llm_unavailable_error = self._llm_unavailable_error()
+        if llm_unavailable_error:
+            return self._assemble_rule_based(url, title, rule_md, page_text), False, llm_unavailable_error
+
         # Rule-based output too thin — try LLM.
-        content, error = _markdown_llm.chat(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Convert webpage extraction to clean content-only markdown. "
-                        "Keep headings, lists, and tables where possible. Remove nav/footer/cookie boilerplate. "
-                        "Do not add facts."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"URL: {url}\n"
-                        f"TITLE: {title}\n\n"
-                        "PAGE_TEXT:\n"
-                        f"{page_text[:20000]}\n\n"
-                        "Return markdown only."
-                    ),
-                },
-            ],
-        )
+        content, error = self._call_openrouter(url=url, title=title, page_text=page_text, model=model)
         if content:
             self._cache_set(cache_key, content)
             return content, True, ""

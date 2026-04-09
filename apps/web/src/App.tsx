@@ -39,6 +39,7 @@ import type {
   CompanyCounts,
   CompanyList,
   CompanyListItem,
+  CompanyStageFilter,
   DecisionFilter,
   ManualLabel,
   PromptRead,
@@ -109,6 +110,7 @@ function App() {
   const [pageSize, setPageSize] = useState(DEFAULT_COMPANY_PAGE_SIZE)
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('all')
   const [scrapeFilter, setScrapeFilter] = useState<ScrapeFilter>('all')
+  const [companyStageFilter, setCompanyStageFilter] = useState<CompanyStageFilter>('all')
   const [letterFilter, setLetterFilter] = useState<string | null>(null)
   const [letterCounts, setLetterCounts] = useState<Record<string, number>>({})
   const [isCompaniesLoading, setIsCompaniesLoading] = useState(false)
@@ -251,17 +253,30 @@ function App() {
   // ── Company loading ────────────────────────────────────────────────────
 
   const cacheKeyFor = useCallback(
-    (offset: number, limit: number, df: DecisionFilter, sf: ScrapeFilter, lf: string | null = null) =>
-      `${df}:${sf}:${lf ?? ''}:${limit}:${offset}`,
+    (
+      offset: number,
+      limit: number,
+      df: DecisionFilter,
+      sf: ScrapeFilter,
+      gf: CompanyStageFilter,
+      lf: string | null = null,
+    ) => `${df}:${sf}:${gf}:${lf ?? ''}:${limit}:${offset}`,
     [],
   )
 
   const prefetchCompanies = useCallback(
-    async (offset: number, limit: number, df: DecisionFilter, sf: ScrapeFilter, lf: string | null = null) => {
-      const key = cacheKeyFor(offset, limit, df, sf, lf)
+    async (
+      offset: number,
+      limit: number,
+      df: DecisionFilter,
+      sf: ScrapeFilter,
+      gf: CompanyStageFilter,
+      lf: string | null = null,
+    ) => {
+      const key = cacheKeyFor(offset, limit, df, sf, gf, lf)
       if (companyCacheRef.current[key]) return
       try {
-        const response = await listCompanies(limit, offset, df, false, sf, lf)
+        const response = await listCompanies(limit, offset, df, false, sf, gf, lf)
         companyCacheRef.current[key] = response
       } catch { /* silent */ }
     },
@@ -274,32 +289,33 @@ function App() {
       nextLimit = pageSize,
       df: DecisionFilter = decisionFilter,
       sf: ScrapeFilter = scrapeFilter,
+      gf: CompanyStageFilter = companyStageFilter,
       forceRefresh = false,
       lf: string | null = letterFilter,
     ) => {
-      const key = cacheKeyFor(offset, nextLimit, df, sf, lf)
+      const key = cacheKeyFor(offset, nextLimit, df, sf, gf, lf)
       const cached = companyCacheRef.current[key]
       if (cached && !forceRefresh) {
         setCompanies(cached)
         setCompanyOffset(offset)
-        void prefetchCompanies(offset + nextLimit, nextLimit, df, sf, lf)
+        void prefetchCompanies(offset + nextLimit, nextLimit, df, sf, gf, lf)
         return
       }
       setIsCompaniesLoading(true)
       try {
-        const response = await listCompanies(nextLimit, offset, df, false, sf, lf)
+        const response = await listCompanies(nextLimit, offset, df, false, sf, gf, lf)
         companyCacheRef.current[key] = response
         setCompanies(response)
         setCompanyOffset(offset)
         pollFailuresRef.current = 0
-        if (response.has_more) void prefetchCompanies(offset + nextLimit, nextLimit, df, sf, lf)
+        if (response.has_more) void prefetchCompanies(offset + nextLimit, nextLimit, df, sf, gf, lf)
       } catch (err) {
         setError(parseError(err))
       } finally {
         setIsCompaniesLoading(false)
       }
     },
-    [cacheKeyFor, decisionFilter, scrapeFilter, letterFilter, pageSize, prefetchCompanies],
+    [cacheKeyFor, companyStageFilter, decisionFilter, scrapeFilter, letterFilter, pageSize, prefetchCompanies],
   )
 
   const loadScrapeJobs = useCallback(
@@ -456,9 +472,9 @@ function App() {
     } catch { /* non-critical */ }
   }, [])
 
-  const loadLetterCounts = useCallback(async (df: DecisionFilter, sf: ScrapeFilter) => {
+  const loadLetterCounts = useCallback(async (df: DecisionFilter, sf: ScrapeFilter, gf: CompanyStageFilter) => {
     try {
-      const data = await getLetterCounts(df, sf)
+      const data = await getLetterCounts(df, sf, gf)
       setLetterCounts(data.counts)
     } catch { /* non-critical */ }
   }, [])
@@ -469,12 +485,12 @@ function App() {
     setSelectedCompanyIds([])
     setCompanyOffset(0)
     companyCacheRef.current = {}
-    void loadCompanies(0, pageSize, decisionFilter, scrapeFilter)
-  }, [decisionFilter, scrapeFilter, letterFilter, loadCompanies, pageSize])
+    void loadCompanies(0, pageSize, decisionFilter, scrapeFilter, companyStageFilter)
+  }, [decisionFilter, scrapeFilter, companyStageFilter, letterFilter, loadCompanies, pageSize])
 
   useEffect(() => {
-    void loadLetterCounts(decisionFilter, scrapeFilter)
-  }, [decisionFilter, scrapeFilter, loadLetterCounts])
+    void loadLetterCounts(decisionFilter, scrapeFilter, companyStageFilter)
+  }, [decisionFilter, scrapeFilter, companyStageFilter, loadLetterCounts])
 
   useEffect(() => { void loadScrapeJobs(0, jobsPageSize) }, [jobsFilter, jobsPageSize, jobsSearch, loadScrapeJobs])
   useEffect(() => { void loadRuns(0, runsPageSize) }, [runsPageSize, loadRuns])
@@ -543,10 +559,10 @@ function App() {
     const timer = window.setInterval(() => {
       if (pollFailuresRef.current >= MAX_POLL_FAILURES) return
       void loadRuns(runsOffset, runsPageSize)
-      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter, true)
     }, 4000)
     return () => window.clearInterval(timer)
-  }, [companyOffset, decisionFilter, scrapeFilter, loadCompanies, loadRuns, pageSize, runs, runsOffset, runsPageSize])
+  }, [companyOffset, companyStageFilter, decisionFilter, scrapeFilter, loadCompanies, loadRuns, pageSize, runs, runsOffset, runsPageSize])
 
   useEffect(() => {
     if (!selectedPromptId) return
@@ -564,7 +580,7 @@ function App() {
       companyCacheRef.current = {}
       setFile(null)
       setSelectedCompanyIds([])
-      await loadCompanies(0, pageSize, decisionFilter)
+      await loadCompanies(0, pageSize, decisionFilter, scrapeFilter, companyStageFilter)
       void loadCompanyCounts()
       setNotice('Upload parsed and companies refreshed.')
     } catch (err) { setError(parseError(err)) }
@@ -580,7 +596,7 @@ function App() {
     try {
       await createScrapeJob({ website_url: company.normalized_url })
       companyCacheRef.current = {}
-      await loadCompanies(companyOffset, pageSize, decisionFilter)
+      await loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter)
       await loadScrapeJobs(0, jobsPageSize)
       setActionState((c) => ({ ...c, [company.id]: 'Queued' }))
     } catch (err) {
@@ -609,7 +625,7 @@ function App() {
   const onSelectAllFiltered = async () => {
     setIsSelectingAll(true)
     try {
-      const result = await listCompanyIds(decisionFilter, scrapeFilter, letterFilter)
+      const result = await listCompanyIds(decisionFilter, scrapeFilter, companyStageFilter, letterFilter)
       setSelectedCompanyIds(result.ids)
     } catch (err) { setError(parseError(err)) }
     finally { setIsSelectingAll(false) }
@@ -629,7 +645,7 @@ function App() {
         companies && companies.items.length === selectedCompanyIds.length && companyOffset > 0
           ? Math.max(companyOffset - (companies?.limit ?? pageSize), 0) : companyOffset
       setSelectedCompanyIds([])
-      await loadCompanies(nextOffset, pageSize, decisionFilter)
+      await loadCompanies(nextOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter)
       void loadCompanyCounts()
       setNotice(`Deleted ${selectedCompanyIds.length} companies.`)
     } catch (err) { setError(parseError(err)) }
@@ -642,7 +658,7 @@ function App() {
     try {
       const result = await scrapeSelectedCompanies(selectedCompanyIds)
       companyCacheRef.current = {}
-      await loadCompanies(companyOffset, pageSize, decisionFilter)
+      await loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter)
       await loadScrapeJobs(0, jobsPageSize)
       const msg = `Queued ${result.queued_count}/${result.requested_count} selected companies for scraping.`
       if (result.failed_company_ids.length > 0) setError(`${msg} ${result.failed_company_ids.length} failed.`)
@@ -662,7 +678,7 @@ function App() {
     try {
       const result = await scrapeAllCompanies()
       companyCacheRef.current = {}
-      await loadCompanies(0, pageSize, decisionFilter)
+      await loadCompanies(0, pageSize, decisionFilter, scrapeFilter, companyStageFilter)
       await loadScrapeJobs(0, jobsPageSize)
       void loadCompanyCounts()
       setSelectedCompanyIds([])
@@ -703,7 +719,7 @@ function App() {
         company_ids: scope === 'selected' ? companyIds : undefined,
       })
       await loadRuns(0, runsPageSize)
-      await loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+      await loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter, true)
       void loadCompanyCounts()
       const runCount = result.runs.length
       const msg = `Created ${runCount} run${runCount === 1 ? '' : 's'} and queued ${result.queued_count}/${result.requested_count} classifications.`
@@ -903,7 +919,7 @@ function App() {
     try {
       await upsertCompanyFeedback(reviewedCompany.id, { thumbs, comment: comment || null, manual_label: reviewedCompany.feedback_manual_label ?? null })
       companyCacheRef.current = {}
-      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter, true)
       setReviewedCompany((prev) => prev ? { ...prev, feedback_thumbs: thumbs, feedback_comment: comment || null } : prev)
       setNotice('Feedback saved.')
     } catch (err) { setError(parseError(err)) }
@@ -914,7 +930,7 @@ function App() {
     try {
       await upsertCompanyFeedback(company.id, { manual_label: label })
       companyCacheRef.current = {}
-      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true)
+      void loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter, true)
     } catch (err) { setError(parseError(err)) }
   }
 
@@ -944,7 +960,7 @@ function App() {
     try {
       const result = await resetStuckAnalysisJobs()
       await Promise.all([
-        loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, true),
+        loadCompanies(companyOffset, pageSize, decisionFilter, scrapeFilter, companyStageFilter, true),
         loadRuns(0, runsPageSize),
         loadStats(),
       ])
@@ -1053,6 +1069,7 @@ function App() {
             pageSize={pageSize}
             decisionFilter={decisionFilter}
             scrapeFilter={scrapeFilter}
+            stageFilter={companyStageFilter}
             selectedCompanyIds={selectedCompanyIds}
             companyCounts={companyCounts}
             stats={stats}
@@ -1074,9 +1091,10 @@ function App() {
             onSetLetterFilter={(lf) => { setLetterFilter(lf); setCompanyOffset(0); companyCacheRef.current = {} }}
             onSetDecisionFilter={(f) => { setDecisionFilter(f); setCompanyOffset(0); companyCacheRef.current = {} }}
             onSetScrapeFilter={(f) => { setScrapeFilter(f); setCompanyOffset(0); companyCacheRef.current = {} }}
+            onSetStageFilter={(f) => { setCompanyStageFilter(f); setCompanyOffset(0); companyCacheRef.current = {} }}
             onSetPageSize={(s) => { setPageSize(s); setCompanyOffset(0); companyCacheRef.current = {} }}
-            onPagePrev={() => void loadCompanies(Math.max(companyOffset - (companies?.limit ?? pageSize), 0), pageSize, decisionFilter)}
-            onPageNext={() => void loadCompanies(companyOffset + (companies?.limit ?? pageSize), pageSize, decisionFilter)}
+            onPagePrev={() => void loadCompanies(Math.max(companyOffset - (companies?.limit ?? pageSize), 0), pageSize, decisionFilter, scrapeFilter, companyStageFilter)}
+            onPageNext={() => void loadCompanies(companyOffset + (companies?.limit ?? pageSize), pageSize, decisionFilter, scrapeFilter, companyStageFilter)}
             onToggleCompanySelection={toggleCompanySelection}
             onToggleVisibleSelection={toggleVisibleSelection}
             onSelectAllFiltered={() => void onSelectAllFiltered()}

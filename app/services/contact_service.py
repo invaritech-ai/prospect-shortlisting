@@ -20,6 +20,7 @@ from sqlmodel import Session, col, select
 from app.core.logging import log_event
 from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule
 from app.models.pipeline import ContactFetchJobState
+from app.services.pipeline_service import recompute_contact_stages
 from app.services.apollo_client import (
     ERR_APOLLO_AUTH_FAILED,
     ERR_APOLLO_CREDENTIALS_MISSING,
@@ -164,6 +165,7 @@ def rematch_existing_contacts(session: Session) -> tuple[int, list[UUID]]:
     include_rules, exclude_words = load_title_rules(session)
     contacts = list(session.exec(select(ProspectContact)))
     updated = 0
+    touched_ids: list[UUID] = []
     companies_needing_fetch: set[UUID] = set()
     for contact in contacts:
         new_match = match_title(contact.title or "", include_rules, exclude_words) if include_rules else False
@@ -172,9 +174,11 @@ def rematch_existing_contacts(session: Session) -> tuple[int, list[UUID]]:
             contact.updated_at = utcnow()
             session.add(contact)
             updated += 1
+            touched_ids.append(contact.id)
         if new_match and not contact.email:
             companies_needing_fetch.add(contact.company_id)
     if updated:
+        recompute_contact_stages(session, contact_ids=touched_ids)
         session.commit()
     return updated, list(companies_needing_fetch)
 
@@ -346,7 +350,8 @@ class ContactService:
                     "title_match": True,
                     "linkedin_url": str(person_details.get("linkedin_url") or linkedin_url or "").strip() or None,
                     "email": email,
-                    "email_status": str(person_details.get("email_status") or "verified").lower(),
+                    "provider_email_status": str(person_details.get("email_status") or "verified").lower(),
+                    "verification_status": "unverified",
                     "snov_confidence": None,
                     "snov_prospect_raw": None,
                     "apollo_prospect_raw": prospect,
@@ -422,7 +427,8 @@ class ContactService:
                     "title_match": title_matched,
                     "linkedin_url": linkedin_url,
                     "email": None,
-                    "email_status": "unverified",
+                    "provider_email_status": None,
+                    "verification_status": "unverified",
                     "snov_confidence": None,
                     "snov_prospect_raw": prospect,
                     "apollo_prospect_raw": None,
@@ -437,7 +443,7 @@ class ContactService:
                     if not email_err and emails:
                         best = emails[0]
                         contact_entry["email"] = str(best.get("email") or "").strip() or None
-                        contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
+                        contact_entry["provider_email_status"] = str(best.get("smtp_status") or "unknown").lower()
                         contact_entry["snov_email_raw"] = emails
 
                 # Fallback: guess email by name+domain if lookup returned nothing
@@ -446,7 +452,7 @@ class ContactService:
                     if not finder_err and finder_emails:
                         best = finder_emails[0]
                         contact_entry["email"] = str(best.get("email") or "").strip() or None
-                        contact_entry["email_status"] = str(best.get("smtp_status") or "unverified").lower()
+                        contact_entry["provider_email_status"] = str(best.get("smtp_status") or "unknown").lower()
                         contact_entry["snov_email_raw"] = finder_emails
                         log_event(logger, "contact_email_found_by_name",
                                   domain=domain, name=f"{first_name} {last_name}",
@@ -483,7 +489,7 @@ class ContactService:
                     existing.title = c["title"]
                     existing.title_match = c["title_match"]
                     existing.linkedin_url = c["linkedin_url"]
-                    existing.email_status = c["email_status"]
+                    existing.provider_email_status = c["provider_email_status"]
                     existing.snov_confidence = c["snov_confidence"]
                     if c["snov_prospect_raw"] is not None:
                         existing.snov_prospect_raw = c["snov_prospect_raw"]
@@ -505,7 +511,8 @@ class ContactService:
                         title_match=c["title_match"],
                         linkedin_url=c["linkedin_url"],
                         email=c["email"],
-                        email_status=c["email_status"],
+                        provider_email_status=c["provider_email_status"],
+                        verification_status=c["verification_status"],
                         snov_confidence=c["snov_confidence"],
                         snov_prospect_raw=c["snov_prospect_raw"],
                         apollo_prospect_raw=c.get("apollo_prospect_raw"),
@@ -523,6 +530,7 @@ class ContactService:
             job.lock_token = None
             job.lock_expires_at = None
             session.add(job)
+            recompute_contact_stages(session, company_ids=[company_id])
             session.commit()
             session.refresh(job)
             return job

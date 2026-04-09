@@ -11,13 +11,18 @@ from app.models import (  # noqa: F401
     AnalysisJob,
     ClassificationResult,
     Company,
+    CompanyFeedback,
+    ContactFetchJob,
+    ContactVerifyJob,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
     Prompt,
+    ProspectContact,
     Run,
     ScrapeJob,
     ScrapePage,
+    TitleMatchRule,
     Upload,
 )
 

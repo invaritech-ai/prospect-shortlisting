@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlmodel import Session, col, select
 
 from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule, Upload
-from app.models.pipeline import ContactFetchJobState
+from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 from app.services.contact_service import ContactService, _apollo
 from app.tasks.beat import reconcile_stuck_jobs
 from app.tasks.contacts import fetch_contacts_apollo
@@ -28,6 +28,7 @@ def _make_company(session: Session, *, domain: str) -> Company:
         raw_url=f"https://{domain}",
         normalized_url=f"https://{domain}",
         domain=domain,
+        pipeline_stage=CompanyPipelineStage.CONTACT_READY,
     )
     session.add(company)
     session.flush()
@@ -89,7 +90,8 @@ def test_apollo_fetch_skips_duplicate_company_email(sqlite_engine, sqlite_sessio
         title_match=True,
         linkedin_url=None,
         email=duplicate_email,
-        email_status="verified",
+        provider_email_status="verified",
+        verification_status="unverified",
         snov_confidence=None,
         snov_prospect_raw={"source": "snov"},
         apollo_prospect_raw=None,

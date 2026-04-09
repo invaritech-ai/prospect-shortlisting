@@ -6,9 +6,14 @@ import type {
   CompanyIdsResult,
   CompanyList,
   CompanyScrapeResult,
+  CompanyStageFilter,
   ContactCompanyListResponse,
+  ContactCountsResponse,
   ContactFetchResult,
   ContactListResponse,
+  ContactStageFilter,
+  ContactVerifyRequest,
+  ContactVerifyResult,
   DecisionFilter,
   DrainQueueResult,
   FeedbackRead,
@@ -91,9 +96,10 @@ export async function listCompanies(
   decisionFilter: DecisionFilter = 'all',
   includeTotal = false,
   scrapeFilter: ScrapeFilter = 'all',
+  stageFilter: CompanyStageFilter = 'all',
   letter: string | null = null,
 ): Promise<CompanyList> {
-  let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&include_total=${includeTotal}`
+  let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
   return request<CompanyList>(url)
 }
@@ -222,9 +228,10 @@ export async function upsertCompanyFeedback(companyId: string, payload: Feedback
 export async function listCompanyIds(
   decisionFilter: DecisionFilter = 'all',
   scrapeFilter: ScrapeFilter = 'all',
+  stageFilter: CompanyStageFilter = 'all',
   letter: string | null = null,
 ): Promise<CompanyIdsResult> {
-  let url = `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`
+  let url = `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
   return request<CompanyIdsResult>(url)
 }
@@ -232,9 +239,10 @@ export async function listCompanyIds(
 export async function getLetterCounts(
   decisionFilter: DecisionFilter = 'all',
   scrapeFilter: ScrapeFilter = 'all',
+  stageFilter: CompanyStageFilter = 'all',
 ): Promise<LetterCounts> {
   return request<LetterCounts>(
-    `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}`,
+    `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`,
   )
 }
 
@@ -259,7 +267,8 @@ export async function fetchContactsForRunApollo(runId: string): Promise<ContactF
 export async function listContacts(
   options: {
     titleMatch?: boolean
-    emailStatus?: string
+    verificationStatus?: string
+    stageFilter?: ContactStageFilter
     search?: string
     limit?: number
     offset?: number
@@ -267,7 +276,8 @@ export async function listContacts(
 ): Promise<ContactListResponse> {
   const params = new URLSearchParams()
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.emailStatus) params.set('email_status', options.emailStatus)
+  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
+  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
   if (options.search) params.set('search', options.search)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
@@ -276,31 +286,49 @@ export async function listContacts(
 
 export async function listCompanyContacts(
   companyId: string,
-  options: { limit?: number; offset?: number; titleMatch?: boolean } = {},
+  options: { limit?: number; offset?: number; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter } = {},
 ): Promise<ContactListResponse> {
   const params = new URLSearchParams()
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
+  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
   return request<ContactListResponse>(`/v1/companies/${companyId}/contacts?${params.toString()}`)
 }
 
 export async function listContactCompanies(
-  options: { search?: string; limit?: number; offset?: number } = {},
+  options: { search?: string; limit?: number; offset?: number; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter } = {},
 ): Promise<ContactCompanyListResponse> {
   const params = new URLSearchParams()
   if (options.search) params.set('search', options.search)
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
+  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   return request<ContactCompanyListResponse>(`/v1/contacts/companies?${params.toString()}`)
 }
 
-export function getContactsExportUrl(options: { titleMatch?: boolean; emailStatus?: string; companyId?: string } = {}): string {
+export function getContactsExportUrl(options: { titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter; companyId?: string } = {}): string {
   const params = new URLSearchParams()
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.emailStatus) params.set('email_status', options.emailStatus)
+  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
+  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
   if (options.companyId) params.set('company_id', options.companyId)
   return `${API_BASE_URL}/v1/contacts/export.csv?${params.toString()}`
+}
+
+export async function getContactCounts(): Promise<ContactCountsResponse> {
+  return request<ContactCountsResponse>('/v1/contacts/counts')
+}
+
+export async function verifyContacts(payload: ContactVerifyRequest): Promise<ContactVerifyResult> {
+  return request<ContactVerifyResult>('/v1/contacts/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function listTitleMatchRules(): Promise<TitleMatchRuleRead[]> {

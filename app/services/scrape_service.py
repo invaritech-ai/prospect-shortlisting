@@ -28,6 +28,7 @@ from app.services.fetch_service import (
 )
 from app.services.link_service import discover_focus_targets
 from app.services.markdown_service import MarkdownService
+from app.services.pipeline_service import recompute_company_stages
 from app.services.url_utils import canonical_internal_url, clean_text, domain_from_url, normalize_url
 
 
@@ -239,6 +240,7 @@ class ScrapeService:
                     job.finished_at = utcnow()
                     job.updated_at = utcnow()
                     session.add(job)
+                    recompute_company_stages(session, normalized_urls=[normalized_url])
                     session.commit()
             return
 
@@ -485,6 +487,7 @@ class ScrapeService:
                     job.finished_at = utcnow()
                     job.updated_at = utcnow()
                     session.add(job)
+                    recompute_company_stages(session, normalized_urls=[normalized_url])
                     session.commit()
             return
 
@@ -609,6 +612,7 @@ class ScrapeService:
                 )
 
             session.add(job)
+            recompute_company_stages(session, normalized_urls=[normalized_url])
             session.commit()
 
             log_event(

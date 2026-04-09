@@ -4,6 +4,7 @@ import type {
   CompanyList,
   CompanyListItem,
   CompanyCounts,
+  CompanyStageFilter,
   DecisionFilter,
   ManualLabel,
   ScrapeFilter,
@@ -39,6 +40,7 @@ interface CompaniesViewProps {
   pageSize: number
   decisionFilter: DecisionFilter
   scrapeFilter: ScrapeFilter
+  stageFilter: CompanyStageFilter
   selectedCompanyIds: string[]
   companyCounts: CompanyCounts | null
   stats: StatsResponse | null
@@ -60,6 +62,7 @@ interface CompaniesViewProps {
   onSetLetterFilter: (letter: string | null) => void
   onSetDecisionFilter: (f: DecisionFilter) => void
   onSetScrapeFilter: (f: ScrapeFilter) => void
+  onSetStageFilter: (f: CompanyStageFilter) => void
   onSetPageSize: (size: number) => void
   onPagePrev: () => void
   onPageNext: () => void
@@ -104,6 +107,14 @@ const SCRAPE_FILTERS: Array<{ value: ScrapeFilter; label: string; countKey: keyo
   { value: 'done', label: 'Done', countKey: 'scrape_done' },
   { value: 'failed', label: 'Failed', countKey: 'scrape_failed' },
   { value: 'none', label: 'Not scraped', countKey: 'not_scraped' },
+]
+
+const STAGE_FILTERS: Array<{ value: CompanyStageFilter; label: string; countKey: keyof CompanyCounts }> = [
+  { value: 'all', label: 'All', countKey: 'total' },
+  { value: 'uploaded', label: 'Uploaded', countKey: 'uploaded' },
+  { value: 'scraped', label: 'Scraped', countKey: 'scraped' },
+  { value: 'classified', label: 'Classified', countKey: 'classified' },
+  { value: 'contact_ready', label: 'Contact ready', countKey: 'contact_ready' },
 ]
 
 function ScrapePipelineBanner({
@@ -171,15 +182,32 @@ function scrapeBadgeForCompany(item: CompanyListItem): { label: string; variant:
   return { label: 'Queued', variant: 'neutral', title }
 }
 
+function stageBadgeForCompany(item: CompanyListItem): { label: string; variant: 'neutral' | 'info' | 'success' | 'warn'; title: string } {
+  switch (item.pipeline_stage) {
+    case 'uploaded':
+      return { label: 'Uploaded', variant: 'neutral', title: 'Ready for scrape' }
+    case 'scraped':
+      return { label: 'Scraped', variant: 'info', title: 'Ready for classification' }
+    case 'classified':
+      return { label: 'Classified', variant: 'warn', title: 'Classification complete, not contact-eligible' }
+    case 'contact_ready':
+      return { label: 'Contact ready', variant: 'success', title: 'Eligible for Apollo/Snov contact fetch' }
+    default:
+      return { label: item.pipeline_stage, variant: 'neutral', title: item.pipeline_stage }
+  }
+}
+
 // ── Sub-components ─────────────────────────────────────────────────────────
 
 function FilterBar({
   decisionFilter,
   scrapeFilter,
+  stageFilter,
   companyCounts,
   onSetDecisionFilter,
   onSetScrapeFilter,
-}: Pick<CompaniesViewProps, 'decisionFilter' | 'scrapeFilter' | 'companyCounts' | 'onSetDecisionFilter' | 'onSetScrapeFilter'>) {
+  onSetStageFilter,
+}: Pick<CompaniesViewProps, 'decisionFilter' | 'scrapeFilter' | 'stageFilter' | 'companyCounts' | 'onSetDecisionFilter' | 'onSetScrapeFilter' | 'onSetStageFilter'>) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {/* Decision filters */}
@@ -223,6 +251,33 @@ function FilterBar({
             className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
               isActive
                 ? 'bg-slate-700 text-white'
+                : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
+            }`}
+          >
+            {item.label}
+            {count !== undefined && (
+              <span className={`ml-1.5 rounded px-1 text-[10px] font-semibold ${isActive ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                {count.toLocaleString()}
+              </span>
+            )}
+          </button>
+        )
+      })}
+
+      <span className="h-4 w-px bg-[var(--oc-border)] mx-1" />
+
+      <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)] mr-0.5">Stage</span>
+      {STAGE_FILTERS.map((item) => {
+        const count = companyCounts?.[item.countKey]
+        const isActive = stageFilter === item.value
+        return (
+          <button
+            key={item.value}
+            type="button"
+            onClick={() => onSetStageFilter(item.value)}
+            className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+              isActive
+                ? 'bg-emerald-700 text-white'
                 : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
             }`}
           >
@@ -419,6 +474,7 @@ function CompanyCard({
   onReview,
   onSetManualLabel,
   onFetchContacts,
+  onFetchContactsApollo,
   actionState,
   analysisActionState,
   selectedPrompt,
@@ -439,9 +495,11 @@ function CompanyCard({
   const [isFetchingContacts, setIsFetchingContacts] = useState(false)
   const [isFetchingContactsApollo, setIsFetchingContactsApollo] = useState(false)
   const scrapeBadge = scrapeBadgeForCompany(item)
+  const stageBadge = stageBadgeForCompany(item)
   const isScraping = item.latest_scrape_terminal === false
   const isAnalysing = item.latest_analysis_terminal === false
-  const canClassify = !!selectedPrompt?.enabled && item.latest_scrape_status === 'completed' && !isAnalysing
+  const canClassify = !!selectedPrompt?.enabled && item.pipeline_stage === 'scraped' && !isAnalysing
+  const canFetchContacts = item.pipeline_stage === 'contact_ready'
 
   const handleFetchContacts = async () => {
     setIsFetchingContacts(true)
@@ -490,6 +548,7 @@ function CompanyCard({
             )}
             <QuickLabelPicker current={item.feedback_manual_label} onSelect={onSetManualLabel} />
             <FeedbackBadge thumbs={item.feedback_thumbs} />
+            <Badge variant={stageBadge.variant} title={stageBadge.title}>{stageBadge.label}</Badge>
             <Badge variant={scrapeBadge.variant} title={scrapeBadge.title}>{scrapeBadge.label}</Badge>
             {item.contact_count > 0 && (
               <span className="flex items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600" title={`${item.contact_count} contact${item.contact_count === 1 ? '' : 's'}`}>
@@ -513,7 +572,7 @@ function CompanyCard({
           size="xs"
           onClick={onClassify}
           disabled={!canClassify}
-          title={!selectedPrompt?.enabled ? 'No enabled prompt' : item.latest_scrape_status !== 'completed' ? 'Scrape first' : undefined}
+          title={!selectedPrompt?.enabled ? 'No enabled prompt' : item.pipeline_stage !== 'scraped' ? 'Only scraped companies can be classified' : undefined}
         >
           <IconZap size={13} />
           {isAnalysing ? 'Classifying…' : 'Classify'}
@@ -522,11 +581,25 @@ function CompanyCard({
           <IconEye size={13} />
           Review
         </Button>
-        <Button variant="ghost" size="xs" onClick={() => void handleFetchContacts()} loading={isFetchingContacts} title="Fetch contacts via Snov.io">
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={() => void handleFetchContacts()}
+          loading={isFetchingContacts}
+          disabled={!canFetchContacts}
+          title={canFetchContacts ? 'Fetch contacts via Snov.io' : 'Only contact-ready companies can fetch contacts'}
+        >
           <IconUsers size={13} />
           Snov
         </Button>
-        <Button variant="ghost" size="xs" onClick={() => void handleFetchContactsApollo()} loading={isFetchingContactsApollo} title="Fetch contacts via Apollo">
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={() => void handleFetchContactsApollo()}
+          loading={isFetchingContactsApollo}
+          disabled={!canFetchContacts}
+          title={canFetchContacts ? 'Fetch contacts via Apollo' : 'Only contact-ready companies can fetch contacts'}
+        >
           <IconUsers size={13} />
           Apollo
         </Button>
@@ -544,6 +617,7 @@ export function CompaniesView({
   pageSize,
   decisionFilter,
   scrapeFilter,
+  stageFilter,
   selectedCompanyIds,
   companyCounts,
   stats,
@@ -565,6 +639,7 @@ export function CompaniesView({
   onSetLetterFilter,
   onSetDecisionFilter,
   onSetScrapeFilter,
+  onSetStageFilter,
   onSetPageSize,
   onPagePrev,
   onPageNext,
@@ -679,9 +754,11 @@ export function CompaniesView({
         <FilterBar
           decisionFilter={decisionFilter}
           scrapeFilter={scrapeFilter}
+          stageFilter={stageFilter}
           companyCounts={companyCounts}
           onSetDecisionFilter={onSetDecisionFilter}
           onSetScrapeFilter={onSetScrapeFilter}
+          onSetStageFilter={onSetStageFilter}
         />
 
         {/* Pager */}
@@ -739,7 +816,7 @@ export function CompaniesView({
           <IconBuilding size={36} className="mb-3 text-[var(--oc-border)]" />
           <p className="font-semibold text-[var(--oc-accent-ink)]">No companies here</p>
           <p className="mt-1 text-sm text-[var(--oc-muted)]">
-            {decisionFilter !== 'all' || scrapeFilter !== 'all'
+            {decisionFilter !== 'all' || scrapeFilter !== 'all' || stageFilter !== 'all'
               ? 'Try adjusting the filters above.'
               : 'Upload a CSV file to get started.'}
           </p>
@@ -789,9 +866,11 @@ export function CompaniesView({
               <tbody>
                 {companies.items.map((item) => {
                   const scrapeBadge = scrapeBadgeForCompany(item)
+                  const stageBadge = stageBadgeForCompany(item)
                   const isScraping = item.latest_scrape_terminal === false
                   const isAnalysing = item.latest_analysis_terminal === false
-                  const canClassify = !!selectedPrompt?.enabled && item.latest_scrape_status === 'completed' && !isAnalysing
+                  const canClassify = !!selectedPrompt?.enabled && item.pipeline_stage === 'scraped' && !isAnalysing
+                  const canFetchContacts = item.pipeline_stage === 'contact_ready'
 
                   return (
                     <tr key={item.id}>
@@ -834,6 +913,7 @@ export function CompaniesView({
                             onSelect={(label) => onSetManualLabel(item, label)}
                           />
                           <FeedbackBadge thumbs={item.feedback_thumbs} />
+                          <Badge variant={stageBadge.variant} title={stageBadge.title}>{stageBadge.label}</Badge>
                         </div>
                       </td>
                       <td title={scrapeBadge.title}>
@@ -854,6 +934,7 @@ export function CompaniesView({
                             size="xs"
                             onClick={() => onClassify(item)}
                             disabled={!canClassify}
+                            title={!selectedPrompt?.enabled ? 'No enabled prompt' : item.pipeline_stage !== 'scraped' ? 'Only scraped companies can be classified' : undefined}
                           >
                             {isAnalysing ? 'Classifying…' : 'Classify'}
                           </Button>
@@ -873,7 +954,8 @@ export function CompaniesView({
                             variant="ghost"
                             size="xs"
                             onClick={() => void onFetchContacts(item)}
-                            title="Fetch contacts via Snov.io"
+                            disabled={!canFetchContacts}
+                            title={canFetchContacts ? 'Fetch contacts via Snov.io' : 'Only contact-ready companies can fetch contacts'}
                           >
                             <IconUsers size={13} />
                             {item.contact_count > 0 ? item.contact_count : 'Snov'}
@@ -882,7 +964,8 @@ export function CompaniesView({
                             variant="ghost"
                             size="xs"
                             onClick={() => void onFetchContactsApollo(item)}
-                            title="Fetch contacts via Apollo"
+                            disabled={!canFetchContacts}
+                            title={canFetchContacts ? 'Fetch contacts via Apollo' : 'Only contact-ready companies can fetch contacts'}
                           >
                             <IconUsers size={13} />
                             Apollo

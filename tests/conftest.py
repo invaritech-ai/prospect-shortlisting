@@ -14,13 +14,17 @@ from app.models import (  # noqa: F401
     ClassificationResult,
     Company,
     CompanyFeedback,
+    ContactFetchJob,
+    ContactVerifyJob,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
     Prompt,
+    ProspectContact,
     Run,
     ScrapeJob,
     ScrapePage,
+    TitleMatchRule,
     Upload,
 )
 

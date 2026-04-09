@@ -8,8 +8,8 @@ from sqlmodel import Session, col, select
 from app.celery_app import app
 from app.core.logging import log_event
 from app.db.session import get_engine
-from app.models import AnalysisJob, ContactFetchJob, ScrapeJob
-from app.models.pipeline import AnalysisJobState, ContactFetchJobState
+from app.models import AnalysisJob, ContactFetchJob, ContactVerifyJob, ScrapeJob
+from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _SCRAPE_STUCK_MINUTES = 35    # normal max runtime ~30 min (soft_time_limit)
 _ANALYSIS_STUCK_MINUTES = 35  # lock TTL is 35 min; must match
 _CONTACT_STUCK_MINUTES = 15   # normal max runtime < 10 min (polling)
+_VERIFY_STUCK_MINUTES = 15
 
 # After this many reconciler re-queues a scrape job is marked terminal so it
 # doesn't cycle forever on sites that consistently hang or fail.
@@ -35,11 +36,12 @@ def reconcile_stuck_jobs() -> None:
     scrape_cutoff = now - timedelta(minutes=_SCRAPE_STUCK_MINUTES)
     analysis_cutoff = now - timedelta(minutes=_ANALYSIS_STUCK_MINUTES)
     contact_cutoff = now - timedelta(minutes=_CONTACT_STUCK_MINUTES)
+    verify_cutoff = now - timedelta(minutes=_VERIFY_STUCK_MINUTES)
 
     # Import here to avoid circular imports at module load time.
     from app.tasks.scrape import scrape_website
     from app.tasks.analysis import run_analysis_job
-    from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo
+    from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo, verify_contacts_batch
 
     engine = get_engine()
     with Session(engine) as session:
@@ -105,6 +107,27 @@ def reconcile_stuck_jobs() -> None:
             )
         ).all()
 
+        never_started_verify = session.exec(
+            select(ContactVerifyJob).where(
+                col(ContactVerifyJob.terminal_state).is_(False),
+                col(ContactVerifyJob.state).in_([ContactVerifyJobState.QUEUED.value]),
+                col(ContactVerifyJob.started_at).is_(None),
+                col(ContactVerifyJob.updated_at) < verify_cutoff,
+            )
+        ).all()
+
+        stuck_verify = session.exec(
+            select(ContactVerifyJob).where(
+                col(ContactVerifyJob.terminal_state).is_(False),
+                col(ContactVerifyJob.state).in_([
+                    ContactVerifyJobState.RUNNING.value,
+                    ContactVerifyJobState.QUEUED.value,
+                ]),
+                col(ContactVerifyJob.started_at).is_not(None),
+                col(ContactVerifyJob.updated_at) < verify_cutoff,
+            )
+        ).all()
+
         # Capture IDs before commit (objects expire after commit).
         # Never-started jobs: re-enqueue without penalty.
         ns_scrape_ids = [str(job.id) for job in never_started_scrapes]
@@ -117,6 +140,8 @@ def reconcile_stuck_jobs() -> None:
         stuck_analysis_ids = [str(job.id) for job in stuck_analysis]
         ns_contact_jobs = [(str(job.id), str(job.provider or "snov")) for job in never_started_contacts]
         stuck_contact_jobs = [(str(job.id), str(job.provider or "snov")) for job in stuck_contacts]
+        ns_verify_ids = [str(job.id) for job in never_started_verify]
+        stuck_verify_ids = [str(job.id) for job in stuck_verify]
 
         # Reset never-started scrapes (no reconcile_count increment).
         for job in never_started_scrapes:
@@ -162,6 +187,13 @@ def reconcile_stuck_jobs() -> None:
             job.updated_at = now
             session.add(job)
 
+        for job in never_started_verify + stuck_verify:
+            job.state = ContactVerifyJobState.QUEUED
+            job.lock_token = None
+            job.lock_expires_at = None
+            job.updated_at = now
+            session.add(job)
+
         session.commit()
 
     # Enqueue after commit.
@@ -180,9 +212,14 @@ def reconcile_stuck_jobs() -> None:
             fetch_contacts.delay(job_id)
         log_event(logger, "reconciler_requeued_contact", job_id=job_id, provider=provider)
 
+    for job_id in ns_verify_ids + stuck_verify_ids:
+        verify_contacts_batch.delay(job_id)
+        log_event(logger, "reconciler_requeued_contact_verify", job_id=job_id)
+
     total_scrape = len(ns_scrape_ids) + len(stuck_scrape_ids)
     total_analysis = len(ns_analysis_ids) + len(stuck_analysis_ids)
     total_contacts = len(ns_contact_jobs) + len(stuck_contact_jobs)
+    total_verify = len(ns_verify_ids) + len(stuck_verify_ids)
     log_event(
         logger,
         "reconciler_done",
@@ -192,5 +229,7 @@ def reconcile_stuck_jobs() -> None:
         stuck_analysis=len(stuck_analysis_ids),
         never_started_contacts=len(ns_contact_jobs),
         stuck_contacts=len(stuck_contact_jobs),
-        total_requeued=total_scrape + total_analysis + total_contacts,
+        never_started_verify=len(ns_verify_ids),
+        stuck_verify=len(stuck_verify_ids),
+        total_requeued=total_scrape + total_analysis + total_contacts + total_verify,
     )

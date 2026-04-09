@@ -69,17 +69,21 @@ def _is_terminal(engine, job_id: str) -> bool:  # type: ignore[type-arg]
 
 def _mark_failed(job_id: str, error_code: str, error_message: str) -> None:
     from datetime import datetime, timezone
+    from uuid import UUID
 
     from sqlalchemy import update as sa_update
-    from sqlmodel import col
+    from sqlmodel import Session, col
 
     from app.db.session import get_engine
     from app.models import ScrapeJob
+    from app.services.pipeline_service import recompute_company_stages
 
     now = datetime.now(timezone.utc)
     engine = get_engine()
-    with engine.begin() as conn:
-        conn.execute(
+    with Session(engine) as session:
+        job = session.get(ScrapeJob, UUID(job_id))
+        normalized_url = job.normalized_url if job else None
+        session.exec(
             sa_update(ScrapeJob)
             .where(col(ScrapeJob.id) == job_id)
             .values(
@@ -91,3 +95,6 @@ def _mark_failed(job_id: str, error_code: str, error_message: str) -> None:
                 updated_at=now,
             )
         )
+        if normalized_url:
+            recompute_company_stages(session, normalized_urls=[normalized_url])
+        session.commit()

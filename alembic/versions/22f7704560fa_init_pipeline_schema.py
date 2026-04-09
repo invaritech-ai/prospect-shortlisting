@@ -197,6 +197,55 @@ def upgrade() -> None:
     op.create_index(op.f('ix_classification_results_created_at'), 'classification_results', ['created_at'], unique=False)
     op.create_index(op.f('ix_classification_results_id'), 'classification_results', ['id'], unique=False)
     op.create_index(op.f('ix_classification_results_predicted_label'), 'classification_results', ['predicted_label'], unique=False)
+    op.create_table('scrapejob',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('website_url', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('normalized_url', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('domain', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('terminal_state', sa.Boolean(), nullable=False),
+    sa.Column('js_fallback', sa.Boolean(), nullable=False),
+    sa.Column('include_sitemap', sa.Boolean(), nullable=False),
+    sa.Column('general_model', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('classify_model', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('discovered_urls_count', sa.Integer(), nullable=False),
+    sa.Column('pages_fetched_count', sa.Integer(), nullable=False),
+    sa.Column('fetch_failures_count', sa.Integer(), nullable=False),
+    sa.Column('markdown_pages_count', sa.Integer(), nullable=False),
+    sa.Column('llm_used_count', sa.Integer(), nullable=False),
+    sa.Column('llm_failed_count', sa.Integer(), nullable=False),
+    sa.Column('last_error_code', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('last_error_message', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('started_at', sa.DateTime(), nullable=True),
+    sa.Column('finished_at', sa.DateTime(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_scrapejob_id'), 'scrapejob', ['id'], unique=False)
+    op.create_index(op.f('ix_scrapejob_status'), 'scrapejob', ['status'], unique=False)
+    op.create_table('scrapepage',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('job_id', sa.Uuid(), nullable=False),
+    sa.Column('url', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('canonical_url', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('depth', sa.Integer(), nullable=False),
+    sa.Column('page_kind', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('fetch_mode', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('status_code', sa.Integer(), nullable=False),
+    sa.Column('title', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('text_len', sa.Integer(), nullable=False),
+    sa.Column('raw_text', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('markdown_content', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('fetch_error_code', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('fetch_error_message', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['job_id'], ['scrapejob.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_scrapepage_job_id'), 'scrapepage', ['job_id'], unique=False)
     # ### end Alembic commands ###
 
 
@@ -208,6 +257,11 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_classification_results_created_at'), table_name='classification_results')
     op.drop_index(op.f('ix_classification_results_analysis_job_id'), table_name='classification_results')
     op.drop_table('classification_results')
+    op.drop_index(op.f('ix_scrapepage_job_id'), table_name='scrapepage')
+    op.drop_table('scrapepage')
+    op.drop_index(op.f('ix_scrapejob_status'), table_name='scrapejob')
+    op.drop_index(op.f('ix_scrapejob_id'), table_name='scrapejob')
+    op.drop_table('scrapejob')
     op.drop_index(op.f('ix_analysis_jobs_upload_id'), table_name='analysis_jobs')
     op.drop_index(op.f('ix_analysis_jobs_state'), table_name='analysis_jobs')
     op.drop_index(op.f('ix_analysis_jobs_run_id'), table_name='analysis_jobs')

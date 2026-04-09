@@ -18,6 +18,7 @@ from app.models.pipeline import (
     CrawlArtifact,
     CrawlJob,
     CrawlJobState,
+    PredictedLabel,
     Prompt,
     Run,
     Upload,
@@ -45,6 +46,7 @@ def _build_analysis_job(session: Session) -> AnalysisJob:
     session.flush()
 
     crawl_job = CrawlJob(
+        upload_id=upload.id,
         company_id=company.id,
         state=CrawlJobState.SUCCEEDED,
         terminal_state=True,
@@ -95,12 +97,13 @@ class TestDuplicateDeliveryIdempotent:
     same analysis_job_id is delivered twice to the stream.
     """
 
-    def test_only_one_result_written(self, session: Session, db_engine):
+    def test_only_one_result_written(self, db_engine):
         from datetime import timedelta
         from sqlalchemy import update as sa_update
 
-        analysis_job = _build_analysis_job(session)
-        job_id = analysis_job.id
+        with Session(db_engine) as setup_session:
+            analysis_job = _build_analysis_job(setup_session)
+            job_id = analysis_job.id
 
         # Simulate first delivery: claim job with a lock token.
         lock_token_1 = str(uuid4())
@@ -154,7 +157,7 @@ class TestDuplicateDeliveryIdempotent:
 
             result_row = ClassificationResult(
                 analysis_job_id=job_id,
-                predicted_label="possible",
+                predicted_label=PredictedLabel.POSSIBLE,
                 confidence=0.9,
                 reasoning_json={"reason": "looks good"},
                 evidence_json=[],
@@ -166,9 +169,9 @@ class TestDuplicateDeliveryIdempotent:
             s.commit()
 
         # Exactly one ClassificationResult should exist.
-        session.expire_all()
-        results = session.exec(
-            select(ClassificationResult).where(col(ClassificationResult.analysis_job_id) == job_id)
-        ).all()
+        with Session(db_engine) as verify_session:
+            results = verify_session.exec(
+                select(ClassificationResult).where(col(ClassificationResult.analysis_job_id) == job_id)
+            ).all()
         assert len(results) == 1
-        assert str(results[0].predicted_label) == "possible"
+        assert str(results[0].predicted_label) == "Possible"

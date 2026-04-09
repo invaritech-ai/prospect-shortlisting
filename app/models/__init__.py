@@ -5,6 +5,7 @@ from app.models.pipeline import (
     Company,
     CompanyFeedback,
     ContactFetchJob,
+    ContactVerifyJob,
     CrawlArtifact,
     CrawlJob,
     JobEvent,
@@ -29,6 +30,7 @@ __all__ = [
     "ClassificationResult",
     "JobEvent",
     "ContactFetchJob",
+    "ContactVerifyJob",
     "ProspectContact",
     "TitleMatchRule",
 ]

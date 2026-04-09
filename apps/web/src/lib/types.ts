@@ -35,8 +35,12 @@ export type CompanyRead = {
   raw_url: string
   normalized_url: string
   domain: string
+  pipeline_stage: CompanyStage
   created_at: string
 }
+
+export type CompanyStage = 'uploaded' | 'scraped' | 'classified' | 'contact_ready'
+export type CompanyStageFilter = 'all' | CompanyStage
 
 export type CompanyListItem = {
   id: string
@@ -45,6 +49,7 @@ export type CompanyListItem = {
   raw_url: string
   normalized_url: string
   domain: string
+  pipeline_stage: CompanyStage
   created_at: string
   latest_decision: string | null
   latest_confidence: number | null
@@ -261,6 +266,10 @@ export type DrainQueueResult = {
 
 export type CompanyCounts = {
   total: number
+  uploaded: number
+  scraped: number
+  classified: number
+  contact_ready: number
   unlabeled: number
   possible: number
   unknown: number
@@ -326,11 +335,16 @@ export type ProspectContactRead = {
   title_match: boolean
   linkedin_url: string | null
   email: string | null
-  email_status: string
+  pipeline_stage: ContactStage
+  provider_email_status: string | null
+  verification_status: string
   snov_confidence: number | null
   created_at: string
   updated_at: string
 }
+
+export type ContactStage = 'fetched' | 'verified' | 'campaign_ready'
+export type ContactStageFilter = 'all' | ContactStage
 
 export type ContactListResponse = {
   total: number
@@ -353,6 +367,10 @@ export type ContactCompanySummary = {
   total_count: number
   title_matched_count: number
   email_count: number
+  fetched_count: number
+  verified_count: number
+  campaign_ready_count: number
+  eligible_verify_count: number
 }
 
 export type ContactCompanyListResponse = {
@@ -361,6 +379,29 @@ export type ContactCompanyListResponse = {
   limit: number
   offset: number
   items: ContactCompanySummary[]
+}
+
+export type ContactCountsResponse = {
+  total: number
+  fetched: number
+  verified: number
+  campaign_ready: number
+  eligible_verify: number
+}
+
+export type ContactVerifyRequest = {
+  contact_ids?: string[]
+  company_ids?: string[]
+  title_match?: boolean
+  verification_status?: string
+  search?: string
+  stage_filter?: ContactStageFilter
+}
+
+export type ContactVerifyResult = {
+  job_id: string
+  selected_count: number
+  message: string
 }
 
 export type TitleMatchRuleRead = {

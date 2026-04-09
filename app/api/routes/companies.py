@@ -36,6 +36,8 @@ from app.models import (
     Upload,
 )
 from app.models.pipeline import utcnow
+from app.models.pipeline import CompanyPipelineStage
+from app.services.pipeline_service import recompute_company_stages
 
 router = APIRouter(prefix="/v1", tags=["companies"])
 
@@ -113,17 +115,21 @@ def _latest_contact_fetch_subquery():
 
 _ALLOWED_DECISION_FILTERS = frozenset({"all", "unlabeled", "possible", "unknown", "crap"})
 _ALLOWED_SCRAPE_FILTERS = frozenset({"all", "done", "failed", "none"})
+_ALLOWED_STAGE_FILTERS = frozenset({"all", "uploaded", "scraped", "classified", "contact_ready"})
 
 
-def _validate_filters(decision_filter: str, scrape_filter: str) -> tuple[str, str]:
+def _validate_filters(decision_filter: str, scrape_filter: str, stage_filter: str) -> tuple[str, str, str]:
     ndf = decision_filter.strip().lower()
     nsf = scrape_filter.strip().lower()
+    ngf = stage_filter.strip().lower()
     from fastapi import HTTPException as _HTTPException
     if ndf not in _ALLOWED_DECISION_FILTERS:
         raise _HTTPException(status_code=422, detail="Invalid decision_filter.")
     if nsf not in _ALLOWED_SCRAPE_FILTERS:
         raise _HTTPException(status_code=422, detail="Invalid scrape_filter.")
-    return ndf, nsf
+    if ngf not in _ALLOWED_STAGE_FILTERS:
+        raise _HTTPException(status_code=422, detail="Invalid stage_filter.")
+    return ndf, nsf, ngf
 
 
 def _apply_decision_filter(stmt, decision_lower, normalized_filter: str):
@@ -142,6 +148,12 @@ def _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter: str):
     if normalized_scrape_filter == "none":
         return stmt.where(latest_scrape.c.job_id.is_(None))
     return stmt
+
+
+def _apply_stage_filter(stmt, normalized_stage_filter: str):
+    if normalized_stage_filter == "all":
+        return stmt
+    return stmt.where(col(Company.pipeline_stage) == normalized_stage_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +189,7 @@ def upsert_company_feedback(
         feedback.updated_at = now
         session.add(feedback)
 
+    recompute_company_stages(session, company_ids=[company_id])
     session.commit()
     session.refresh(feedback)
     return FeedbackRead(
@@ -200,6 +213,7 @@ def list_companies(
     scrape_filter: str = Query(default="all"),
     include_total: bool = Query(default=False),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
+    stage_filter: str = Query(default="all"),
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -218,7 +232,9 @@ def list_companies(
         (decision_lower == "crap", 3),
         else_=4,
     )
-    normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
+    normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
+        decision_filter, scrape_filter, stage_filter
+    )
     statement = (
         select(
             Company.id,
@@ -227,6 +243,7 @@ def list_companies(
             Company.raw_url,
             Company.normalized_url,
             Company.domain,
+            Company.pipeline_stage,
             Company.created_at,
             latest_decision_text,
             latest_confidence,
@@ -254,6 +271,7 @@ def list_companies(
     )
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
+    statement = _apply_stage_filter(statement, normalized_stage_filter)
     if letter is not None:
         statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
 
@@ -280,6 +298,7 @@ def list_companies(
         )
         total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
         total_stmt = _apply_scrape_filter(total_stmt, latest_scrape, normalized_scrape_filter)
+        total_stmt = _apply_stage_filter(total_stmt, normalized_stage_filter)
         if letter is not None:
             total_stmt = total_stmt.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
         total = session.exec(total_stmt).one()
@@ -291,22 +310,23 @@ def list_companies(
             raw_url=row[3],
             normalized_url=row[4],
             domain=row[5],
-            created_at=row[6],
-            latest_decision=str(row[7]) if row[7] is not None else None,
-            latest_confidence=row[8],
-            latest_scrape_job_id=row[9],
-            latest_scrape_status=str(row[10]) if row[10] is not None else None,
-            latest_scrape_terminal=row[11],
-            latest_analysis_run_id=row[12],
-            latest_analysis_status=str(row[13]) if row[13] is not None else None,
-            latest_analysis_terminal=row[14],
-            latest_analysis_job_id=row[15],
-            feedback_thumbs=str(row[16]) if row[16] is not None else None,
-            feedback_comment=str(row[17]) if row[17] is not None else None,
-            feedback_manual_label=str(row[18]) if row[18] is not None else None,
-            latest_scrape_error_code=str(row[19]) if row[19] is not None else None,
-            contact_count=int(row[20]) if row[20] is not None else 0,
-            contact_fetch_status=str(row[21]) if row[21] is not None else None,
+            pipeline_stage=str(row[6]),
+            created_at=row[7],
+            latest_decision=str(row[8]) if row[8] is not None else None,
+            latest_confidence=row[9],
+            latest_scrape_job_id=row[10],
+            latest_scrape_status=str(row[11]) if row[11] is not None else None,
+            latest_scrape_terminal=row[12],
+            latest_analysis_run_id=row[13],
+            latest_analysis_status=str(row[14]) if row[14] is not None else None,
+            latest_analysis_terminal=row[15],
+            latest_analysis_job_id=row[16],
+            feedback_thumbs=str(row[17]) if row[17] is not None else None,
+            feedback_comment=str(row[18]) if row[18] is not None else None,
+            feedback_manual_label=str(row[19]) if row[19] is not None else None,
+            latest_scrape_error_code=str(row[20]) if row[20] is not None else None,
+            contact_count=int(row[21]) if row[21] is not None else 0,
+            contact_fetch_status=str(row[22]) if row[22] is not None else None,
         )
         for row in page_rows
     ]
@@ -319,6 +339,7 @@ def list_company_ids(
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
+    stage_filter: str = Query(default="all"),
 ) -> CompanyIdsResult:
     """Return all company IDs matching the given filters (no pagination) for bulk selection."""
     latest_classification = _latest_classification_subquery()
@@ -327,7 +348,9 @@ def list_company_ids(
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
 
-    normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
+    normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
+        decision_filter, scrape_filter, stage_filter
+    )
     statement = (
         select(Company.id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
@@ -336,6 +359,7 @@ def list_company_ids(
     )
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
+    statement = _apply_stage_filter(statement, normalized_stage_filter)
     if letter is not None:
         statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
 
@@ -348,6 +372,7 @@ def get_letter_counts(
     session: Session = Depends(get_session),
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
+    stage_filter: str = Query(default="all"),
 ) -> LetterCounts:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -355,7 +380,9 @@ def get_letter_counts(
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
 
-    normalized_filter, normalized_scrape_filter = _validate_filters(decision_filter, scrape_filter)
+    normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
+        decision_filter, scrape_filter, stage_filter
+    )
     letter_expr = func.lower(func.left(Company.domain, 1))
     stmt = (
         select(letter_expr.label("letter"), func.count().label("cnt"))
@@ -368,6 +395,7 @@ def get_letter_counts(
     )
     stmt = _apply_decision_filter(stmt, decision_lower, normalized_filter)
     stmt = _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter)
+    stmt = _apply_stage_filter(stmt, normalized_stage_filter)
 
     rows = session.exec(stmt).all()
     counts: dict[str, int] = {chr(ord("a") + i): 0 for i in range(26)}
@@ -404,6 +432,10 @@ def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts
 
     return CompanyCounts(
         total=row[0] or 0,
+        uploaded=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.UPLOADED)).one() or 0,
+        scraped=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED)).one() or 0,
+        classified=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.CLASSIFIED)).one() or 0,
+        contact_ready=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.CONTACT_READY)).one() or 0,
         unlabeled=row[1] or 0,
         possible=row[2] or 0,
         unknown=row[3] or 0,

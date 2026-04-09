@@ -9,6 +9,7 @@ from sqlmodel import Session, col, select
 from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.db.session import get_session
 from app.models import Company, Prompt, Run
+from app.models.pipeline import CompanyPipelineStage
 from app.services.run_service import RunService
 from app.tasks.analysis import run_analysis_job
 
@@ -41,11 +42,23 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found.")
 
+    pre_skipped_ids: list[UUID] = []
+    requested_count = 0
     if payload.scope == "all":
-        companies = list(session.exec(select(Company).order_by(col(Company.created_at).asc(), col(Company.domain).asc())))
+        companies = list(
+            session.exec(
+                select(Company)
+                .where(col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED)
+                .order_by(col(Company.created_at).asc(), col(Company.domain).asc())
+            )
+        )
+        requested_count = len(companies)
     else:
         requested_ids = list(dict.fromkeys(payload.company_ids or []))
-        companies = list(session.exec(select(Company).where(col(Company.id).in_(requested_ids))))
+        selected = list(session.exec(select(Company).where(col(Company.id).in_(requested_ids))))
+        companies = [company for company in selected if company.pipeline_stage == CompanyPipelineStage.SCRAPED]
+        pre_skipped_ids = [company.id for company in selected if company.pipeline_stage != CompanyPipelineStage.SCRAPED]
+        requested_count = len(requested_ids)
 
     if not companies:
         raise HTTPException(status_code=422, detail="No companies available for classification.")
@@ -68,9 +81,9 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
         run_analysis_job.delay(str(job.id))
 
     return RunCreateResult(
-        requested_count=len(companies),
+        requested_count=requested_count,
         queued_count=len(jobs),
-        skipped_company_ids=skipped_company_ids,
+        skipped_company_ids=list(dict.fromkeys(pre_skipped_ids + skipped_company_ids)),
         runs=[_as_run_read(run, prompt.name) for run in runs],
     )
 

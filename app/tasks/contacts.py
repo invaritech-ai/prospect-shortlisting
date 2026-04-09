@@ -10,9 +10,10 @@ from sqlmodel import Session
 from app.celery_app import app
 from app.core.logging import log_event
 from app.db.session import get_engine
-from app.models import ContactFetchJob
-from app.models.pipeline import ContactFetchJobState
+from app.models import ContactFetchJob, ContactVerifyJob
+from app.models.pipeline import ContactFetchJobState, ContactVerifyJobState
 from app.services.contact_service import ContactService
+from app.services.contact_verify_service import ContactVerifyService
 
 logger = logging.getLogger(__name__)
 
@@ -104,4 +105,46 @@ def fetch_contacts_apollo(self, job_id: str) -> None:  # type: ignore[misc]
         raise
     except Exception as exc:  # noqa: BLE001
         log_event(logger, "contact_task_error", job_id=job_id, error=str(exc))
+        raise
+
+
+@app.task(
+    bind=True,
+    name="app.tasks.contacts.verify_contacts_batch",
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=600,
+    time_limit=660,
+    max_retries=3,
+    queue="contacts",
+)
+def verify_contacts_batch(self, job_id: str) -> None:  # type: ignore[misc]
+    """Celery task: run ZeroBounce verification for one ContactVerifyJob."""
+    engine = get_engine()
+    service = ContactVerifyService()
+    try:
+        result = service.run_verify_job(engine=engine, job_id=UUID(job_id))
+        if result is None:
+            log_event(logger, "verify_task_skipped_not_owner", job_id=job_id)
+            return
+        if not result.terminal_state:
+            log_event(logger, "verify_task_retry", job_id=job_id, error_code=result.last_error_code)
+            raise self.retry(countdown=30)
+    except self.MaxRetriesExceededError:
+        log_event(logger, "verify_task_max_retries_exceeded", job_id=job_id)
+        with Session(engine) as session:
+            job = session.get(ContactVerifyJob, UUID(job_id))
+            if job and not job.terminal_state:
+                job.state = ContactVerifyJobState.FAILED
+                job.terminal_state = True
+                job.last_error_code = "max_retries_exceeded"
+                job.finished_at = _utcnow()
+                session.add(job)
+                session.commit()
+        raise
+    except SoftTimeLimitExceeded:
+        log_event(logger, "verify_task_timeout", job_id=job_id)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log_event(logger, "verify_task_error", job_id=job_id, error=str(exc))
         raise

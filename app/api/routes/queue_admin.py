@@ -11,6 +11,7 @@ from sqlmodel import Session, col, func, select
 from app.db.session import get_session
 from app.models import AnalysisJob, Run, ScrapeJob
 from app.models.pipeline import AnalysisJobState, RunStatus
+from app.services.pipeline_service import recompute_all_stages
 
 
 router = APIRouter(prefix="/v1", tags=["queue-admin"])
@@ -47,6 +48,11 @@ class MarkEmptyCompletedResult(BaseModel):
 
 class RefreshRunStatusResult(BaseModel):
     refreshed_count: int
+
+
+class RecomputePipelineStagesResult(BaseModel):
+    refreshed_company_count: int
+    refreshed_contact_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -216,3 +222,13 @@ def refresh_run_statuses(session: Session = Depends(get_session)) -> RefreshRunS
 
     session.commit()
     return RefreshRunStatusResult(refreshed_count=len(runs))
+
+
+@router.post("/pipeline/recompute-stages", response_model=RecomputePipelineStagesResult)
+def recompute_pipeline_stages(session: Session = Depends(get_session)) -> RecomputePipelineStagesResult:
+    company_changed, contact_changed = recompute_all_stages(session)
+    session.commit()
+    return RecomputePipelineStagesResult(
+        refreshed_company_count=company_changed,
+        refreshed_contact_count=contact_changed,
+    )

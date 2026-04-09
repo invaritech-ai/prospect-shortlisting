@@ -41,89 +41,99 @@ def _make_scrape_job(session: Session, *, url_suffix: str = "") -> ScrapeJob:
 class TestFailJobClearsLockOnQueued:
     """Transient failure path: job goes back to QUEUED with lock_token=NULL."""
 
-    def test_lock_cleared_on_queued(self, session: Session, db_engine):
+    def test_lock_cleared_on_queued(self, db_engine):
         from app.services.analysis_service import AnalysisService
         from app.models.pipeline import Prompt, Upload, Company, Run, CrawlArtifact, CrawlJob, CrawlJobState
 
         svc = AnalysisService()
 
-        upload = Upload(filename="test.csv", checksum="ck-recovery", valid_count=1, invalid_count=0)
-        session.add(upload)
-        session.flush()
+        with Session(db_engine) as session:
+            upload = Upload(filename="test.csv", checksum="ck-recovery", valid_count=1, invalid_count=0)
+            session.add(upload)
+            session.flush()
 
-        prompt = Prompt(name="test", prompt_text="classify", enabled=True)
-        session.add(prompt)
-        session.flush()
+            prompt = Prompt(name="test", prompt_text="classify", enabled=True)
+            session.add(prompt)
+            session.flush()
 
-        company = Company(
-            upload_id=upload.id,
-            raw_url="https://lock-clear-test.com",
-            normalized_url="https://lock-clear-test.com",
-            domain="lock-clear-test.com",
-        )
-        session.add(company)
-        session.flush()
+            company = Company(
+                upload_id=upload.id,
+                raw_url="https://lock-clear-test.com",
+                normalized_url="https://lock-clear-test.com",
+                domain="lock-clear-test.com",
+            )
+            session.add(company)
+            session.flush()
 
-        crawl_job = CrawlJob(
-            company_id=company.id,
-            state=CrawlJobState.SUCCEEDED,
-            terminal_state=True,
-        )
-        session.add(crawl_job)
-        session.flush()
+            crawl_job = CrawlJob(
+                upload_id=upload.id,
+                company_id=company.id,
+                state=CrawlJobState.SUCCEEDED,
+                terminal_state=True,
+            )
+            session.add(crawl_job)
+            session.flush()
 
-        artifact = CrawlArtifact(
-            crawl_job_id=crawl_job.id,
-            company_id=company.id,
-        )
-        session.add(artifact)
-        session.flush()
+            artifact = CrawlArtifact(
+                crawl_job_id=crawl_job.id,
+                company_id=company.id,
+            )
+            session.add(artifact)
+            session.flush()
 
-        run = Run(
-            upload_id=upload.id,
-            prompt_id=prompt.id,
-            general_model="test",
-            classify_model="test",
-            status="running",
-            total_jobs=1,
-            completed_jobs=0,
-            failed_jobs=0,
-            started_at=utcnow(),
-        )
-        session.add(run)
-        session.flush()
+            run = Run(
+                upload_id=upload.id,
+                prompt_id=prompt.id,
+                general_model="test",
+                classify_model="test",
+                status="running",
+                total_jobs=1,
+                completed_jobs=0,
+                failed_jobs=0,
+                started_at=utcnow(),
+            )
+            session.add(run)
+            session.flush()
 
-        analysis_job = AnalysisJob(
-            run_id=run.id,
-            upload_id=upload.id,
-            company_id=company.id,
-            crawl_artifact_id=artifact.id,
-            state=AnalysisJobState.RUNNING,
-            terminal_state=False,
-            attempt_count=1,
-            max_attempts=3,
-            prompt_hash="abc",
-            lock_token="original-token",
-            lock_expires_at=utcnow() + timedelta(minutes=15),
-        )
-        session.add(analysis_job)
-        session.commit()
-        session.refresh(analysis_job)
+            analysis_job = AnalysisJob(
+                run_id=run.id,
+                upload_id=upload.id,
+                company_id=company.id,
+                crawl_artifact_id=artifact.id,
+                state=AnalysisJobState.RUNNING,
+                terminal_state=False,
+                attempt_count=1,
+                max_attempts=3,
+                prompt_hash="abc",
+                lock_token="original-token",
+                lock_expires_at=utcnow() + timedelta(minutes=15),
+            )
+            session.add(analysis_job)
+            session.commit()
+            session.refresh(analysis_job)
+
+            analysis_job_id = analysis_job.id
+            run_id = run.id
+            attempt_count = analysis_job.attempt_count
+            max_attempts = analysis_job.max_attempts
 
         svc._fail_job(
-            session=session,
-            analysis_job=analysis_job,
+            engine=db_engine,
+            analysis_job_id=analysis_job_id,
             error_code="transient_error",
             error_message="Simulated transient failure",
             lock_token="original-token",
+            run_id=run_id,
+            attempt_count=attempt_count,
+            max_attempts=max_attempts,
         )
 
-        session.expire_all()
-        refreshed = session.get(AnalysisJob, analysis_job.id)
-        assert refreshed is not None
-        assert refreshed.state == AnalysisJobState.QUEUED
-        assert refreshed.lock_token is None
-        assert refreshed.lock_expires_at is None
+        with Session(db_engine) as verify_session:
+            refreshed = verify_session.get(AnalysisJob, analysis_job_id)
+            assert refreshed is not None
+            assert refreshed.state == AnalysisJobState.QUEUED
+            assert refreshed.lock_token is None
+            assert refreshed.lock_expires_at is None
 
 
 class TestResetStuckClearsLocks:

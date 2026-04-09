@@ -2,17 +2,23 @@ import { useCallback, useEffect, useState } from 'react'
 import type {
   ContactCompanyListResponse,
   ContactCompanySummary,
+  ContactCountsResponse,
+  ContactStage,
+  ContactStageFilter,
   ProspectContactRead,
   TitleMatchRuleRead,
 } from '../../lib/types'
 import {
+  ApiError,
   createTitleMatchRule,
   deleteTitleMatchRule,
+  getContactCounts,
   getContactsExportUrl,
   listCompanyContacts,
   listContactCompanies,
   listTitleMatchRules,
   seedTitleMatchRules,
+  verifyContacts,
 } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import {
@@ -22,30 +28,93 @@ import {
   IconPlus,
   IconRefresh,
   IconTrash,
+  IconZap,
 } from '../ui/icons'
 
-// ── Email status badge ────────────────────────────────────────────────────────
+const STAGE_FILTERS: Array<{ value: ContactStageFilter; label: string; countKey: keyof ContactCountsResponse }> = [
+  { value: 'all', label: 'All', countKey: 'total' },
+  { value: 'fetched', label: 'Fetched', countKey: 'fetched' },
+  { value: 'verified', label: 'Verified', countKey: 'verified' },
+  { value: 'campaign_ready', label: 'Campaign ready', countKey: 'campaign_ready' },
+]
 
-function EmailStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    valid:     { label: 'Valid',    cls: 'bg-emerald-100 text-emerald-700' },
-    not_valid: { label: 'Invalid',  cls: 'bg-rose-100 text-rose-700' },
-    unknown:   { label: 'Unknown',  cls: 'bg-slate-100 text-slate-500' },
+const VERIFICATION_FILTER_OPTIONS = [
+  { value: '', label: 'Any verification' },
+  { value: 'unverified', label: 'Unverified' },
+  { value: 'valid', label: 'Valid' },
+  { value: 'invalid', label: 'Invalid' },
+  { value: 'catch_all', label: 'Catch-all' },
+  { value: 'unknown', label: 'Unknown' },
+] as const
+
+function parseError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (typeof err.detail === 'string') return err.detail
+    return JSON.stringify(err.detail)
   }
-  const { label, cls } = map[status] ?? { label: status, cls: 'bg-slate-100 text-slate-500' }
+  if (err instanceof Error) return err.message
+  return 'Unknown error'
+}
+
+function contactStageMeta(stage: ContactStage): { label: string; cls: string } {
+  switch (stage) {
+    case 'fetched':
+      return { label: 'Fetched', cls: 'bg-slate-100 text-slate-700' }
+    case 'verified':
+      return { label: 'Verified', cls: 'bg-amber-100 text-amber-700' }
+    case 'campaign_ready':
+      return { label: 'Campaign Ready', cls: 'bg-emerald-100 text-emerald-700' }
+    default:
+      return { label: stage, cls: 'bg-slate-100 text-slate-700' }
+  }
+}
+
+function verificationMeta(status: string): { label: string; cls: string } {
+  const normalized = (status || 'unknown').toLowerCase()
+  switch (normalized) {
+    case 'unverified':
+      return { label: 'Unverified', cls: 'bg-slate-100 text-slate-700' }
+    case 'valid':
+      return { label: 'Valid', cls: 'bg-emerald-100 text-emerald-700' }
+    case 'invalid':
+    case 'not_valid':
+      return { label: 'Invalid', cls: 'bg-rose-100 text-rose-700' }
+    case 'catch_all':
+      return { label: 'Catch-all', cls: 'bg-amber-100 text-amber-700' }
+    case 'unknown':
+      return { label: 'Unknown', cls: 'bg-slate-100 text-slate-500' }
+    default:
+      return { label: normalized.replace(/_/g, ' '), cls: 'bg-slate-100 text-slate-700' }
+  }
+}
+
+function providerStatusMeta(status: string | null): { label: string; cls: string } | null {
+  if (!status) return null
+  switch (status.toLowerCase()) {
+    case 'verified':
+      return { label: 'Provider ok', cls: 'bg-sky-100 text-sky-700' }
+    case 'unknown':
+      return { label: 'Provider unknown', cls: 'bg-slate-100 text-slate-500' }
+    default:
+      return { label: status.replace(/_/g, ' '), cls: 'bg-slate-100 text-slate-700' }
+  }
+}
+
+function StatusBadge({ label, cls }: { label: string; cls: string }) {
   return (
-    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${cls}`}>
+    <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${cls}`}>
       {label}
     </span>
   )
 }
 
-// ── Single contact row (inside company drawer) ────────────────────────────────
-
 function ContactRow({ contact }: { contact: ProspectContactRead }) {
   const isMatch = contact.title_match
+  const stage = contactStageMeta(contact.pipeline_stage)
+  const verification = verificationMeta(contact.verification_status)
+  const provider = providerStatusMeta(contact.provider_email_status)
   return (
-    <tr className={`border-b border-[var(--oc-border)] transition-colors hover:bg-[var(--oc-surface)] ${isMatch ? 'bg-emerald-50/50' : ''}`}>
+    <tr className={`border-b border-[var(--oc-border)] transition-colors hover:bg-[var(--oc-surface)] ${isMatch ? 'bg-emerald-50/40' : ''}`}>
       <td className="px-3 py-2.5 text-xs font-medium text-[var(--oc-text)]">
         <span>{contact.first_name} {contact.last_name}</span>
         {isMatch && (
@@ -72,7 +141,13 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
         )}
       </td>
       <td className="px-3 py-2.5">
-        {contact.email ? <EmailStatusBadge status={contact.email_status} /> : null}
+        <StatusBadge label={stage.label} cls={stage.cls} />
+      </td>
+      <td className="px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge label={verification.label} cls={verification.cls} />
+          {provider ? <StatusBadge label={provider.label} cls={provider.cls} /> : null}
+        </div>
       </td>
       <td className="px-3 py-2.5 text-xs">
         {contact.linkedin_url ? (
@@ -91,8 +166,6 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
     </tr>
   )
 }
-
-// ── Title rules manager ───────────────────────────────────────────────────────
 
 interface TitleRulesManagerProps {
   rules: TitleMatchRuleRead[]
@@ -168,7 +241,7 @@ function TitleRulesManager({ rules, onAdd, onDelete, deletingIds, onSeed, isSeed
         <div>
           <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">
             Include ({includeRules.length})
-            <span className="ml-1 font-normal normal-case">— AND within rule, OR between rules</span>
+            <span className="ml-1 font-normal normal-case">AND within rule, OR between rules</span>
           </p>
           <div className="space-y-1">
             {includeRules.map((r) => (
@@ -188,15 +261,13 @@ function TitleRulesManager({ rules, onAdd, onDelete, deletingIds, onSeed, isSeed
                 </button>
               </div>
             ))}
-            {includeRules.length === 0 && (
-              <p className="text-xs text-[var(--oc-muted)]">No include rules yet.</p>
-            )}
+            {includeRules.length === 0 && <p className="text-xs text-[var(--oc-muted)]">No include rules yet.</p>}
           </div>
         </div>
         <div>
           <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">
             Exclude ({excludeRules.length})
-            <span className="ml-1 font-normal normal-case">— any keyword disqualifies</span>
+            <span className="ml-1 font-normal normal-case">Any keyword disqualifies</span>
           </p>
           <div className="space-y-1">
             {excludeRules.map((r) => (
@@ -216,17 +287,13 @@ function TitleRulesManager({ rules, onAdd, onDelete, deletingIds, onSeed, isSeed
                 </button>
               </div>
             ))}
-            {excludeRules.length === 0 && (
-              <p className="text-xs text-[var(--oc-muted)]">No exclude rules yet.</p>
-            )}
+            {excludeRules.length === 0 && <p className="text-xs text-[var(--oc-muted)]">No exclude rules yet.</p>}
           </div>
         </div>
       </div>
     </div>
   )
 }
-
-// ── Company contacts drawer ───────────────────────────────────────────────────
 
 interface CompanyDrawerProps {
   company: ContactCompanySummary
@@ -264,14 +331,15 @@ function CompanyDrawer({
     setError('')
     listCompanyContacts(company.company_id, { limit: 200 })
       .then((data) => setContacts(data.items))
-      .catch(() => setError('Failed to load contacts.'))
+      .catch((err) => setError(parseError(err)))
       .finally(() => setIsLoading(false))
   }, [company.company_id])
 
   const displayed = matchedOnly ? contacts.filter((c) => c.title_match) : contacts
   const matchedCount = contacts.filter((c) => c.title_match).length
   const emailCount = contacts.filter((c) => c.email).length
-
+  const verifiedCount = contacts.filter((c) => c.pipeline_stage === 'verified').length
+  const campaignReadyCount = contacts.filter((c) => c.pipeline_stage === 'campaign_ready').length
   const exportUrl = getContactsExportUrl({ companyId: company.company_id })
 
   return (
@@ -283,13 +351,17 @@ function CompanyDrawer({
       size="lg"
       headerMeta={
         <div className="flex flex-wrap items-center gap-2">
-          {matchedCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
-              {matchedCount} matched
-            </span>
-          )}
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-700">
+            {company.total_count} fetched
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+            {verifiedCount} verified
+          </span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+            {campaignReadyCount} ready
+          </span>
           <span className="text-[11px] text-[var(--oc-muted)]">
-            {company.total_count} total · {emailCount} with email
+            {matchedCount} matched · {emailCount} with email · {company.eligible_verify_count} queued-to-verify
           </span>
         </div>
       }
@@ -304,7 +376,6 @@ function CompanyDrawer({
       }
     >
       <div className="flex h-full flex-col">
-        {/* Filter toggle */}
         <div className="flex items-center gap-2 border-b border-[var(--oc-border)] px-4 py-2.5">
           <button
             type="button"
@@ -330,7 +401,6 @@ function CompanyDrawer({
           </button>
         </div>
 
-        {/* Contacts table */}
         <div className="flex-1 overflow-auto">
           {error && <p className="px-4 py-3 text-xs text-rose-600">{error}</p>}
           {isLoading ? (
@@ -357,18 +427,20 @@ function CompanyDrawer({
           ) : (
             <table className="w-full table-fixed text-left">
               <colgroup>
+                <col style={{ width: '18%' }} />
                 <col style={{ width: '22%' }} />
                 <col style={{ width: '24%' }} />
-                <col style={{ width: '28%' }} />
-                <col style={{ width: '11%' }} />
-                <col style={{ width: '15%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '8%' }} />
               </colgroup>
               <thead className="sticky top-0 bg-[var(--oc-surface-strong)]">
                 <tr className="border-b border-[var(--oc-border)]">
                   <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Name</th>
                   <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Title</th>
                   <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Email</th>
-                  <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Status</th>
+                  <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Stage</th>
+                  <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Verification</th>
                   <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">LinkedIn</th>
                 </tr>
               </thead>
@@ -381,7 +453,6 @@ function CompanyDrawer({
           )}
         </div>
 
-        {/* Title Match Rules (collapsible at bottom) */}
         <div className="border-t border-[var(--oc-border)]">
           <button
             type="button"
@@ -419,34 +490,58 @@ function CompanyDrawer({
   )
 }
 
-// ── Company row in main list ──────────────────────────────────────────────────
+function SummaryCard({
+  label,
+  value,
+  hint,
+  tone = 'slate',
+}: {
+  label: string
+  value: number
+  hint: string
+  tone?: 'slate' | 'amber' | 'emerald'
+}) {
+  const cls =
+    tone === 'amber'
+      ? 'border-amber-200 bg-amber-50 text-amber-700'
+      : tone === 'emerald'
+        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        : 'border-[var(--oc-border)] bg-white text-[var(--oc-text)]'
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${cls}`}>
+      <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">{label}</p>
+      <p className="mt-1 text-2xl font-black tabular-nums">{value.toLocaleString()}</p>
+      <p className="mt-1 text-xs opacity-75">{hint}</p>
+    </div>
+  )
+}
 
 function CompanyRow({ company, onClick }: { company: ContactCompanySummary; onClick: () => void }) {
-  const hasMatches = company.title_matched_count > 0
-  const hasEmails = company.email_count > 0
   return (
     <tr
       className="cursor-pointer border-b border-[var(--oc-border)] transition-colors hover:bg-[var(--oc-surface)]"
       onClick={onClick}
     >
-      <td className="px-3 py-2.5 text-xs font-semibold text-[var(--oc-accent-ink)]">
-        {company.domain}
+      <td className="px-3 py-2.5">
+        <p className="text-xs font-semibold text-[var(--oc-accent-ink)]">{company.domain}</p>
+        <p className="mt-0.5 text-[11px] text-[var(--oc-muted)]">
+          {company.total_count} total · {company.title_matched_count} matched · {company.email_count} with email
+        </p>
+      </td>
+      <td className="px-3 py-2.5 text-center text-xs font-bold tabular-nums text-slate-700">
+        {company.fetched_count}
+      </td>
+      <td className="px-3 py-2.5 text-center text-xs font-bold tabular-nums text-amber-700">
+        {company.verified_count}
+      </td>
+      <td className="px-3 py-2.5 text-center text-xs font-bold tabular-nums text-emerald-700">
+        {company.campaign_ready_count}
       </td>
       <td className="px-3 py-2.5 text-center text-xs font-bold tabular-nums">
-        {hasMatches ? (
-          <span className="text-emerald-600">{company.title_matched_count}</span>
+        {company.eligible_verify_count > 0 ? (
+          <span className="text-[var(--oc-text)]">{company.eligible_verify_count}</span>
         ) : (
           <span className="text-[var(--oc-muted)] opacity-40">0</span>
-        )}
-      </td>
-      <td className="px-3 py-2.5 text-center text-xs tabular-nums text-[var(--oc-text)]">
-        {company.total_count}
-      </td>
-      <td className="px-3 py-2.5 text-center text-xs tabular-nums">
-        {hasEmails ? (
-          <span className="text-[var(--oc-text)]">{company.email_count}</span>
-        ) : (
-          <span className="text-[var(--oc-muted)] opacity-40">—</span>
         )}
       </td>
       <td className="px-3 py-2.5 text-right text-[var(--oc-muted)]">
@@ -456,20 +551,23 @@ function CompanyRow({ company, onClick }: { company: ContactCompanySummary; onCl
   )
 }
 
-// ── Main view ─────────────────────────────────────────────────────────────────
-
 export function ContactsView() {
   const [companies, setCompanies] = useState<ContactCompanyListResponse | null>(null)
+  const [counts, setCounts] = useState<ContactCountsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [offset, setOffset] = useState(0)
   const [limit] = useState(50)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [stageFilter, setStageFilter] = useState<ContactStageFilter>('all')
+  const [verificationFilter, setVerificationFilter] = useState('')
+  const [matchedOnly, setMatchedOnly] = useState(false)
+  const [isVerifying, setIsVerifying] = useState(false)
 
   const [selectedCompany, setSelectedCompany] = useState<ContactCompanySummary | null>(null)
 
-  // Rules (shared, loaded once when drawer first opens)
   const [rules, setRules] = useState<TitleMatchRuleRead[]>([])
   const [isRulesLoading, setIsRulesLoading] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
@@ -477,33 +575,63 @@ export function ContactsView() {
   const [deletingRuleIds, setDeletingRuleIds] = useState<Set<string>>(new Set())
 
   const loadCompanies = useCallback(
-    async (off = 0, s = search) => {
+    async (
+      off = 0,
+      nextSearch = search,
+      nextStage = stageFilter,
+      nextVerification = verificationFilter,
+      nextMatchedOnly = matchedOnly,
+    ) => {
       setIsLoading(true)
       setError('')
       try {
-        const data = await listContactCompanies({ search: s || undefined, limit, offset: off })
+        const data = await listContactCompanies({
+          search: nextSearch || undefined,
+          limit,
+          offset: off,
+          titleMatch: nextMatchedOnly ? true : undefined,
+          verificationStatus: nextVerification || undefined,
+          stageFilter: nextStage,
+        })
         setCompanies(data)
         setOffset(off)
-      } catch {
-        setError('Failed to load contacts.')
+        setSelectedCompany((prev) => prev ? data.items.find((item) => item.company_id === prev.company_id) ?? prev : prev)
+      } catch (err) {
+        setError(parseError(err))
       } finally {
         setIsLoading(false)
       }
     },
-    [search, limit],
+    [limit, matchedOnly, search, stageFilter, verificationFilter],
   )
 
+  const loadCounts = useCallback(async () => {
+    try {
+      setCounts(await getContactCounts())
+    } catch { /* non-critical */ }
+  }, [])
+
   useEffect(() => {
-    void loadCompanies(0, search)
-  }, [search, loadCompanies])
+    void loadCompanies(0, search, stageFilter, verificationFilter, matchedOnly)
+  }, [loadCompanies, matchedOnly, search, stageFilter, verificationFilter])
+
+  useEffect(() => {
+    void loadCounts()
+  }, [loadCounts])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 5000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   const loadRules = useCallback(async () => {
     setIsRulesLoading(true)
     try {
       setRules(await listTitleMatchRules())
       setRulesError('')
-    } catch {
-      setRulesError('Failed to load rules.')
+    } catch (err) {
+      setRulesError(parseError(err))
     } finally {
       setIsRulesLoading(false)
     }
@@ -518,8 +646,9 @@ export function ContactsView() {
     try {
       await createTitleMatchRule({ rule_type, keywords })
       await loadRules()
-    } catch {
-      setRulesError('Failed to create rule.')
+      await loadCompanies(offset)
+    } catch (err) {
+      setRulesError(parseError(err))
     }
   }
 
@@ -529,13 +658,14 @@ export function ContactsView() {
     try {
       await deleteTitleMatchRule(id)
       setRules((r) => r.filter((rule) => rule.id !== id))
-    } catch {
-      setRulesError('Failed to delete rule.')
+      await loadCompanies(offset)
+    } catch (err) {
+      setRulesError(parseError(err))
     } finally {
       setDeletingRuleIds((prev) => {
-        const s = new Set(prev)
-        s.delete(id)
-        return s
+        const next = new Set(prev)
+        next.delete(id)
+        return next
       })
     }
   }
@@ -545,65 +675,174 @@ export function ContactsView() {
     try {
       await seedTitleMatchRules()
       await loadRules()
+      await loadCompanies(offset)
       setRulesError('')
-    } catch {
-      setRulesError('Failed to seed rules.')
+    } catch (err) {
+      setRulesError(parseError(err))
     } finally {
       setIsSeeding(false)
     }
   }
 
-  const totalMatched = companies?.items.reduce((s, c) => s + c.title_matched_count, 0) ?? 0
-  const totalEmails = companies?.items.reduce((s, c) => s + c.email_count, 0) ?? 0
+  const handleVerify = async () => {
+    setIsVerifying(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await verifyContacts({
+        title_match: matchedOnly ? true : undefined,
+        verification_status: verificationFilter || undefined,
+        search: search || undefined,
+        stage_filter: stageFilter === 'all' ? undefined : stageFilter,
+      })
+      setNotice(result.message)
+      await Promise.all([
+        loadCompanies(0, search, stageFilter, verificationFilter, matchedOnly),
+        loadCounts(),
+      ])
+    } catch (err) {
+      setError(parseError(err))
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
+  const exportUrl = getContactsExportUrl({
+    titleMatch: matchedOnly ? true : undefined,
+    verificationStatus: verificationFilter || undefined,
+    stageFilter,
+  })
+
+  const filteredEligibleVerify = companies?.items.reduce((sum, item) => sum + item.eligible_verify_count, 0) ?? 0
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-hidden p-4">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-bold text-[var(--oc-text)]">Contacts</h2>
-          {companies && (
-            <p className="text-xs text-[var(--oc-muted)]">
-              {companies.total.toLocaleString()} companies · {totalMatched} matched · {totalEmails} with email
-            </p>
-          )}
+          <p className="text-xs text-[var(--oc-muted)]">
+            Step 3 contact fetch and Step 4 ZeroBounce verification live here.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => void loadCompanies(offset)}
+            onClick={() => void Promise.all([loadCompanies(offset), loadCounts()])}
             disabled={isLoading}
             className="flex items-center gap-1.5 rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:opacity-50"
           >
             <IconRefresh size={13} />
             Refresh
           </button>
+          <button
+            type="button"
+            onClick={() => void handleVerify()}
+            disabled={isVerifying || (!companies?.total && filteredEligibleVerify === 0)}
+            className="flex items-center gap-1.5 rounded-lg bg-[var(--oc-accent)] px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <IconZap size={13} />
+            {isVerifying ? 'Queueing…' : 'Queue ZeroBounce'}
+          </button>
           <a
-            href={getContactsExportUrl()}
+            href={exportUrl}
             className="flex items-center gap-1.5 rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs font-bold text-[var(--oc-text)] no-underline transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
           >
             <IconDownload size={13} />
-            Export all CSV
+            Export CSV
           </a>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') setSearch(searchInput) }}
-          onBlur={() => setSearch(searchInput)}
-          placeholder="Search by domain…"
-          className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs text-[var(--oc-text)] placeholder:text-[var(--oc-muted)]"
-          style={{ minWidth: 220 }}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard
+          label="Fetched"
+          value={counts?.fetched ?? 0}
+          hint={`${counts?.total?.toLocaleString() ?? '0'} total contacts in the system`}
+        />
+        <SummaryCard
+          label="Verified"
+          value={counts?.verified ?? 0}
+          hint="ZeroBounce checked, but not necessarily campaign-ready"
+          tone="amber"
+        />
+        <SummaryCard
+          label="Campaign Ready"
+          value={counts?.campaign_ready ?? 0}
+          hint="Valid email, title match, and ready for outreach"
+          tone="emerald"
+        />
+        <SummaryCard
+          label="Eligible Verify"
+          value={counts?.eligible_verify ?? 0}
+          hint="Matched contacts with email and no ZeroBounce result yet"
         />
       </div>
 
-      {/* Table */}
+      <div className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') setSearch(searchInput.trim()) }}
+            onBlur={() => setSearch(searchInput.trim())}
+            placeholder="Search by domain…"
+            className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs text-[var(--oc-text)] placeholder:text-[var(--oc-muted)]"
+            style={{ minWidth: 220 }}
+          />
+          <select
+            value={verificationFilter}
+            onChange={(e) => setVerificationFilter(e.target.value)}
+            className="rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-xs text-[var(--oc-text)]"
+          >
+            {VERIFICATION_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setMatchedOnly((value) => !value)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+              matchedOnly
+                ? 'bg-emerald-600 text-white'
+                : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
+            }`}
+          >
+            {matchedOnly ? 'Matched only' : 'All titles'}
+          </button>
+          <span className="ml-auto text-[11px] text-[var(--oc-muted)]">
+            Current page has {filteredEligibleVerify.toLocaleString()} verify-eligible contacts.
+          </span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Stage</span>
+          {STAGE_FILTERS.map((item) => {
+            const isActive = stageFilter === item.value
+            const count = counts?.[item.countKey] ?? 0
+            return (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setStageFilter(item.value)}
+                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                  isActive
+                    ? 'bg-[var(--oc-accent)] text-white'
+                    : 'border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] hover:text-[var(--oc-text)]'
+                }`}
+              >
+                {item.label}
+                <span className={`ml-1.5 rounded px-1 text-[10px] font-semibold ${isActive ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                  {count.toLocaleString()}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {notice && <p className="text-xs text-emerald-700">{notice}</p>}
       {error && <p className="text-xs text-rose-600">{error}</p>}
+
       <div className="flex-1 overflow-auto rounded-2xl border border-[var(--oc-border)]">
         {isLoading && !companies ? (
           <div className="flex h-40 items-center justify-center">
@@ -612,9 +851,9 @@ export function ContactsView() {
         ) : companies?.items.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-center">
             <div>
-              <p className="text-sm font-medium text-[var(--oc-muted)]">No contacts yet</p>
+              <p className="text-sm font-medium text-[var(--oc-muted)]">No contacts in this filter</p>
               <p className="mt-1 text-xs text-[var(--oc-muted)]">
-                Use "Fetch Contacts" on Possible companies or from an Analysis Run.
+                Fetch contacts from `contact_ready` companies, then run ZeroBounce on the matched-email set.
               </p>
             </div>
           </div>
@@ -622,17 +861,19 @@ export function ContactsView() {
           <table className="w-full table-fixed text-left">
             <colgroup>
               <col style={{ width: '42%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '10%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '8%' }} />
             </colgroup>
             <thead className="sticky top-0 bg-[var(--oc-surface-strong)]">
               <tr className="border-b border-[var(--oc-border)]">
                 <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Domain</th>
-                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-emerald-600">Matched</th>
-                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Total</th>
-                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Emails</th>
+                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-slate-600">Fetched</th>
+                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-amber-700">Verified</th>
+                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-emerald-700">Ready</th>
+                <th className="px-3 py-2 text-center text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Queue Verify</th>
                 <th />
               </tr>
             </thead>
@@ -645,7 +886,6 @@ export function ContactsView() {
         )}
       </div>
 
-      {/* Pagination */}
       {companies && (companies.has_more || offset > 0) && (
         <div className="flex items-center justify-between">
           <p className="text-xs text-[var(--oc-muted)]">
@@ -674,7 +914,6 @@ export function ContactsView() {
         </div>
       )}
 
-      {/* Company drawer */}
       {selectedCompany && (
         <CompanyDrawer
           company={selectedCompany}

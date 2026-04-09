@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "prospect-shortlisting-scraper"
-    database_url: str = "sqlite:///data/scrape_service.db"
+    database_url: str = Field(
+        default="sqlite:///data/scrape_service.db",
+        validation_alias=AliasChoices("DATABASE_URL", "PS_DATABASE_URL"),
+    )
     general_model: str = "openai/gpt-5-nano"
     classify_model: str = "inception/mercury-2"
     openai_api_key: str = ""

@@ -9,7 +9,7 @@ from sqlmodel import Session, col, select
 from app.api.routes.contacts import create_title_rule, delete_title_rule
 from app.api.schemas.contacts import TitleMatchRuleCreate
 from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule, Upload
-from app.models.pipeline import ContactFetchJobState
+from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 from app.services.contact_service import match_title
 
 
@@ -27,6 +27,7 @@ def _make_company(session: Session, *, domain: str = "example.com") -> Company:
         raw_url=f"https://{domain}",
         normalized_url=f"https://{domain}",
         domain=domain,
+        pipeline_stage=CompanyPipelineStage.CONTACT_READY,
     )
     session.add(company)
     session.flush()
@@ -60,7 +61,7 @@ def _make_terminal_contact(
         title_match=False,
         linkedin_url=None,
         email=email,
-        email_status="unverified",
+        verification_status="unverified",
         snov_confidence=None,
         snov_prospect_raw=None,
         apollo_prospect_raw=None,

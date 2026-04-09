@@ -28,6 +28,7 @@ from app.services.context_service import (
     render_prompt,
 )
 from app.services.llm_client import ERR_API_KEY_MISSING, ERR_RATE_LIMITED, LLMClient
+from app.services.pipeline_service import recompute_company_stages
 from app.services.run_service import RunService
 
 
@@ -228,6 +229,7 @@ class AnalysisService:
                         analysis_job.terminal_state = True
                         analysis_job.finished_at = utcnow()
                         session.add(analysis_job)
+                        recompute_company_stages(session, company_ids=[analysis_job.company_id])
                         session.commit()
                         log_event(logger, "analysis_cache_hit", analysis_job_id=str(analysis_job_id))
                         self._run_service.refresh_run_status(session=session, run_id=run_id)
@@ -316,6 +318,7 @@ class AnalysisService:
             analysis_job.terminal_state = True
             analysis_job.finished_at = utcnow()
             session.add(analysis_job)
+            recompute_company_stages(session, company_ids=[analysis_job.company_id])
             session.commit()
             self._run_service.refresh_run_status(session=session, run_id=run_id)
             session.refresh(analysis_job)

@@ -57,6 +57,26 @@ class ContactFetchJobState(StrEnum):
     DEAD = "dead"
 
 
+class CompanyPipelineStage(StrEnum):
+    UPLOADED = "uploaded"
+    SCRAPED = "scraped"
+    CLASSIFIED = "classified"
+    CONTACT_READY = "contact_ready"
+
+
+class ContactPipelineStage(StrEnum):
+    FETCHED = "fetched"
+    VERIFIED = "verified"
+    CAMPAIGN_READY = "campaign_ready"
+
+
+class ContactVerifyJobState(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class Upload(SQLModel, table=True):
     __tablename__ = "uploads"
 
@@ -82,6 +102,10 @@ class Company(SQLModel, table=True):
     raw_url: str = Field(sa_column=Column(Text, nullable=False))
     normalized_url: str = Field(max_length=2048)
     domain: str = Field(max_length=255, index=True)
+    pipeline_stage: CompanyPipelineStage = Field(
+        default=CompanyPipelineStage.UPLOADED,
+        sa_column=Column(Text, nullable=False, index=True),
+    )
     source_row_number: int | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
@@ -276,6 +300,45 @@ class ContactFetchJob(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class ContactVerifyJob(SQLModel, table=True):
+    """Bulk ZeroBounce verification job over an explicit contact set or filter snapshot."""
+
+    __tablename__ = "contact_verify_jobs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    state: ContactVerifyJobState = Field(
+        default=ContactVerifyJobState.QUEUED,
+        sa_column=Column(Text, nullable=False, index=True),
+    )
+    terminal_state: bool = Field(default=False)
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=3, ge=1)
+
+    last_error_code: str | None = Field(default=None, max_length=128)
+    last_error_message: str | None = Field(default=None, max_length=4000)
+
+    lock_token: str | None = Field(default=None, max_length=64)
+    lock_expires_at: datetime | None = Field(default=None, index=True)
+
+    filter_snapshot_json: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    contact_ids_json: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+
+    selected_count: int = Field(default=0, ge=0)
+    verified_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
+
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class ProspectContact(SQLModel, table=True):
     """Contact record fetched from a contact provider for a company."""
 
@@ -291,10 +354,15 @@ class ProspectContact(SQLModel, table=True):
     title: str | None = Field(default=None, max_length=512)
     title_match: bool = Field(default=False, index=True)
     linkedin_url: str | None = Field(default=None, max_length=2048)
+    pipeline_stage: ContactPipelineStage = Field(
+        default=ContactPipelineStage.FETCHED,
+        sa_column=Column(Text, nullable=False, index=True),
+    )
 
     email: str | None = Field(default=None, max_length=512, index=True)
-    # unverified | valid | unknown | not_valid
-    email_status: str = Field(default="unverified", max_length=32, index=True)
+    provider_email_status: str | None = Field(default=None, max_length=32, index=True)
+    # unverified | valid | invalid | catch_all | unknown | spamtrap | abuse | do_not_mail
+    verification_status: str = Field(default="unverified", max_length=32, index=True)
     snov_confidence: float | None = Field(default=None)
 
     snov_prospect_raw: dict[str, Any] | None = Field(
