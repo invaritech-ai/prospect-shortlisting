@@ -1,4 +1,4 @@
-import type { StatsResponse, PromptRead } from '../../lib/types'
+import type { PromptRead, CompanyCounts, ContactCountsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import {
   IconBuilding,
@@ -12,11 +12,14 @@ import {
   IconChevronLeft,
   IconChevronRight,
 } from '../ui/icons'
+import { PipelineFlow } from './PipelineFlow'
 
 interface SidebarProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
-  stats: StatsResponse | null
+  companyCounts: CompanyCounts | null
+  contactCounts: ContactCountsResponse | null
+  onNavigateToPipelineStage: (view: ActiveView, stageFilter?: string) => void
   selectedPrompt: PromptRead | null
   onOpenPromptLibrary: () => void
   exportUrl: string
@@ -37,107 +40,13 @@ const NAV_ITEMS: Array<{
   { value: 'analytics', label: 'Analytics Snapshot', Icon: IconPulse },
 ]
 
-function PipelineDot({ stats }: { stats: StatsResponse | null }) {
-  if (!stats) return null
-  const hasActive =
-    stats.scrape.running > 0 || stats.scrape.queued > 0 ||
-    stats.analysis.running > 0 || stats.analysis.queued > 0
-  if (!hasActive) return null
-  return (
-    <span className="relative flex h-2 w-2 flex-shrink-0">
-      <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--oc-accent)] opacity-60" />
-      <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--oc-accent)]" />
-    </span>
-  )
-}
-
-function SegmentedBar({ s }: { s: StatsResponse['scrape'] }) {
-  const { total, completed, failed, site_unavailable } = s
-  if (total === 0) return null
-  const donePct = (completed / total) * 100
-  const failPct = (failed / total) * 100
-  const downPct = (site_unavailable / total) * 100
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-border) flex">
-      <div className="h-full bg-emerald-500 transition-[width] duration-500 shrink-0" style={{ width: `${donePct}%` }} />
-      <div className="h-full bg-red-400 transition-[width] duration-500 shrink-0" style={{ width: `${failPct}%` }} />
-      <div className="h-full bg-slate-400 transition-[width] duration-500 shrink-0" style={{ width: `${downPct}%` }} />
-    </div>
-  )
-}
-
-function PipelineMini({ stats }: { stats: StatsResponse | null }) {
-  if (!stats) return null
-  const { scrape, analysis } = stats
-  if (scrape.total === 0 && analysis.total === 0) return null
-  const hasActive = scrape.running > 0 || scrape.queued > 0 || analysis.running > 0 || analysis.queued > 0
-
-  return (
-    <div className="rounded-xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Pipeline</p>
-        {hasActive && <PipelineDot stats={stats} />}
-      </div>
-      <div className="space-y-3">
-        {([
-          { label: 'Scrape', s: scrape },
-          { label: 'Analysis', s: analysis },
-        ] as const).map(({ label, s }) => (
-          <div key={label}>
-            {/* Header: label + done/total */}
-            <div className="mb-1 flex items-center justify-between gap-1">
-              <span className="text-[11px] text-(--oc-muted)">{label}</span>
-              <span className="font-mono text-[10px] tabular-nums text-(--oc-muted)">
-                <span className="text-emerald-600 font-semibold">{s.completed.toLocaleString()}</span>
-                <span className="text-(--oc-border)">/{s.total.toLocaleString()}</span>
-              </span>
-            </div>
-
-            {/* Segmented bar: green=done, red=failed, gray=down, bg=remaining */}
-            <SegmentedBar s={s} />
-
-            {/* Legend row */}
-            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-(--oc-muted)">
-              {s.failed > 0 && (
-                <span className="text-red-500">{s.failed.toLocaleString()} failed</span>
-              )}
-              {s.site_unavailable > 0 && (
-                <span className="text-slate-400">{s.site_unavailable.toLocaleString()} down</span>
-              )}
-              {(s.running > 0 || s.queued > 0) && (
-                <span className="text-(--oc-info-text)">
-                  {s.running > 0 && `${s.running} running`}
-                  {s.running > 0 && s.queued > 0 && ' · '}
-                  {s.queued > 0 && `${s.queued} queued`}
-                </span>
-              )}
-            </div>
-
-            {/* ETA */}
-            {s.eta_seconds != null && s.eta_seconds > 0 && (
-              <p className="mt-0.5 text-[10px] text-(--oc-muted)">
-                ETA {(() => {
-                  const total = Math.round(s.eta_seconds!)
-                  const hrs = Math.floor(total / 3600)
-                  const mins = Math.floor((total % 3600) / 60)
-                  const secs = total % 60
-                  if (hrs > 0) return `${hrs}h ${mins}m`
-                  if (mins > 0) return `${mins}m ${secs}s`
-                  return `${secs}s`
-                })()}
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 export function Sidebar({
   activeView,
   setActiveView,
-  stats,
+  companyCounts,
+  contactCounts,
+  onNavigateToPipelineStage,
   selectedPrompt,
   onOpenPromptLibrary,
   exportUrl,
@@ -239,14 +148,14 @@ export function Sidebar({
             </div>
           )}
 
-          {/* Pipeline widget — full when expanded, just dot when collapsed */}
-          {collapsed ? (
-            <div className="flex justify-center py-1">
-              <PipelineDot stats={stats} />
-            </div>
-          ) : (
-            <PipelineMini stats={stats} />
-          )}
+          {/* Pipeline stage navigator */}
+          <PipelineFlow
+            activeView={activeView}
+            companyCounts={companyCounts}
+            contactCounts={contactCounts}
+            collapsed={collapsed}
+            onNavigate={onNavigateToPipelineStage}
+          />
 
           {/* Export */}
           <a

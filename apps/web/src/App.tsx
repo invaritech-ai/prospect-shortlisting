@@ -14,6 +14,7 @@ import {
   getAnalysisJobDetail,
   getCompaniesExportUrl,
   getCompanyCounts,
+  getContactCounts,
   getLetterCounts,
   getStats,
   listCompanies,
@@ -40,6 +41,7 @@ import type {
   CompanyList,
   CompanyListItem,
   CompanyStageFilter,
+  ContactCountsResponse,
   DecisionFilter,
   ManualLabel,
   PromptRead,
@@ -116,6 +118,7 @@ function App() {
   const [isCompaniesLoading, setIsCompaniesLoading] = useState(false)
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([])
   const [companyCounts, setCompanyCounts] = useState<CompanyCounts | null>(null)
+  const [contactCounts, setContactCounts] = useState<ContactCountsResponse | null>(null)
   const [actionState, setActionState] = useState<Record<string, string>>({})
   const [analysisActionState, setAnalysisActionState] = useState<Record<string, string>>({})
 
@@ -472,6 +475,22 @@ function App() {
     } catch { /* non-critical */ }
   }, [])
 
+  const loadContactCounts = useCallback(async () => {
+    try {
+      const data = await getContactCounts()
+      setContactCounts(data)
+    } catch { /* non-critical */ }
+  }, [])
+
+  const handleNavigateToPipelineStage = useCallback((view: ActiveView, stageFilter?: string) => {
+    setActiveView(view)
+    if (view === 'companies' && stageFilter) {
+      setCompanyStageFilter(stageFilter as CompanyStageFilter)
+      setCompanyOffset(0)
+      companyCacheRef.current = {}
+    }
+  }, [])
+
   const loadLetterCounts = useCallback(async (df: DecisionFilter, sf: ScrapeFilter, gf: CompanyStageFilter) => {
     try {
       const data = await getLetterCounts(df, sf, gf)
@@ -527,12 +546,14 @@ function App() {
   useEffect(() => {
     void loadStats()
     void loadCompanyCounts()
+    void loadContactCounts()
     const timer = window.setInterval(() => {
       void loadStats()
       void loadCompanyCounts()
+      void loadContactCounts()
     }, 10000)
     return () => window.clearInterval(timer)
-  }, [loadStats, loadCompanyCounts])
+  }, [loadStats, loadCompanyCounts, loadContactCounts])
 
   useEffect(() => {
     if (!error) return
@@ -1057,6 +1078,9 @@ function App() {
         activeView={activeView}
         setActiveView={setActiveView}
         stats={stats}
+        companyCounts={companyCounts}
+        contactCounts={contactCounts}
+        onNavigateToPipelineStage={handleNavigateToPipelineStage}
         selectedPrompt={selectedPrompt}
         onOpenPromptLibrary={openPromptSheet}
         exportUrl={getCompaniesExportUrl()}

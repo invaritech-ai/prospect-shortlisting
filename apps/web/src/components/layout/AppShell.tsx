@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { StatsResponse, PromptRead } from '../../lib/types'
+import type { StatsResponse, PromptRead, CompanyCounts, ContactCountsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
@@ -10,6 +10,9 @@ interface AppShellProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
   stats: StatsResponse | null
+  companyCounts: CompanyCounts | null
+  contactCounts: ContactCountsResponse | null
+  onNavigateToPipelineStage: (view: ActiveView, stageFilter?: string) => void
   selectedPrompt: PromptRead | null
   onOpenPromptLibrary: () => void
   exportUrl: string
@@ -31,6 +34,9 @@ export function AppShell({
   activeView,
   setActiveView,
   stats,
+  companyCounts,
+  contactCounts,
+  onNavigateToPipelineStage,
   selectedPrompt,
   onOpenPromptLibrary,
   exportUrl,
@@ -60,7 +66,9 @@ export function AppShell({
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
-        stats={stats}
+        companyCounts={companyCounts}
+        contactCounts={contactCounts}
+        onNavigateToPipelineStage={onNavigateToPipelineStage}
         selectedPrompt={selectedPrompt}
         onOpenPromptLibrary={onOpenPromptLibrary}
         exportUrl={exportUrl}
