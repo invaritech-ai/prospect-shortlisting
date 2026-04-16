@@ -264,6 +264,17 @@ export async function fetchContactsForRunApollo(runId: string): Promise<ContactF
   return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo`, { method: 'POST' })
 }
 
+export async function fetchContactsSelected(
+  companyIds: string[],
+  source: 'snov' | 'apollo' | 'both',
+): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_ids: companyIds, source }),
+  })
+}
+
 export async function listContacts(
   options: {
     titleMatch?: boolean
