@@ -616,7 +616,7 @@ def create_title_rule(
     payload: TitleMatchRuleCreate,
     session: Session = Depends(get_session),
 ) -> TitleMatchRuleRead:
-    rule = TitleMatchRule(rule_type=payload.rule_type, keywords=payload.keywords)
+    rule = TitleMatchRule(rule_type=payload.rule_type, keywords=payload.keywords, match_type=payload.match_type)
     session.add(rule)
     session.commit()
     session.refresh(rule)

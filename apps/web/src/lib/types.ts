@@ -408,6 +408,7 @@ export type ContactVerifyResult = {
 export type TitleMatchRuleRead = {
   id: string
   rule_type: 'include' | 'exclude'
+  match_type: 'keyword' | 'regex' | 'seniority'
   keywords: string
   created_at: string
 }
@@ -415,6 +416,7 @@ export type TitleMatchRuleRead = {
 export type TitleMatchRuleCreate = {
   rule_type: 'include' | 'exclude'
   keywords: string
+  match_type?: 'keyword' | 'regex' | 'seniority'
 }
 
 export type TitleTestResult = {

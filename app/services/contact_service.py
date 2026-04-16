@@ -89,6 +89,7 @@ def match_title(
     Logic:
     - Exclude first: any exclude keyword present → False
     - Include: any rule where ALL keywords appear in title → True
+      Special rule entry ['__regex__:<pattern>'] is matched as a regex.
     """
     if not title:
         return False
@@ -96,27 +97,54 @@ def match_title(
     normalized_excludes = [_normalize_title(word.strip()) for word in exclude_words if word.strip()]
     if any(re.search(r"\b" + re.escape(word) + r"\b", lowered) for word in normalized_excludes):
         return False
-    return any(
-        all(re.search(r"\b" + re.escape(_normalize_title(kw)) + r"\b", lowered) for kw in keywords)
-        for keywords in include_rules
-    )
+    for keywords in include_rules:
+        if len(keywords) == 1 and keywords[0].startswith("__regex__:"):
+            pattern = keywords[0][len("__regex__:"):]
+            if re.search(pattern, lowered, re.IGNORECASE):
+                return True
+        elif all(re.search(r"\b" + re.escape(_normalize_title(kw)) + r"\b", lowered) for kw in keywords):
+            return True
+    return False
 
 
 def load_title_rules(
     session: Session,
 ) -> tuple[list[list[str]], list[str]]:
-    """Load include/exclude rules from DB. Returns (include_rules, exclude_words)."""
+    """Load include/exclude rules from DB. Returns (include_rules, exclude_words).
+
+    include_rules entries:
+    - keyword (default): [kw1, kw2, ...] — all must match (AND logic)
+    - regex: ['__regex__:<pattern>'] — marker recognized by match_title
+    - seniority: each preset keyword becomes its own single-element rule (OR logic)
+    """
     rules = list(session.exec(select(TitleMatchRule)))
     include_rules: list[list[str]] = []
     exclude_words: list[str] = []
     for rule in rules:
-        kws = [_normalize_title(k.strip()) for k in rule.keywords.split(",") if k.strip()]
-        if rule.rule_type == "include" and kws:
-            include_rules.append(kws)
+        mt = getattr(rule, "match_type", "keyword") or "keyword"
+        if rule.rule_type == "include":
+            if mt == "regex":
+                include_rules.append([f"__regex__:{rule.keywords.strip()}"])
+            elif mt == "seniority":
+                for kw in SENIORITY_PRESETS.get(rule.keywords.strip(), []):
+                    include_rules.append([_normalize_title(kw)])
+            else:
+                kws = [_normalize_title(k.strip()) for k in rule.keywords.split(",") if k.strip()]
+                if kws:
+                    include_rules.append(kws)
         elif rule.rule_type == "exclude":
+            kws = [_normalize_title(k.strip()) for k in rule.keywords.split(",") if k.strip()]
             exclude_words.extend(kws)
     return include_rules, exclude_words
 
+
+SENIORITY_PRESETS: dict[str, list[str]] = {
+    "c_level": ["chief", "ceo", "cto", "cmo", "coo", "cfo", "cdo", "cio", "cro", "cpo"],
+    "vp_level": ["vice president", "vp", "svp", "evp"],
+    "director_level": ["director"],
+    "manager_level": ["manager"],
+    "senior_ic": ["senior", "lead", "principal", "staff"],
+}
 
 # ── Seed data ─────────────────────────────────────────────────────────────────
 
@@ -243,9 +271,21 @@ def test_title_match_detailed(title: str, session: Session) -> dict:
         for r in rules:
             if r.rule_type != "include":
                 continue
-            kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
-            if kws and all(re.search(r"\b" + re.escape(kw) + r"\b", normalized) for kw in kws):
-                matching_rules.append(r.keywords)
+            mt = getattr(r, "match_type", "keyword") or "keyword"
+            if mt == "regex":
+                if re.search(r.keywords.strip(), normalized, re.IGNORECASE):
+                    matching_rules.append(f"regex: {r.keywords}")
+            elif mt == "seniority":
+                preset_kws = SENIORITY_PRESETS.get(r.keywords.strip(), [])
+                if any(
+                    re.search(r"\b" + re.escape(_normalize_title(kw)) + r"\b", normalized)
+                    for kw in preset_kws
+                ):
+                    matching_rules.append(f"seniority({r.keywords})")
+            else:
+                kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
+                if kws and all(re.search(r"\b" + re.escape(kw) + r"\b", normalized) for kw in kws):
+                    matching_rules.append(r.keywords)
 
     return {
         "matched": bool(matching_rules),
@@ -272,13 +312,30 @@ def compute_title_rule_stats(session: Session) -> dict:
 
     rule_stats = []
     for r in rules:
-        kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
+        mt = getattr(r, "match_type", "keyword") or "keyword"
         if r.rule_type == "include":
-            count = sum(
-                1 for t in titles
-                if kws and all(re.search(r"\b" + re.escape(kw) + r"\b", _normalize_title(t)) for kw in kws)
-            )
+            if mt == "regex":
+                count = sum(
+                    1 for t in titles
+                    if re.search(r.keywords.strip(), _normalize_title(t), re.IGNORECASE)
+                )
+            elif mt == "seniority":
+                preset_kws = [_normalize_title(kw) for kw in SENIORITY_PRESETS.get(r.keywords.strip(), [])]
+                count = sum(
+                    1 for t in titles
+                    if any(
+                        re.search(r"\b" + re.escape(kw) + r"\b", _normalize_title(t))
+                        for kw in preset_kws
+                    )
+                )
+            else:
+                kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
+                count = sum(
+                    1 for t in titles
+                    if kws and all(re.search(r"\b" + re.escape(kw) + r"\b", _normalize_title(t)) for kw in kws)
+                )
         else:
+            kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
             count = sum(
                 1 for t in titles
                 if any(re.search(r"\b" + re.escape(kw) + r"\b", _normalize_title(t)) for kw in kws)

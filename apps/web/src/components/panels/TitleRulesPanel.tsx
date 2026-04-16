@@ -25,6 +25,7 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
   const [isTesting, setIsTesting] = useState(false)
 
   const [newRuleType, setNewRuleType] = useState<'include' | 'exclude'>('include')
+  const [newMatchType, setNewMatchType] = useState<'keyword' | 'regex' | 'seniority'>('keyword')
   const [newKeywords, setNewKeywords] = useState('')
   const [isAdding, setIsAdding] = useState(false)
   const [deletingIds, setDeletingIds] = useState(new Set<string>())
@@ -66,7 +67,7 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
     setIsAdding(true)
     setError('')
     try {
-      await createTitleMatchRule({ rule_type: newRuleType, keywords: newKeywords.trim() })
+      await createTitleMatchRule({ rule_type: newRuleType, keywords: newKeywords.trim(), match_type: newMatchType })
       setNewKeywords('')
       await loadAll()
     } catch (err: unknown) {
@@ -188,6 +189,11 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
                 className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1.5"
               >
                 <span className="flex-1 text-xs text-emerald-900">{r.keywords}</span>
+                {r.match_type !== 'keyword' && (
+                  <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-600">
+                    {r.match_type}
+                  </span>
+                )}
                 {getMatchCount(r.id) !== null && (
                   <span className="rounded-full bg-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
                     {getMatchCount(r.id)}
@@ -247,7 +253,7 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
           <h3 className="mb-3 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">
             Add Rule
           </h3>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <select
               value={newRuleType}
               onChange={(e) => setNewRuleType(e.target.value as 'include' | 'exclude')}
@@ -256,14 +262,46 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
               <option value="include">Include</option>
               <option value="exclude">Exclude</option>
             </select>
-            <input
-              type="text"
-              value={newKeywords}
-              onChange={(e) => setNewKeywords(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void onAddRule()}
-              placeholder={newRuleType === 'include' ? 'marketing, director' : 'assistant'}
-              className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs outline-none transition focus:border-emerald-400"
-            />
+            {newRuleType === 'include' && (
+              <select
+                value={newMatchType}
+                onChange={(e) => { setNewMatchType(e.target.value as 'keyword' | 'regex' | 'seniority'); setNewKeywords('') }}
+                className="rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs outline-none"
+              >
+                <option value="keyword">Keyword</option>
+                <option value="regex">Regex</option>
+                <option value="seniority">Seniority Preset</option>
+              </select>
+            )}
+            {newMatchType === 'seniority' && newRuleType === 'include' ? (
+              <select
+                value={newKeywords}
+                onChange={(e) => setNewKeywords(e.target.value)}
+                className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs outline-none"
+              >
+                <option value="">Select preset…</option>
+                <option value="c_level">C-Level (CEO, CMO, CTO, COO…)</option>
+                <option value="vp_level">VP Level (VP, SVP, EVP…)</option>
+                <option value="director_level">Director Level</option>
+                <option value="manager_level">Manager Level</option>
+                <option value="senior_ic">Senior IC (Senior, Lead, Principal)</option>
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={newKeywords}
+                onChange={(e) => setNewKeywords(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void onAddRule()}
+                placeholder={
+                  newMatchType === 'regex'
+                    ? String.raw`^(head|vp).*(marketing)`
+                    : newRuleType === 'include'
+                      ? 'marketing, director'
+                      : 'assistant'
+                }
+                className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs outline-none transition focus:border-emerald-400"
+              />
+            )}
             <button
               type="button"
               onClick={() => void onAddRule()}
@@ -274,7 +312,7 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
             </button>
           </div>
           <p className="mt-2 text-[10px] text-(--oc-muted)">
-            Include: ALL keywords must appear (comma-separated). Exclude: ANY keyword disqualifies.
+            Include: ALL keywords must appear (comma-separated). Regex: full pattern. Seniority: preset group. Exclude: ANY keyword disqualifies.
           </p>
         </section>
 

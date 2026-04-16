@@ -88,5 +88,5 @@ def test_stats_returns_counts(sqlite_session: Session) -> None:
     result = get_title_rule_stats(session=sqlite_session)
     assert result.total_contacts == 1
     assert result.total_matched == 1
-    include_stat = next(r for r in result.rules if r.rule_type == "include")
+    include_stat = next(r for r in result.rules if r.rule_type == "include" and r.keywords == "marketing, director")
     assert include_stat.contact_match_count == 1

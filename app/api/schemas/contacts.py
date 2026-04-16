@@ -45,13 +45,15 @@ class ContactFetchResult(BaseModel):
 class TitleMatchRuleRead(BaseModel):
     id: UUID
     rule_type: str
+    match_type: str
     keywords: str
     created_at: datetime
 
 
 class TitleMatchRuleCreate(BaseModel):
     rule_type: str = Field(pattern="^(include|exclude)$")
-    keywords: str = Field(min_length=2, max_length=255)
+    keywords: str = Field(min_length=1, max_length=255)
+    match_type: str = Field(default="keyword", pattern="^(keyword|regex|seniority)$")
 
 
 class TitleRuleSeedResult(BaseModel):
