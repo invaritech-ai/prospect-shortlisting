@@ -199,6 +199,30 @@ def seed_title_rules(session: Session) -> int:
     return inserted
 
 
+def _extract_apollo_title_filter(session: Session) -> list[str]:
+    """Build Apollo person_titles filter from include rules.
+
+    Each include rule (e.g., "marketing, director") becomes one title phrase
+    ("marketing director"). Returns an empty list when no include rules exist,
+    meaning: fetch all contacts and filter locally.
+    """
+    rules = list(session.exec(
+        select(TitleMatchRule).where(col(TitleMatchRule.rule_type) == "include")
+    ))
+    phrases: list[str] = []
+    for rule in rules:
+        kws = [k.strip() for k in rule.keywords.split(",") if k.strip()]
+        if kws:
+            phrases.append(" ".join(kws))
+    seen: set[str] = set()
+    result: list[str] = []
+    for p in phrases:
+        if p not in seen:
+            seen.add(p)
+            result.append(p)
+    return result
+
+
 def test_title_match_detailed(title: str, session: Session) -> dict:
     """Test a title against all current rules; return which rules triggered."""
     rules = list(session.exec(select(TitleMatchRule)))
@@ -346,6 +370,9 @@ class ContactService:
             domain = company.domain
             company_id = company.id
             include_rules, exclude_words = load_title_rules(session)
+            apollo_title_filter = (
+                _extract_apollo_title_filter(session) if job_provider == "apollo" else []
+            )
         # ── session closed ────────────────────────────────────────────────────
 
         all_prospects: list[dict] = []
@@ -356,7 +383,11 @@ class ContactService:
 
         if job_provider == "apollo":
             for page in range(1, 4):
-                prospects = _apollo.search_people(domain, page=page)
+                prospects = _apollo.search_people(
+                    domain,
+                    page=page,
+                    person_titles=apollo_title_filter if apollo_title_filter else None,
+                )
                 apollo_err = _apollo.last_error_code
                 if not prospects:
                     if apollo_err in _PERMANENT_ERROR_CODES:

@@ -139,20 +139,30 @@ class ApolloClient:
             return [p for p in results if isinstance(p, dict)]
         return []
 
-    def search_people(self, domain: str, page: int = 1) -> list[dict]:
-        """Search Apollo's people database for a company domain."""
+    def search_people(
+        self,
+        domain: str,
+        page: int = 1,
+        person_titles: list[str] | None = None,
+    ) -> list[dict]:
+        """Search Apollo's people database for a company domain.
+
+        If person_titles is provided, Apollo pre-filters by job title,
+        reducing results to relevant contacts and saving API credits.
+        """
         if not self._api_key:
             self.last_error_code = ERR_APOLLO_CREDENTIALS_MISSING
             return []
 
-        data, err = self._post_json(
-            "/mixed_people/api_search",
-            query_params={
-                "q_organization_domains_list[]": [domain],
-                "page": page,
-                "per_page": 100,
-            },
-        )
+        params: dict[str, object] = {
+            "q_organization_domains_list[]": [domain],
+            "page": page,
+            "per_page": 100,
+        }
+        if person_titles:
+            params["person_titles[]"] = person_titles
+
+        data, err = self._post_json("/mixed_people/api_search", query_params=params)
         if err:
             return []
         self.last_error_code = ""
