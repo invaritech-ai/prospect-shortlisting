@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -56,6 +57,11 @@ class TitleMatchRuleCreate(BaseModel):
 class TitleRuleSeedResult(BaseModel):
     inserted: int
     message: str
+
+
+class BulkContactFetchRequest(BaseModel):
+    company_ids: list[UUID] = Field(min_length=1)
+    source: Literal["snov", "apollo", "both"] = "snov"
 
 
 class RematchResult(BaseModel):

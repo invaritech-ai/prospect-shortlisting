@@ -10,6 +10,7 @@ from sqlalchemy import Integer, case, func, or_, select as sa_select, text
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
+    BulkContactFetchRequest,
     ContactCompanyListResponse,
     ContactCompanySummary,
     ContactCountsResponse,
@@ -148,6 +149,7 @@ def _enqueue_contact_fetches(
             select(ContactFetchJob.company_id).where(
                 col(ContactFetchJob.company_id).in_(company_ids),
                 col(ContactFetchJob.terminal_state).is_(False),
+                ContactFetchJob.provider == provider,
             )
         ).all()
     )
@@ -263,6 +265,40 @@ def fetch_apollo_contacts_for_run(
         ).all()
     )
     return _enqueue_contact_fetches(session=session, companies=companies, provider="apollo")
+
+
+@router.post(
+    "/companies/fetch-contacts-selected",
+    response_model=ContactFetchResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def fetch_contacts_selected(
+    payload: BulkContactFetchRequest,
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    requested_ids = list(dict.fromkeys(payload.company_ids))
+    companies = list(
+        session.exec(select(Company).where(col(Company.id).in_(requested_ids)))
+    )
+    if not companies:
+        raise HTTPException(status_code=404, detail="No matching companies found.")
+
+    providers: list[str] = ["snov", "apollo"] if payload.source == "both" else [payload.source]
+    total_queued, total_already_fetching = 0, 0
+    all_job_ids: list[UUID] = []
+
+    for provider in providers:
+        r = _enqueue_contact_fetches(session=session, companies=companies, provider=provider)
+        total_queued += r.queued_count
+        total_already_fetching = max(total_already_fetching, r.already_fetching_count)
+        all_job_ids.extend(r.queued_job_ids)
+
+    return ContactFetchResult(
+        requested_count=len(companies),
+        queued_count=total_queued,
+        already_fetching_count=total_already_fetching,
+        queued_job_ids=all_job_ids,
+    )
 
 
 @router.get("/companies/{company_id}/contacts", response_model=ContactListResponse)
