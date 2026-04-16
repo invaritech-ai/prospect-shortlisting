@@ -199,6 +199,76 @@ def seed_title_rules(session: Session) -> int:
     return inserted
 
 
+def test_title_match_detailed(title: str, session: Session) -> dict:
+    """Test a title against all current rules; return which rules triggered."""
+    rules = list(session.exec(select(TitleMatchRule)))
+    normalized = _normalize_title(title)
+
+    exclude_kws: list[str] = []
+    for r in rules:
+        if r.rule_type == "exclude":
+            exclude_kws.extend(_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip())
+
+    excluded_by = [
+        kw for kw in exclude_kws
+        if re.search(r"\b" + re.escape(kw) + r"\b", normalized)
+    ]
+
+    matching_rules: list[str] = []
+    if not excluded_by:
+        for r in rules:
+            if r.rule_type != "include":
+                continue
+            kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
+            if kws and all(re.search(r"\b" + re.escape(kw) + r"\b", normalized) for kw in kws):
+                matching_rules.append(r.keywords)
+
+    return {
+        "matched": bool(matching_rules),
+        "matching_rules": matching_rules,
+        "excluded_by": excluded_by,
+        "normalized_title": normalized,
+    }
+
+
+def compute_title_rule_stats(session: Session) -> dict:
+    """Compute per-rule contact match counts."""
+    rules = list(session.exec(
+        select(TitleMatchRule).order_by(col(TitleMatchRule.rule_type), col(TitleMatchRule.created_at))
+    ))
+    titles = list(session.exec(
+        select(ProspectContact.title)
+        .where(col(ProspectContact.title).is_not(None))
+    ).all())
+    titles = [t for t in titles if t]
+
+    total_contacts = len(titles)
+    include_rules, exclude_words = load_title_rules(session)
+    total_matched = sum(1 for t in titles if match_title(t, include_rules, exclude_words))
+
+    rule_stats = []
+    for r in rules:
+        kws = [_normalize_title(k.strip()) for k in r.keywords.split(",") if k.strip()]
+        if r.rule_type == "include":
+            count = sum(
+                1 for t in titles
+                if kws and all(re.search(r"\b" + re.escape(kw) + r"\b", _normalize_title(t)) for kw in kws)
+            )
+        else:
+            count = sum(
+                1 for t in titles
+                if any(re.search(r"\b" + re.escape(kw) + r"\b", _normalize_title(t)) for kw in kws)
+            )
+        rule_stats.append({
+            "rule_id": r.id,
+            "rule_type": r.rule_type,
+            "keywords": r.keywords,
+            "contact_match_count": count,
+        })
+
+    return {"rules": rule_stats, "total_contacts": total_contacts, "total_matched": total_matched}
+
+
 # ── ContactService ────────────────────────────────────────────────────────────
 
 class ContactService:

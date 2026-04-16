@@ -70,6 +70,30 @@ class RematchResult(BaseModel):
     message: str
 
 
+class TitleTestRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+
+
+class TitleTestResult(BaseModel):
+    matched: bool
+    matching_rules: list[str]   # original keyword strings that matched, e.g. ["marketing, director"]
+    excluded_by: list[str]      # exclude keywords that fired, e.g. ["assistant"]
+    normalized_title: str
+
+
+class TitleRuleStatItem(BaseModel):
+    rule_id: UUID
+    rule_type: str
+    keywords: str
+    contact_match_count: int
+
+
+class TitleRuleStatsResponse(BaseModel):
+    rules: list[TitleRuleStatItem]
+    total_contacts: int
+    total_matched: int
+
+
 class ContactCompanySummary(BaseModel):
     company_id: UUID
     domain: str

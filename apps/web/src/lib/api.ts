@@ -35,6 +35,8 @@ import type {
   TitleMatchRuleCreate,
   TitleMatchRuleRead,
   TitleRuleSeedResult,
+  TitleTestResult,
+  TitleRuleStatsResponse,
   UploadCompanyList,
   UploadCreateResult,
   UploadDetail,
@@ -364,6 +366,18 @@ export async function deleteTitleMatchRule(ruleId: string): Promise<void> {
 
 export async function seedTitleMatchRules(): Promise<TitleRuleSeedResult> {
   return request<TitleRuleSeedResult>('/v1/title-match-rules/seed', { method: 'POST' })
+}
+
+export async function testTitleMatch(title: string): Promise<TitleTestResult> {
+  return request<TitleTestResult>('/v1/title-match-rules/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+}
+
+export async function getTitleRuleStats(): Promise<TitleRuleStatsResponse> {
+  return request<TitleRuleStatsResponse>('/v1/title-match-rules/stats')
 }
 
 /** Parse a date string as UTC.

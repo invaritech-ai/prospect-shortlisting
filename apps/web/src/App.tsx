@@ -46,6 +46,7 @@ import { S4ValidationView } from './components/views/pipeline/S4ValidationView'
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
 import { PromptLibraryPanel } from './components/panels/PromptLibraryPanel'
+import { TitleRulesPanel } from './components/panels/TitleRulesPanel'
 import { AnalysisDetailPanel } from './components/panels/AnalysisDetailPanel'
 import { CompanyReviewPanel } from './components/panels/CompanyReviewPanel'
 import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPanel'
@@ -578,14 +579,10 @@ function App() {
 
       <Toast error={error} notice={notice} noticeAction={noticeAction} />
 
-      {/* Title rules panel — rendered here to avoid props drilling; opened via isTitleRulesOpen state */}
-      {isTitleRulesOpen && (
-        <div
-          className="fixed inset-0 z-[var(--z-overlay)]"
-          onClick={() => setIsTitleRulesOpen(false)}
-          aria-hidden="true"
-        />
-      )}
+      <TitleRulesPanel
+        isOpen={isTitleRulesOpen}
+        onClose={() => setIsTitleRulesOpen(false)}
+      />
     </>
   )
 }

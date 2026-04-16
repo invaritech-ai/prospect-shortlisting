@@ -23,6 +23,10 @@ from app.api.schemas.contacts import (
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
     TitleRuleSeedResult,
+    TitleTestRequest,
+    TitleTestResult,
+    TitleRuleStatItem,
+    TitleRuleStatsResponse,
 )
 from app.db.session import get_session
 from app.models import (
@@ -41,7 +45,12 @@ from app.models.pipeline import (
     ContactVerifyJobState,
     PredictedLabel,
 )
-from app.services.contact_service import rematch_existing_contacts, seed_title_rules
+from app.services.contact_service import (
+    compute_title_rule_stats,
+    rematch_existing_contacts,
+    seed_title_rules,
+    test_title_match_detailed,
+)
 from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo, verify_contacts_batch
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
@@ -663,3 +672,18 @@ def seed_rules(session: Session = Depends(get_session)) -> TitleRuleSeedResult:
         inserted=inserted,
         message=f"Inserted {inserted} new rules (duplicates skipped).",
     )
+
+
+@router.post("/title-match-rules/test", response_model=TitleTestResult)
+def run_title_test(
+    payload: TitleTestRequest,
+    session: Session = Depends(get_session),
+) -> TitleTestResult:
+    result = test_title_match_detailed(payload.title, session)
+    return TitleTestResult.model_validate(result)
+
+
+@router.get("/title-match-rules/stats", response_model=TitleRuleStatsResponse)
+def get_title_rule_stats(session: Session = Depends(get_session)) -> TitleRuleStatsResponse:
+    result = compute_title_rule_stats(session)
+    return TitleRuleStatsResponse.model_validate(result)

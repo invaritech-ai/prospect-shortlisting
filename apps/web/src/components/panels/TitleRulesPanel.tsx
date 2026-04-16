@@ -1,0 +1,291 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { TitleMatchRuleRead, TitleRuleStatsResponse, TitleTestResult } from '../../lib/types'
+import {
+  createTitleMatchRule,
+  deleteTitleMatchRule,
+  getTitleRuleStats,
+  listTitleMatchRules,
+  seedTitleMatchRules,
+  testTitleMatch,
+} from '../../lib/api'
+import { Drawer } from '../ui/Drawer'
+
+interface TitleRulesPanelProps {
+  isOpen: boolean
+  onClose: () => void
+}
+
+export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
+  const [rules, setRules] = useState<TitleMatchRuleRead[]>([])
+  const [stats, setStats] = useState<TitleRuleStatsResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  const [testTitleValue, setTestTitleValue] = useState('')
+  const [testResult, setTestResult] = useState<TitleTestResult | null>(null)
+  const [isTesting, setIsTesting] = useState(false)
+
+  const [newRuleType, setNewRuleType] = useState<'include' | 'exclude'>('include')
+  const [newKeywords, setNewKeywords] = useState('')
+  const [isAdding, setIsAdding] = useState(false)
+  const [deletingIds, setDeletingIds] = useState(new Set<string>())
+  const [error, setError] = useState('')
+
+  const loadAll = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const [rulesData, statsData] = await Promise.all([listTitleMatchRules(), getTitleRuleStats()])
+      setRules(rulesData)
+      setStats(statsData)
+      setError('')
+    } catch {
+      setError('Failed to load rules')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isOpen) void loadAll()
+  }, [isOpen, loadAll])
+
+  const onTest = async () => {
+    if (!testTitleValue.trim()) return
+    setIsTesting(true)
+    setTestResult(null)
+    try {
+      setTestResult(await testTitleMatch(testTitleValue.trim()))
+    } catch {
+      setError('Test failed')
+    } finally {
+      setIsTesting(false)
+    }
+  }
+
+  const onAddRule = async () => {
+    if (!newKeywords.trim()) return
+    setIsAdding(true)
+    setError('')
+    try {
+      await createTitleMatchRule({ rule_type: newRuleType, keywords: newKeywords.trim() })
+      setNewKeywords('')
+      await loadAll()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to add rule')
+    } finally {
+      setIsAdding(false)
+    }
+  }
+
+  const onDeleteRule = async (ruleId: string) => {
+    setDeletingIds((p) => new Set([...p, ruleId]))
+    try {
+      await deleteTitleMatchRule(ruleId)
+      await loadAll()
+    } catch {
+      setError('Failed to delete')
+    } finally {
+      setDeletingIds((p) => {
+        const n = new Set(p)
+        n.delete(ruleId)
+        return n
+      })
+    }
+  }
+
+  const getMatchCount = (ruleId: string) =>
+    stats?.rules.find((s) => s.rule_id === ruleId)?.contact_match_count ?? null
+
+  const includeRules = rules.filter((r) => r.rule_type === 'include')
+  const excludeRules = rules.filter((r) => r.rule_type === 'exclude')
+
+  return (
+    <Drawer isOpen={isOpen} onClose={onClose} title="Title Match Rules" subtitle="S3 · Contacts" size="lg">
+      <div className="flex h-full flex-col gap-5 overflow-y-auto p-5">
+
+        {/* Stats header */}
+        {stats && (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
+            <span className="font-black text-emerald-800">{stats.total_matched.toLocaleString()}</span>
+            <span className="text-emerald-700">
+              of {stats.total_contacts.toLocaleString()} contacts match current rules
+            </span>
+          </div>
+        )}
+
+        {/* Test a title */}
+        <section>
+          <h3 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">
+            Test a Title
+          </h3>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={testTitleValue}
+              onChange={(e) => setTestTitleValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void onTest()}
+              placeholder="VP of Marketing"
+              className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+            />
+            <button
+              type="button"
+              onClick={() => void onTest()}
+              disabled={isTesting || !testTitleValue.trim()}
+              className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
+            >
+              {isTesting ? '…' : 'Test'}
+            </button>
+          </div>
+          {testResult && (
+            <div
+              className={`mt-2 rounded-xl border p-3 text-xs ${
+                testResult.matched
+                  ? 'border-emerald-200 bg-emerald-50'
+                  : 'border-rose-200 bg-rose-50'
+              }`}
+            >
+              <p className={`font-bold ${testResult.matched ? 'text-emerald-800' : 'text-rose-700'}`}>
+                {testResult.matched ? '✓ Matched' : '✗ Not matched'}
+              </p>
+              <p className="mt-0.5 font-mono text-[10px] text-(--oc-muted)">{testResult.normalized_title}</p>
+              {testResult.matching_rules.length > 0 && (
+                <p className="mt-1 text-emerald-700">
+                  Rules: {testResult.matching_rules.join(', ')}
+                </p>
+              )}
+              {testResult.excluded_by.length > 0 && (
+                <p className="mt-1 text-rose-700">
+                  Excluded by: {testResult.excluded_by.join(', ')}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {error && (
+          <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            {error}
+          </p>
+        )}
+
+        {/* Include rules */}
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">
+              Include ({includeRules.length})
+            </h3>
+            <p className="text-[10px] text-(--oc-muted)">AND within rule · OR between rules</p>
+          </div>
+          <div className="space-y-1">
+            {isLoading && includeRules.length === 0 && (
+              <p className="text-xs text-(--oc-muted)">Loading…</p>
+            )}
+            {!isLoading && includeRules.length === 0 && (
+              <p className="text-xs text-(--oc-muted)">No include rules.</p>
+            )}
+            {includeRules.map((r) => (
+              <div
+                key={r.id}
+                className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1.5"
+              >
+                <span className="flex-1 text-xs text-emerald-900">{r.keywords}</span>
+                {getMatchCount(r.id) !== null && (
+                  <span className="rounded-full bg-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                    {getMatchCount(r.id)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void onDeleteRule(r.id)}
+                  disabled={deletingIds.has(r.id)}
+                  className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Exclude rules */}
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">
+              Exclude ({excludeRules.length})
+            </h3>
+            <p className="text-[10px] text-(--oc-muted)">Any keyword disqualifies</p>
+          </div>
+          <div className="space-y-1">
+            {excludeRules.map((r) => (
+              <div
+                key={r.id}
+                className="flex items-center gap-2 rounded-xl border border-rose-100 bg-rose-50 px-3 py-1.5"
+              >
+                <span className="flex-1 text-xs text-rose-900">{r.keywords}</span>
+                {getMatchCount(r.id) !== null && (
+                  <span className="rounded-full bg-rose-200 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                    {getMatchCount(r.id)} blocked
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void onDeleteRule(r.id)}
+                  disabled={deletingIds.has(r.id)}
+                  className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {excludeRules.length === 0 && !isLoading && (
+              <p className="text-xs text-(--oc-muted)">No exclude rules.</p>
+            )}
+          </div>
+        </section>
+
+        {/* Add rule */}
+        <section className="rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-4">
+          <h3 className="mb-3 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">
+            Add Rule
+          </h3>
+          <div className="flex gap-2">
+            <select
+              value={newRuleType}
+              onChange={(e) => setNewRuleType(e.target.value as 'include' | 'exclude')}
+              className="rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs outline-none"
+            >
+              <option value="include">Include</option>
+              <option value="exclude">Exclude</option>
+            </select>
+            <input
+              type="text"
+              value={newKeywords}
+              onChange={(e) => setNewKeywords(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void onAddRule()}
+              placeholder={newRuleType === 'include' ? 'marketing, director' : 'assistant'}
+              className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs outline-none transition focus:border-emerald-400"
+            />
+            <button
+              type="button"
+              onClick={() => void onAddRule()}
+              disabled={isAdding || !newKeywords.trim()}
+              className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {isAdding ? '…' : 'Add'}
+            </button>
+          </div>
+          <p className="mt-2 text-[10px] text-(--oc-muted)">
+            Include: ALL keywords must appear (comma-separated). Exclude: ANY keyword disqualifies.
+          </p>
+        </section>
+
+        <button
+          type="button"
+          onClick={() => void seedTitleMatchRules().then(() => loadAll())}
+          className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800"
+        >
+          Seed default rules
+        </button>
+      </div>
+    </Drawer>
+  )
+}

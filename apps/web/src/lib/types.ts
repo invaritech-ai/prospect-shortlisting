@@ -417,6 +417,26 @@ export type TitleMatchRuleCreate = {
   keywords: string
 }
 
+export type TitleTestResult = {
+  matched: boolean
+  matching_rules: string[]
+  excluded_by: string[]
+  normalized_title: string
+}
+
+export type TitleRuleStatItem = {
+  rule_id: string
+  rule_type: string
+  keywords: string
+  contact_match_count: number
+}
+
+export type TitleRuleStatsResponse = {
+  rules: TitleRuleStatItem[]
+  total_contacts: number
+  total_matched: number
+}
+
 export type TitleRuleSeedResult = {
   inserted: number
   message: string
