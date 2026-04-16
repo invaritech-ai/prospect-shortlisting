@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Prospect Console — Stage 3: Contact Fetch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --oc-bg:#f8fafc;--oc-surface:#f1f6fd;--oc-surface-strong:#ffffff;
+      --oc-border:#dbeafe;--oc-text:#0f172a;--oc-muted:#64748b;
+      --oc-accent:#1e40af;--oc-accent-ink:#1e3a8a;--oc-accent-soft:#dbeafe;
+      --oc-success-bg:#dcfce7;--oc-success-text:#14532d;
+      --oc-warn-bg:#fef3c7;--oc-warn-text:#92400e;
+      --oc-fail-bg:#ffe4e6;--oc-fail-text:#9f1239;
+      --oc-neutral-bg:#f1f5f9;--oc-neutral-text:#334155;
+      --oc-shadow:0 4px 16px rgba(30,58,138,.08);--oc-radius:14px;--oc-sidebar-w:224px;
+      --font:'Fira Sans',sans-serif;--font-mono:'Fira Code',monospace;
+      /* Stage 3 = green */
+      --s3:#14532d;--s3-bg:#dcfce7;--s3-text:#14532d;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}
+    body{font-family:var(--font);background:radial-gradient(circle at 8% -12%,rgba(30,64,175,.11),transparent 36%),radial-gradient(circle at 100% 0%,rgba(217,119,6,.07),transparent 40%),linear-gradient(180deg,#fbfdff 0%,var(--oc-bg) 48%,#eef3fb 100%);color:var(--oc-text);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+    .shell{display:flex;height:100vh;overflow:hidden}
+    .sidebar{width:var(--oc-sidebar-w);background:var(--oc-surface-strong);border-right:1px solid var(--oc-border);display:flex;flex-direction:column;flex-shrink:0;padding:16px 0;overflow:hidden}
+    .sb-brand{display:flex;align-items:center;gap:10px;padding:0 14px 16px;border-bottom:1px solid var(--oc-border);margin-bottom:8px}
+    .sb-mark{width:32px;height:32px;background:var(--oc-accent);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#fff}
+    .sb-lt{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.2em;color:var(--oc-muted)}
+    .sb-lb{font-size:13px;font-weight:800;color:var(--oc-accent-ink);line-height:1}
+    .sb-div{height:1px;background:var(--oc-border);margin:6px 12px}
+    .sb-sec{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--oc-muted);padding:8px 16px 4px}
+    .sb-item{display:flex;align-items:center;gap:10px;padding:8px 14px;margin:1px 8px;border-radius:10px;font-size:13px;font-weight:600;color:var(--oc-muted);cursor:pointer;transition:background .14s,color .14s}
+    .sb-item:hover{background:color-mix(in srgb,var(--oc-accent-soft) 58%,white);color:var(--oc-accent-ink)}
+    .sb-item.active{background:var(--oc-accent-soft);color:var(--oc-accent-ink)}
+    .sb-item.active svg{color:var(--oc-accent)}
+    .sb-item svg{color:inherit;flex-shrink:0}
+    .sb-spacer{flex:1}
+    .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+    .topbar{background:color-mix(in srgb,var(--oc-surface-strong) 95%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid color-mix(in srgb,var(--oc-border) 88%,white);padding:0 20px;height:54px;display:flex;align-items:center;gap:12px;flex-shrink:0;box-shadow:0 2px 8px rgba(30,58,138,.04)}
+    .breadcrumb{display:flex;align-items:center;gap:6px;font-size:12.5px}
+    .breadcrumb a{color:var(--oc-muted);text-decoration:none}
+    .breadcrumb a:hover{color:var(--oc-accent)}
+    .breadcrumb .sep{color:var(--oc-muted);font-size:11px}
+    .breadcrumb .cur{font-size:14px;font-weight:800;letter-spacing:-.02em;color:var(--oc-accent-ink)}
+    .stage-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;background:var(--s3-bg);color:var(--s3-text);font-size:10.5px;font-weight:700}
+    .tb-spacer{flex:1}
+    .sw{position:relative}
+    .sw svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--oc-muted);pointer-events:none}
+    .sw input{padding:7px 12px 7px 32px;background:var(--oc-surface);border:1px solid var(--oc-border);border-radius:8px;color:var(--oc-text);font-family:var(--font);font-size:12.5px;outline:none;width:210px}
+    .sw input::placeholder{color:var(--oc-muted)}
+    .sw input:focus{border-color:var(--oc-accent);background:#fff}
+    .sort-sel{padding:7px 10px;background:var(--oc-surface);border:1px solid var(--oc-border);border-radius:8px;color:var(--oc-text);font-family:var(--font);font-size:12.5px;outline:none;cursor:pointer}
+    .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-family:var(--font);font-size:12.5px;font-weight:600;cursor:pointer;border:none;white-space:nowrap;transition:all .15s}
+    .btn-ghost{background:transparent;border:1px solid var(--oc-border);color:var(--oc-muted)}
+    .btn-ghost:hover{border-color:var(--oc-accent);color:var(--oc-accent-ink)}
+
+    /* Summary stats bar */
+    .stats-bar{padding:14px 20px 0;display:flex;gap:12px;flex-shrink:0}
+    .stat-card{background:var(--oc-surface-strong);border:1px solid var(--oc-border);border-radius:var(--oc-radius);padding:12px 16px;flex:1;box-shadow:var(--oc-shadow)}
+    .stat-card-n{font-size:22px;font-weight:800;color:var(--oc-accent-ink);line-height:1}
+    .stat-card-l{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--oc-muted);margin-top:3px}
+    .stat-card.green .stat-card-n{color:#16a34a}
+    .stat-card.amber .stat-card-n{color:#d97706}
+
+    .sec-div{height:1px;background:var(--oc-border);margin:14px 20px;flex-shrink:0}
+
+    .filter-bar{padding:0 20px 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0}
+    .letter-strip{display:flex;gap:2px}
+    .lb{width:24px;height:24px;border:1px solid var(--oc-border);border-radius:6px;font-size:10.5px;font-weight:600;cursor:pointer;background:#fff;color:var(--oc-muted);display:flex;align-items:center;justify-content:center;transition:all .12s}
+    .lb.all{width:30px;font-size:10px}
+    .lb:hover{border-color:var(--oc-accent);color:var(--oc-accent-ink)}
+    .lb.active{background:var(--oc-accent);border-color:var(--oc-accent);color:#fff}
+    .vdiv{width:1px;height:24px;background:var(--oc-border)}
+    .status-filters{display:flex;gap:5px}
+    .sf{padding:3px 11px;border-radius:20px;border:1px solid var(--oc-border);font-size:11.5px;font-weight:600;cursor:pointer;background:#fff;color:var(--oc-muted);transition:all .12s}
+    .sf:hover{border-color:var(--oc-accent);color:var(--oc-accent-ink)}
+    .sf.active{border-color:var(--oc-accent);color:var(--oc-accent-ink);background:var(--oc-accent-soft)}
+
+    .tbl-wrap{flex:1;overflow:auto;padding:0 20px 16px}
+    .tbl-card{background:var(--oc-surface-strong);border:1px solid var(--oc-border);border-radius:var(--oc-radius);overflow:hidden;box-shadow:var(--oc-shadow)}
+    table{width:100%;border-collapse:collapse}
+    thead{position:sticky;top:0;z-index:2}
+    thead tr{background:color-mix(in srgb,var(--oc-surface) 70%,white)}
+    th{padding:10px 13px;text-align:left;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--oc-muted);border-bottom:1px solid var(--oc-border);white-space:nowrap}
+    .sort-icon{color:var(--oc-accent);margin-left:2px}
+    tbody tr{border-bottom:1px solid color-mix(in srgb,var(--oc-border) 65%,white);transition:background .1s}
+    tbody tr:last-child{border-bottom:none}
+    tbody tr:hover td{background:color-mix(in srgb,var(--oc-accent-soft) 22%,white)}
+    td{padding:10px 13px;vertical-align:middle}
+    .cb{width:15px;height:15px;accent-color:var(--oc-accent);cursor:pointer}
+    .domain-cell{display:flex;align-items:center;gap:9px}
+    .domain-icon{width:28px;height:28px;border-radius:8px;background:var(--oc-surface);border:1px solid var(--oc-border);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;font-weight:700;color:var(--oc-accent-ink)}
+    .domain-name{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--oc-text)}
+    .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+    .bdot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+    .b-ok{background:var(--oc-success-bg);color:var(--oc-success-text)}
+    .b-run{background:var(--oc-warn-bg);color:var(--oc-warn-text)}
+    .b-neu{background:var(--oc-neutral-bg);color:var(--oc-neutral-text);border:1px solid #e2e8f0}
+    .b-err{background:var(--oc-fail-bg);color:var(--oc-fail-text)}
+    .pulse{animation:pulse 1.6s ease-in-out infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+    .num-val{font-family:var(--font-mono);font-size:12px;color:var(--oc-text)}
+    .num-sub{font-size:10.5px;color:var(--oc-muted)}
+    .source-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;background:var(--oc-surface);border:1px solid var(--oc-border);color:var(--oc-muted)}
+    .act-btn{padding:4px 10px;border:1px solid var(--oc-border);border-radius:7px;cursor:pointer;background:#fff;color:var(--oc-muted);font-size:11px;font-family:var(--font);transition:all .12s;margin-right:4px}
+    .act-btn:hover{border-color:var(--oc-accent);color:var(--oc-accent-ink)}
+    .act-btn.fetch{color:var(--oc-accent-ink);border-color:var(--oc-accent)}
+    .act-btn.fetch:hover{background:var(--oc-accent-soft)}
+
+    .pagination{padding:12px 20px;border-top:1px solid color-mix(in srgb,var(--oc-border) 65%,white);display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--oc-muted);flex-shrink:0}
+    .page-btns{display:flex;gap:4px}
+    .page-btn{width:30px;height:28px;border:1px solid var(--oc-border);border-radius:7px;cursor:pointer;background:#fff;color:var(--oc-muted);font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .12s}
+    .page-btn:hover{border-color:var(--oc-accent);color:var(--oc-accent-ink)}
+    .page-btn.active{background:var(--oc-accent);border-color:var(--oc-accent);color:#fff}
+    svg{display:inline-block;flex-shrink:0}
+
+    /* ── Multi-toggle letter buttons ── */
+    .lb.all.active{background:var(--oc-accent-soft);border-color:var(--oc-accent);color:var(--oc-accent-ink)}
+
+    /* ── Selection action bar (green/S3) ── */
+    .sel-bar{
+      display:none;
+      align-items:center;justify-content:space-between;
+      padding:8px 20px;
+      background:color-mix(in srgb,var(--s3-bg) 60%,white);
+      border-top:1px solid color-mix(in srgb,#16a34a 18%,transparent);
+      border-bottom:1px solid color-mix(in srgb,#16a34a 18%,transparent);
+      flex-shrink:0;gap:12px;
+      animation:selIn .15s ease-out;
+    }
+    @keyframes selIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+    .sel-left{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+    .sel-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
+    .sel-count{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:20px;background:#15803d;color:#fff;font-size:11.5px;font-weight:700;white-space:nowrap}
+    .sel-chip{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;background:#fff;color:#14532d;border:1px solid color-mix(in srgb,#16a34a 35%,white);font-size:11px;font-weight:600}
+    .sel-all-link{font-size:11.5px;color:var(--oc-accent);cursor:pointer;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+    .sel-action{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;color:#fff;border:none;font-size:12px;font-weight:700;font-family:var(--font);cursor:pointer;transition:background .14s,transform .1s}
+    .sel-action:active{transform:scale(.97)}
+    .sel-action.apollo{background:#15803d}
+    .sel-action.apollo:hover{background:#14532d}
+    .sel-action.snov{background:#0369a1}
+    .sel-action.snov:hover{background:#075985}
+    .sel-action.both{background:#1e40af}
+    .sel-action.both:hover{background:#1e3a8a}
+    .sel-clear{padding:5px 8px;background:none;border:none;color:var(--oc-muted);font-size:12px;font-family:var(--font);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+    .sel-clear:hover{color:var(--oc-text)}
+    tbody tr.row-sel td{background:color-mix(in srgb,var(--s3-bg) 35%,white) !important}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <div class="sb-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg></div>
+      <div><div class="sb-lt">Prospect</div><div class="sb-lb">Console</div></div>
+    </div>
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Dashboard</div>
+    <div class="sb-div"></div><div class="sb-sec">Pipeline stages</div>
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>Scraping</div>
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>AI Decision</div>
+    <div class="sb-item active"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Contact Fetch</div>
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Validation</div>
+    <div class="sb-spacer"></div><div class="sb-div"></div>
+    <div class="sb-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="breadcrumb">
+        <a href="#">Dashboard</a><span class="sep">/</span>
+        <span class="cur">Contact Fetch</span>
+        <span class="stage-chip">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Stage 3
+        </span>
+      </div>
+      <div class="tb-spacer"></div>
+      <div class="sw">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" placeholder="Search domains…"/>
+      </div>
+      <select class="sort-sel">
+        <option>Sort: Total contacts ↓</option>
+        <option>Sort: Domain A→Z</option>
+        <option>Sort: Title matched ↓</option>
+        <option>Sort: With email ↓</option>
+      </select>
+      <button class="btn btn-ghost">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+    </header>
+
+    <!-- Stats bar -->
+    <div class="stats-bar">
+      <div class="stat-card">
+        <div class="stat-card-n">312</div>
+        <div class="stat-card-l">Total contacts</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-card-n">184</div>
+        <div class="stat-card-l">Title matched</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-card-n">147</div>
+        <div class="stat-card-l">With email</div>
+      </div>
+      <div class="stat-card amber">
+        <div class="stat-card-n">61</div>
+        <div class="stat-card-l">Pending fetch</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-n">Snov / Apollo</div>
+        <div class="stat-card-l">Sources active</div>
+      </div>
+    </div>
+
+    <div class="sec-div"></div>
+
+    <div class="filter-bar">
+      <div class="letter-strip">
+        <button class="lb all active">All</button>
+        <button class="lb">A</button><button class="lb">B</button><button class="lb">C</button><button class="lb">D</button><button class="lb">E</button><button class="lb">F</button><button class="lb">G</button><button class="lb">H</button><button class="lb">I</button><button class="lb">J</button><button class="lb">K</button><button class="lb">L</button><button class="lb">M</button><button class="lb">N</button><button class="lb">O</button><button class="lb">P</button><button class="lb">Q</button><button class="lb">R</button><button class="lb">S</button><button class="lb">T</button><button class="lb">U</button><button class="lb">V</button><button class="lb">W</button><button class="lb">X</button><button class="lb">Y</button><button class="lb">Z</button>
+      </div>
+      <div class="vdiv"></div>
+      <div class="status-filters">
+        <button class="sf active">All</button>
+        <button class="sf">Fetched</button>
+        <button class="sf">Pending</button>
+        <button class="sf">Failed</button>
+      </div>
+    </div>
+
+    <!-- Selection action bar -->
+    <div class="sel-bar" id="selBar">
+      <div class="sel-left">
+        <span class="sel-count">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <span id="selCount">0</span> selected
+        </span>
+        <div id="selFilters" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"></div>
+        <span class="sel-all-link" id="selAllLink" style="display:none">Select all <span id="selAllN"></span> matching</span>
+      </div>
+      <div class="sel-right">
+        <button class="sel-action apollo" onclick="alert('Fetching contacts via Apollo for ' + document.getElementById('selCount').textContent + ' companies…')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Fetch · Apollo
+        </button>
+        <button class="sel-action snov" onclick="alert('Fetching contacts via Snov.io for ' + document.getElementById('selCount').textContent + ' companies…')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Fetch · Snov.io
+        </button>
+        <button class="sel-action both" onclick="alert('Fetching contacts via both sources for ' + document.getElementById('selCount').textContent + ' companies…')">
+          Fetch · Both
+        </button>
+        <button class="sel-clear" id="selClear">Clear selection</button>
+      </div>
+    </div>
+
+    <div class="tbl-wrap">
+      <div class="tbl-card">
+        <table>
+          <thead><tr>
+            <th style="width:38px;padding-left:16px"><input type="checkbox" class="cb"/></th>
+            <th>Domain <span class="sort-icon">↑</span></th>
+            <th>Status</th>
+            <th>Source</th>
+            <th>Total</th>
+            <th>Title matched</th>
+            <th>With email</th>
+            <th>Verified</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb"/></td>
+              <td><div class="domain-cell"><div class="domain-icon">A</div><div class="domain-name">acmecorp.com</div></div></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Fetched</span></td>
+              <td><span class="source-badge">Apollo</span></td>
+              <td class="num-val">12</td>
+              <td><span class="num-val">8</span> <span class="num-sub">of 12</span></td>
+              <td><span class="num-val">7</span> <span class="num-sub">of 8</span></td>
+              <td><span class="num-val">5</span> <span class="num-sub">valid</span></td>
+              <td><button class="act-btn">View</button></td>
+            </tr>
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb"/></td>
+              <td><div class="domain-cell"><div class="domain-icon">B</div><div class="domain-name">brightspark.io</div></div></td>
+              <td><span class="badge b-run pulse"><span class="bdot" style="background:var(--oc-warn-text)"></span>Fetching…</span></td>
+              <td><span class="source-badge">Snov</span></td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb"/></td>
+              <td><div class="domain-cell"><div class="domain-icon">C</div><div class="domain-name">crestwave.co</div></div></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Fetched</span></td>
+              <td><span class="source-badge">Apollo</span><span class="source-badge" style="margin-left:3px">Snov</span></td>
+              <td class="num-val">21</td>
+              <td><span class="num-val">14</span> <span class="num-sub">of 21</span></td>
+              <td><span class="num-val">11</span> <span class="num-sub">of 14</span></td>
+              <td><span class="num-val">9</span> <span class="num-sub">valid</span></td>
+              <td><button class="act-btn">View</button></td>
+            </tr>
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb"/></td>
+              <td><div class="domain-cell"><div class="domain-icon">E</div><div class="domain-name">edgeflow.dev</div></div></td>
+              <td><span class="badge b-neu">Not fetched</span></td>
+              <td>—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td>
+                <button class="act-btn fetch">Fetch (Apollo)</button>
+                <button class="act-btn">Fetch (Snov)</button>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb"/></td>
+              <td><div class="domain-cell"><div class="domain-icon">H</div><div class="domain-name">helios.software</div></div></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Fetched</span></td>
+              <td><span class="source-badge">Apollo</span></td>
+              <td class="num-val">4</td>
+              <td><span class="num-val">2</span> <span class="num-sub">of 4</span></td>
+              <td><span class="num-val">2</span> <span class="num-sub">of 2</span></td>
+              <td><span class="num-val">0</span> <span class="num-sub" style="color:#dc2626">0 valid</span></td>
+              <td><button class="act-btn">View</button></td>
+            </tr>
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb"/></td>
+              <td><div class="domain-cell"><div class="domain-icon">I</div><div class="domain-name">ionwave.io</div></div></td>
+              <td><span class="badge b-err"><span class="bdot" style="background:var(--oc-fail-text)"></span>Failed</span></td>
+              <td><span class="source-badge">Snov</span></td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td class="num-val">—</td>
+              <td><button class="act-btn">Retry</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pagination">
+      <span>Showing 1–6 of 61 contact-ready companies</span>
+      <div class="page-btns">
+        <button class="page-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <button class="page-btn active">1</button><button class="page-btn">2</button><button class="page-btn">3</button>
+        <button class="page-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="9 18 15 12 9 6"/></svg></button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const allBtn=document.querySelector('.lb.all');
+  const lbBtns=document.querySelectorAll('.lb:not(.all)');
+  const activeL=new Set();
+  lbBtns.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const l=btn.textContent.trim();
+      if(activeL.has(l)){activeL.delete(l);btn.classList.remove('active')}
+      else{activeL.add(l);btn.classList.add('active');allBtn.classList.remove('active')}
+      if(activeL.size===0)allBtn.classList.add('active');
+      renderSelBar();
+    });
+  });
+  allBtn.addEventListener('click',()=>{
+    activeL.clear();lbBtns.forEach(b=>b.classList.remove('active'));allBtn.classList.add('active');renderSelBar();
+  });
+  document.querySelectorAll('.sf').forEach(sf=>{
+    sf.addEventListener('click',()=>{document.querySelectorAll('.sf').forEach(s=>s.classList.remove('active'));sf.classList.add('active');renderSelBar();});
+  });
+  const headerCb=document.querySelector('thead input[type=checkbox]');
+  const rowCbs=Array.from(document.querySelectorAll('tbody input[type=checkbox]'));
+  const selected=new Set();
+  rowCbs.forEach((cb,i)=>{
+    cb.addEventListener('change',()=>{
+      const row=cb.closest('tr');
+      if(cb.checked){selected.add(i);row.classList.add('row-sel')}
+      else{selected.delete(i);row.classList.remove('row-sel')}
+      syncHeader();renderSelBar();
+    });
+  });
+  headerCb.addEventListener('change',()=>{
+    rowCbs.forEach((cb,i)=>{
+      const row=cb.closest('tr');cb.checked=headerCb.checked;
+      if(headerCb.checked){selected.add(i);row.classList.add('row-sel')}
+      else{selected.delete(i);row.classList.remove('row-sel')}
+    });
+    headerCb.indeterminate=false;renderSelBar();
+  });
+  document.getElementById('selClear').addEventListener('click',()=>{
+    selected.clear();rowCbs.forEach(cb=>{cb.checked=false;cb.closest('tr').classList.remove('row-sel')});
+    headerCb.checked=false;headerCb.indeterminate=false;renderSelBar();
+  });
+  document.getElementById('selAllLink').addEventListener('click',()=>{
+    rowCbs.forEach((cb,i)=>{cb.checked=true;cb.closest('tr').classList.add('row-sel');selected.add(i)});
+    syncHeader();renderSelBar();
+  });
+  function syncHeader(){
+    if(selected.size===0){headerCb.checked=false;headerCb.indeterminate=false}
+    else if(selected.size===rowCbs.length){headerCb.checked=true;headerCb.indeterminate=false}
+    else{headerCb.checked=false;headerCb.indeterminate=true}
+  }
+  function renderSelBar(){
+    const bar=document.getElementById('selBar');
+    document.getElementById('selCount').textContent=selected.size;
+    bar.style.display=selected.size>0?'flex':'none';
+    if(!selected.size)return;
+    const wrap=document.getElementById('selFilters');wrap.innerHTML='';
+    activeL.forEach(l=>{const c=document.createElement('span');c.className='sel-chip';c.textContent=l;wrap.appendChild(c)});
+    const asf=document.querySelector('.sf.active');
+    if(asf&&asf.textContent.trim()!=='All'){const c=document.createElement('span');c.className='sel-chip';c.textContent=asf.textContent.trim();wrap.appendChild(c)}
+    const link=document.getElementById('selAllLink');
+    if(selected.size>0&&selected.size<rowCbs.length){link.style.display='inline';document.getElementById('selAllN').textContent='61'}
+    else{link.style.display='none'}
+  }
+})();
+</script>
+</body>
+</html>

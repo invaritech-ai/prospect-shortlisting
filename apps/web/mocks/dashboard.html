@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prospect Console — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ── Design tokens (matching existing app) ─────────── */
+    :root {
+      --oc-bg:             #f8fafc;
+      --oc-surface:        #f1f6fd;
+      --oc-surface-strong: #ffffff;
+      --oc-border:         #dbeafe;
+      --oc-text:           #0f172a;
+      --oc-muted:          #64748b;
+      --oc-accent:         #1e40af;
+      --oc-accent-ink:     #1e3a8a;
+      --oc-accent-soft:    #dbeafe;
+      --oc-success-bg:     #dcfce7;
+      --oc-success-text:   #14532d;
+      --oc-warn-bg:        #fef3c7;
+      --oc-warn-text:      #92400e;
+      --oc-fail-bg:        #ffe4e6;
+      --oc-fail-text:      #9f1239;
+      --oc-neutral-bg:     #f1f5f9;
+      --oc-neutral-text:   #334155;
+      --oc-shadow:         0 4px 16px rgba(30, 58, 138, 0.08);
+      --oc-shadow-strong:  0 12px 34px rgba(30, 58, 138, 0.09);
+      --oc-radius:         14px;
+      --oc-sidebar-w:      224px;
+      --font: 'Fira Sans', sans-serif;
+      --font-mono: 'Fira Code', monospace;
+
+      /* Stage accent colours */
+      --s1:    #1e40af; --s1-bg: #dbeafe; --s1-text: #1e3a8a;
+      --s2:    #92400e; --s2-bg: #fef3c7; --s2-text: #78350f;
+      --s3:    #14532d; --s3-bg: #dcfce7; --s3-text: #14532d;
+      --s4:    #6b21a8; --s4-bg: #f3e8ff; --s4-text: #581c87;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font);
+      background:
+        radial-gradient(circle at 8% -12%, rgba(30, 64, 175, 0.11), transparent 36%),
+        radial-gradient(circle at 100% 0%, rgba(217, 119, 6, 0.07), transparent 40%),
+        linear-gradient(180deg, #fbfdff 0%, var(--oc-bg) 48%, #eef3fb 100%);
+      color: var(--oc-text);
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Shell ───────────────────────────────────────────── */
+    .shell { display: flex; height: 100vh; overflow: hidden; }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    .sidebar {
+      width: var(--oc-sidebar-w);
+      background: var(--oc-surface-strong);
+      border-right: 1px solid var(--oc-border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      padding: 16px 0;
+      overflow: hidden;
+    }
+    .sb-brand {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 14px 16px;
+      border-bottom: 1px solid var(--oc-border);
+      margin-bottom: 8px;
+    }
+    .sb-mark {
+      width: 32px; height: 32px;
+      background: var(--oc-accent);
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; color: #fff;
+    }
+    .sb-label-top { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.2em; color: var(--oc-muted); }
+    .sb-label-bot { font-size: 13px; font-weight: 800; color: var(--oc-accent-ink); line-height: 1; }
+
+    .sb-divider { height: 1px; background: var(--oc-border); margin: 6px 12px; }
+
+    .sb-section-label {
+      font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.12em; color: var(--oc-muted);
+      padding: 8px 16px 4px;
+    }
+
+    .sb-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 14px;
+      margin: 1px 8px;
+      border-radius: 10px;
+      font-size: 13px; font-weight: 600;
+      color: var(--oc-muted);
+      cursor: pointer;
+      transition: background 0.14s, color 0.14s;
+      text-decoration: none;
+    }
+    .sb-item:hover {
+      background: color-mix(in srgb, var(--oc-accent-soft) 58%, white);
+      color: var(--oc-accent-ink);
+    }
+    .sb-item.active {
+      background: var(--oc-accent-soft);
+      color: var(--oc-accent-ink);
+    }
+    .sb-item.active svg { color: var(--oc-accent); }
+    .sb-item svg { color: inherit; flex-shrink: 0; }
+    .sb-spacer { flex: 1; }
+
+    /* ── Main ───────────────────────────────────────────── */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+    /* ── Topbar ─────────────────────────────────────────── */
+    .topbar {
+      background: color-mix(in srgb, var(--oc-surface-strong) 95%, transparent);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid color-mix(in srgb, var(--oc-border) 88%, white);
+      padding: 0 20px;
+      height: 54px;
+      display: flex; align-items: center; gap: 10px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(30, 58, 138, 0.04);
+    }
+    .page-title {
+      font-size: 15px; font-weight: 800; letter-spacing: -0.02em;
+      color: var(--oc-accent-ink); margin-right: 4px; white-space: nowrap;
+    }
+
+    .search-wrap { position: relative; flex: 1; max-width: 320px; }
+    .search-wrap svg {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      color: var(--oc-muted); pointer-events: none;
+    }
+    .search-wrap input {
+      width: 100%;
+      padding: 7px 12px 7px 32px;
+      background: var(--oc-surface);
+      border: 1px solid var(--oc-border);
+      border-radius: 8px;
+      color: var(--oc-text);
+      font-family: var(--font);
+      font-size: 12.5px; outline: none;
+    }
+    .search-wrap input::placeholder { color: var(--oc-muted); }
+    .search-wrap input:focus { border-color: var(--oc-accent); background: #fff; }
+
+    .sort-sel {
+      padding: 7px 10px;
+      background: var(--oc-surface);
+      border: 1px solid var(--oc-border);
+      border-radius: 8px;
+      color: var(--oc-text);
+      font-family: var(--font);
+      font-size: 12.5px; outline: none; cursor: pointer;
+    }
+    .sort-sel:focus { border-color: var(--oc-accent); }
+    .tb-spacer { flex: 1; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px; border-radius: 8px;
+      font-family: var(--font); font-size: 12.5px; font-weight: 600;
+      cursor: pointer; border: none; white-space: nowrap; transition: all 0.15s;
+    }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--oc-border);
+      color: var(--oc-muted);
+    }
+    .btn-ghost:hover { border-color: var(--oc-accent); color: var(--oc-accent-ink); }
+    .btn-primary {
+      background: var(--oc-accent); color: #fff;
+      box-shadow: 0 2px 8px rgba(30,64,175,0.25);
+    }
+    .btn-primary:hover { background: var(--oc-accent-ink); }
+    .btn-primary:disabled {
+      background: color-mix(in srgb, var(--oc-accent) 35%, white);
+      color: rgba(255,255,255,0.6); cursor: default; box-shadow: none;
+    }
+
+    /* ── Filter bar (A-Z + status) ──────────────────────── */
+    .filter-bar {
+      padding: 10px 20px 8px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--oc-border) 65%, white);
+    }
+    .letter-strip { display: flex; gap: 2px; }
+    .lb {
+      width: 24px; height: 24px;
+      border: 1px solid var(--oc-border); border-radius: 6px;
+      font-size: 10.5px; font-weight: 600; cursor: pointer;
+      background: #fff; color: var(--oc-muted);
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.12s;
+    }
+    .lb.all { width: 30px; font-size: 10px; }
+    .lb:hover { border-color: var(--oc-accent); color: var(--oc-accent-ink); }
+    .lb.active { background: var(--oc-accent); border-color: var(--oc-accent); color: #fff; }
+    .lb.all.active { background: var(--oc-accent-soft); border-color: var(--oc-accent); color: var(--oc-accent-ink); }
+    .vdiv { width: 1px; height: 24px; background: var(--oc-border); }
+    .status-filters { display: flex; gap: 5px; }
+    .sf {
+      padding: 3px 11px; border-radius: 20px;
+      border: 1px solid var(--oc-border);
+      font-size: 11.5px; font-weight: 600; cursor: pointer;
+      background: #fff; color: var(--oc-muted); transition: all 0.12s;
+    }
+    .sf:hover { border-color: var(--oc-accent); color: var(--oc-accent-ink); }
+    .sf.active { border-color: var(--oc-accent); color: var(--oc-accent-ink); background: var(--oc-accent-soft); }
+
+    /* ── Selection action bar ────────────────────────────── */
+    .sel-bar {
+      display: none;
+      align-items: center; justify-content: space-between;
+      padding: 8px 20px;
+      background: color-mix(in srgb, var(--oc-accent-soft) 65%, white);
+      border-bottom: 1px solid color-mix(in srgb, var(--oc-accent) 18%, transparent);
+      flex-shrink: 0; gap: 12px;
+      animation: selIn 0.15s ease-out;
+    }
+    @keyframes selIn { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
+    .sel-left  { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .sel-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .sel-count {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 11px; border-radius: 20px;
+      background: var(--oc-accent); color: #fff;
+      font-size: 11.5px; font-weight: 700; white-space: nowrap;
+    }
+    .sel-chip {
+      display: inline-flex; align-items: center;
+      padding: 3px 9px; border-radius: 20px;
+      background: #fff; color: var(--oc-accent-ink);
+      border: 1px solid color-mix(in srgb, var(--oc-accent) 35%, white);
+      font-size: 11px; font-weight: 600;
+    }
+    .sel-all-link {
+      font-size: 11.5px; color: var(--oc-accent); cursor: pointer;
+      text-decoration: underline; text-underline-offset: 2px; white-space: nowrap;
+    }
+    .sel-action {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 8px;
+      background: var(--oc-accent); color: #fff; border: none;
+      font-size: 12.5px; font-weight: 700; font-family: var(--font);
+      cursor: pointer; transition: background 0.14s, transform 0.1s;
+      box-shadow: 0 2px 8px rgba(30,64,175,0.25);
+    }
+    .sel-action:hover  { background: var(--oc-accent-ink); }
+    .sel-action:active { transform: scale(0.97); }
+    .sel-clear {
+      padding: 5px 8px; background: none; border: none;
+      color: var(--oc-muted); font-size: 12px; font-family: var(--font);
+      cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+    }
+    .sel-clear:hover { color: var(--oc-text); }
+    tbody tr.row-sel td { background: color-mix(in srgb, var(--oc-accent-soft) 40%, white) !important; }
+
+    /* ── Table wrap ─────────────────────────────────────── */
+    .tbl-wrap { flex: 1; overflow: auto; padding: 12px 20px 0; }
+
+    /* ── Table ──────────────────────────────────────────── */
+    .tbl-card {
+      background: var(--oc-surface-strong);
+      border: 1px solid var(--oc-border);
+      border-radius: var(--oc-radius);
+      overflow: hidden;
+      box-shadow: var(--oc-shadow);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { position: sticky; top: 0; z-index: 2; }
+    thead tr { background: color-mix(in srgb, var(--oc-surface) 70%, white); }
+    th {
+      padding: 10px 13px;
+      text-align: left; font-size: 10.5px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--oc-muted);
+      border-bottom: 1px solid var(--oc-border);
+      white-space: nowrap;
+    }
+    .th-stage {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; letter-spacing: 0.06em;
+    }
+    .stage-num {
+      width: 17px; height: 17px; border-radius: 50%;
+      font-size: 9.5px; font-weight: 800;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    tbody tr { border-bottom: 1px solid color-mix(in srgb, var(--oc-border) 65%, white); transition: background 0.1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover td { background: color-mix(in srgb, var(--oc-accent-soft) 22%, white); }
+    tbody tr.sel td { background: color-mix(in srgb, var(--oc-accent-soft) 35%, white); }
+    td { padding: 11px 13px; vertical-align: middle; }
+
+    .cb { width: 15px; height: 15px; accent-color: var(--oc-accent); cursor: pointer; }
+
+    .domain-cell { display: flex; align-items: center; gap: 9px; }
+    .domain-icon {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: var(--oc-surface);
+      border: 1px solid var(--oc-border);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      font-size: 11px; font-weight: 700; color: var(--oc-accent-ink);
+    }
+    .domain-name { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--oc-text); }
+    .domain-added { font-size: 10.5px; color: var(--oc-muted); margin-top: 1px; }
+
+    /* Badges */
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 9px; border-radius: 20px;
+      font-size: 11px; font-weight: 700; white-space: nowrap;
+    }
+    .bdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+    .b-ok  { background: var(--oc-success-bg); color: var(--oc-success-text); }
+    .b-run { background: var(--oc-warn-bg);    color: var(--oc-warn-text); }
+    .b-err { background: var(--oc-fail-bg);    color: var(--oc-fail-text); }
+    .b-neu { background: var(--oc-neutral-bg); color: var(--oc-neutral-text); border: 1px solid #e2e8f0; }
+    .pulse { animation: pulse 1.6s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+
+    /* ── Pagination ─────────────────────────────────────── */
+    .pagination {
+      padding: 12px 20px;
+      border-top: 1px solid color-mix(in srgb, var(--oc-border) 65%, white);
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; color: var(--oc-muted); flex-shrink: 0;
+    }
+    .page-btns { display: flex; gap: 4px; }
+    .page-btn {
+      width: 30px; height: 28px;
+      border: 1px solid var(--oc-border); border-radius: 7px;
+      cursor: pointer; background: #fff;
+      color: var(--oc-muted); font-size: 12px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.12s;
+    }
+    .page-btn:hover { border-color: var(--oc-accent); color: var(--oc-accent-ink); }
+    .page-btn.active { background: var(--oc-accent); border-color: var(--oc-accent); color: #fff; }
+    svg { display: inline-block; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <div class="sb-mark">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>
+        </svg>
+      </div>
+      <div>
+        <div class="sb-label-top">Prospect</div>
+        <div class="sb-label-bot">Console</div>
+      </div>
+    </div>
+
+    <div class="sb-item active">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </svg>
+      Dashboard
+    </div>
+
+    <div class="sb-divider"></div>
+    <div class="sb-section-label">Pipeline stages</div>
+
+    <div class="sb-item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>
+      </svg>
+      Scraping
+    </div>
+    <div class="sb-item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </svg>
+      AI Decision
+    </div>
+    <div class="sb-item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+      Contact Fetch
+    </div>
+    <div class="sb-item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+      Validation
+    </div>
+
+    <div class="sb-spacer"></div>
+    <div class="sb-divider"></div>
+    <div class="sb-item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+      Settings
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <span class="page-title">Dashboard</span>
+
+      <div class="search-wrap">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" placeholder="Search domains…" />
+      </div>
+
+      <select class="sort-sel">
+        <option>Sort: Added ↓</option>
+        <option>Sort: Domain A→Z</option>
+        <option>Sort: Stage progress</option>
+        <option>Sort: AI decision</option>
+      </select>
+
+      <div class="tb-spacer"></div>
+
+      <button class="btn btn-ghost" onclick="alert('Domain upload dialog')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add domains
+      </button>
+      <button class="btn btn-primary" id="runFullBtn" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Run full pipeline
+      </button>
+    </header>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <div class="letter-strip">
+        <button class="lb all active">All</button>
+        <button class="lb">A</button><button class="lb">B</button><button class="lb">C</button><button class="lb">D</button><button class="lb">E</button><button class="lb">F</button><button class="lb">G</button><button class="lb">H</button><button class="lb">I</button><button class="lb">J</button><button class="lb">K</button><button class="lb">L</button><button class="lb">M</button><button class="lb">N</button><button class="lb">O</button><button class="lb">P</button><button class="lb">Q</button><button class="lb">R</button><button class="lb">S</button><button class="lb">T</button><button class="lb">U</button><button class="lb">V</button><button class="lb">W</button><button class="lb">X</button><button class="lb">Y</button><button class="lb">Z</button>
+      </div>
+      <div class="vdiv"></div>
+      <div class="status-filters">
+        <button class="sf active">All</button>
+        <button class="sf">Not started</button>
+        <button class="sf">In progress</button>
+        <button class="sf">Complete</button>
+        <button class="sf">Has failures</button>
+      </div>
+    </div>
+
+    <!-- Selection action bar -->
+    <div class="sel-bar" id="selBar">
+      <div class="sel-left">
+        <span class="sel-count">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <span id="selCount">0</span> selected
+        </span>
+        <div id="selFilters" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;"></div>
+        <span class="sel-all-link" id="selAllLink" style="display:none">Select all <span id="selAllN"></span> matching</span>
+      </div>
+      <div class="sel-right">
+        <button class="sel-action" id="runBtn" onclick="alert('Running full pipeline for ' + document.getElementById('selCount').textContent + ' selected domains…')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Run pipeline on selected
+        </button>
+        <button class="sel-clear" id="selClear">Clear selection</button>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="tbl-wrap">
+      <div class="tbl-card">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:38px;padding-left:16px">
+                <input type="checkbox" class="cb" />
+              </th>
+              <th style="min-width:210px">Domain</th>
+
+              <!-- Stage 1 — Scraping -->
+              <th style="min-width:145px;background:color-mix(in srgb, var(--s1-bg) 35%, white)">
+                <div class="th-stage">
+                  <span class="stage-num" style="background:var(--s1-bg);color:var(--s1-text)">1</span>
+                  <span style="color:var(--s1-text)">Scraping</span>
+                </div>
+              </th>
+
+              <!-- Stage 2 — AI Decision -->
+              <th style="min-width:145px;background:color-mix(in srgb, var(--s2-bg) 35%, white)">
+                <div class="th-stage">
+                  <span class="stage-num" style="background:var(--s2-bg);color:var(--s2-text)">2</span>
+                  <span style="color:var(--s2-text)">AI Decision</span>
+                </div>
+              </th>
+
+              <!-- Stage 3 — Contact Fetch -->
+              <th style="min-width:145px;background:color-mix(in srgb, var(--s3-bg) 35%, white)">
+                <div class="th-stage">
+                  <span class="stage-num" style="background:var(--s3-bg);color:var(--s3-text)">3</span>
+                  <span style="color:var(--s3-text)">Contact Fetch</span>
+                </div>
+              </th>
+
+              <!-- Stage 4 — Validation -->
+              <th style="min-width:145px;background:color-mix(in srgb, var(--s4-bg) 35%, white)">
+                <div class="th-stage">
+                  <span class="stage-num" style="background:var(--s4-bg);color:var(--s4-text)">4</span>
+                  <span style="color:var(--s4-text)">Validation</span>
+                </div>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+
+            <!-- Row: fully done -->
+            <tr class="sel">
+              <td style="padding-left:16px"><input type="checkbox" class="cb" checked /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">A</div>
+                  <div>
+                    <div class="domain-name">acmecorp.com</div>
+                    <div class="domain-added">Added 14 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Done</span></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Approved</span></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>4 contacts</span></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>3 valid</span></td>
+            </tr>
+
+            <!-- Row: scraping running -->
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb" /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">B</div>
+                  <div>
+                    <div class="domain-name">brightspark.io</div>
+                    <div class="domain-added">Added 14 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-run pulse"><span class="bdot" style="background:var(--oc-warn-text)"></span>Scraping…</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+            </tr>
+
+            <!-- Row: AI running -->
+            <tr class="sel">
+              <td style="padding-left:16px"><input type="checkbox" class="cb" checked /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">C</div>
+                  <div>
+                    <div class="domain-name">crestwave.co</div>
+                    <div class="domain-added">Added 13 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Done</span></td>
+              <td><span class="badge b-run pulse"><span class="bdot" style="background:var(--oc-warn-text)"></span>Analysing…</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+            </tr>
+
+            <!-- Row: rejected -->
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb" /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">D</div>
+                  <div>
+                    <div class="domain-name">dropzone.ai</div>
+                    <div class="domain-added">Added 12 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Done</span></td>
+              <td><span class="badge b-err"><span class="bdot" style="background:var(--oc-fail-text)"></span>Rejected</span></td>
+              <td><span class="badge b-neu">Skipped</span></td>
+              <td><span class="badge b-neu">Skipped</span></td>
+            </tr>
+
+            <!-- Row: contacts fetching -->
+            <tr class="sel">
+              <td style="padding-left:16px"><input type="checkbox" class="cb" checked /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">E</div>
+                  <div>
+                    <div class="domain-name">edgeflow.dev</div>
+                    <div class="domain-added">Added 12 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Done</span></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Approved</span></td>
+              <td><span class="badge b-run pulse"><span class="bdot" style="background:var(--oc-warn-text)"></span>Fetching…</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+            </tr>
+
+            <!-- Row: scrape failed -->
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb" /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">F</div>
+                  <div>
+                    <div class="domain-name">frostbyte.com</div>
+                    <div class="domain-added">Added 11 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-err"><span class="bdot" style="background:var(--oc-fail-text)"></span>Failed</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+              <td><span class="badge b-neu">Waiting</span></td>
+            </tr>
+
+            <!-- Row: not started -->
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb" /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">G</div>
+                  <div>
+                    <div class="domain-name">gridnode.tech</div>
+                    <div class="domain-added">Added 11 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-neu">Not started</span></td>
+              <td><span class="badge b-neu" style="opacity:0.5">—</span></td>
+              <td><span class="badge b-neu" style="opacity:0.5">—</span></td>
+              <td><span class="badge b-neu" style="opacity:0.5">—</span></td>
+            </tr>
+
+            <!-- Row: validation failed -->
+            <tr>
+              <td style="padding-left:16px"><input type="checkbox" class="cb" /></td>
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-icon">H</div>
+                  <div>
+                    <div class="domain-name">helios.software</div>
+                    <div class="domain-added">Added 10 Apr</div>
+                  </div>
+                </div>
+              </td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Done</span></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>Approved</span></td>
+              <td><span class="badge b-ok"><span class="bdot" style="background:var(--oc-success-text)"></span>2 contacts</span></td>
+              <td><span class="badge b-err"><span class="bdot" style="background:var(--oc-fail-text)"></span>0 valid</span></td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination">
+      <span>Showing 1–8 of 142 domains</span>
+      <div class="page-btns">
+        <button class="page-btn">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <button class="page-btn active">1</button>
+        <button class="page-btn">2</button>
+        <button class="page-btn">3</button>
+        <button class="page-btn" style="width:auto;padding:0 8px;color:var(--oc-muted)">…</button>
+        <button class="page-btn">18</button>
+        <button class="page-btn">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── A-Z multi-toggle ──────────────────────────────────────────────
+  const allBtn  = document.querySelector('.lb.all');
+  const lbBtns  = document.querySelectorAll('.lb:not(.all)');
+  const activeL = new Set();
+
+  lbBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const l = btn.textContent.trim();
+      if (activeL.has(l)) { activeL.delete(l); btn.classList.remove('active'); }
+      else                 { activeL.add(l);    btn.classList.add('active'); allBtn.classList.remove('active'); }
+      if (activeL.size === 0) allBtn.classList.add('active');
+      renderSelBar();
+    });
+  });
+  allBtn.addEventListener('click', () => {
+    activeL.clear();
+    lbBtns.forEach(b => b.classList.remove('active'));
+    allBtn.classList.add('active');
+    renderSelBar();
+  });
+
+  // ── Status filter single-select ───────────────────────────────────
+  document.querySelectorAll('.sf').forEach(sf => {
+    sf.addEventListener('click', () => {
+      document.querySelectorAll('.sf').forEach(s => s.classList.remove('active'));
+      sf.classList.add('active');
+      renderSelBar();
+    });
+  });
+
+  // ── Row checkboxes ────────────────────────────────────────────────
+  const headerCb = document.querySelector('thead input[type=checkbox]');
+  const rowCbs   = Array.from(document.querySelectorAll('tbody input[type=checkbox]'));
+  const selected = new Set();
+
+  // Initialise pre-checked rows
+  rowCbs.forEach((cb, i) => { if (cb.checked) { selected.add(i); cb.closest('tr').classList.add('row-sel'); } });
+
+  rowCbs.forEach((cb, i) => {
+    cb.addEventListener('change', () => {
+      const row = cb.closest('tr');
+      if (cb.checked) { selected.add(i); row.classList.add('row-sel'); }
+      else            { selected.delete(i); row.classList.remove('row-sel'); }
+      syncHeader(); renderSelBar();
+    });
+  });
+
+  headerCb.addEventListener('change', () => {
+    rowCbs.forEach((cb, i) => {
+      const row = cb.closest('tr');
+      cb.checked = headerCb.checked;
+      if (headerCb.checked) { selected.add(i); row.classList.add('row-sel'); }
+      else                  { selected.delete(i); row.classList.remove('row-sel'); }
+    });
+    headerCb.indeterminate = false;
+    renderSelBar();
+  });
+
+  document.getElementById('selClear').addEventListener('click', () => {
+    selected.clear();
+    rowCbs.forEach(cb => { cb.checked = false; cb.closest('tr').classList.remove('row-sel'); });
+    headerCb.checked = false; headerCb.indeterminate = false;
+    renderSelBar();
+  });
+
+  document.getElementById('selAllLink').addEventListener('click', () => {
+    rowCbs.forEach((cb, i) => { cb.checked = true; cb.closest('tr').classList.add('row-sel'); selected.add(i); });
+    syncHeader(); renderSelBar();
+  });
+
+  function syncHeader() {
+    if (selected.size === 0)                  { headerCb.checked = false; headerCb.indeterminate = false; }
+    else if (selected.size === rowCbs.length) { headerCb.checked = true;  headerCb.indeterminate = false; }
+    else                                      { headerCb.checked = false; headerCb.indeterminate = true;  }
+  }
+
+  function renderSelBar() {
+    const bar = document.getElementById('selBar');
+    document.getElementById('selCount').textContent = selected.size;
+    bar.style.display = selected.size > 0 ? 'flex' : 'none';
+    if (!selected.size) return;
+
+    const wrap = document.getElementById('selFilters');
+    wrap.innerHTML = '';
+    activeL.forEach(l => {
+      const c = document.createElement('span'); c.className = 'sel-chip'; c.textContent = l;
+      wrap.appendChild(c);
+    });
+    const asf = document.querySelector('.sf.active');
+    if (asf && asf.textContent.trim() !== 'All') {
+      const c = document.createElement('span'); c.className = 'sel-chip';
+      c.textContent = asf.textContent.trim();
+      wrap.appendChild(c);
+    }
+
+    const link = document.getElementById('selAllLink');
+    if (selected.size > 0 && selected.size < rowCbs.length) {
+      link.style.display = 'inline';
+      document.getElementById('selAllN').textContent = '142';
+    } else {
+      link.style.display = 'none';
+    }
+  }
+
+  // Initial render (pre-checked rows)
+  syncHeader(); renderSelBar();
+})();
+</script>
+</body>
+</html>
