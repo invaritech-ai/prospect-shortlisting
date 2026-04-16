@@ -178,6 +178,7 @@ export type PromptRead = {
   enabled: boolean
   prompt_text: string
   created_at: string
+  run_count: number
 }
 
 export type PromptCreate = {

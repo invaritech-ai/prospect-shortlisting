@@ -500,10 +500,13 @@ function App() {
         promptEnabled={promptMgmt.promptEnabled}
         isPromptsLoading={promptMgmt.isPromptsLoading}
         isPromptSaving={promptMgmt.isPromptSaving}
+        isPromptDeleting={promptMgmt.isPromptDeleting}
         promptError={promptMgmt.promptError}
         onSelectPrompt={promptMgmt.onSelectPrompt}
         onNewPrompt={promptMgmt.onNewPrompt}
         onTogglePromptEnabled={(p) => void promptMgmt.onTogglePromptEnabled(p)}
+        onDeletePrompt={(p) => void promptMgmt.onDeletePrompt(p)}
+        onClonePrompt={(p) => void promptMgmt.onClonePrompt(p)}
         onSaveAsNew={() => void promptMgmt.onSavePromptAsNew()}
         onUpdateCurrent={() => void promptMgmt.onUpdateCurrentPrompt()}
         onSetPromptName={promptMgmt.setPromptName}

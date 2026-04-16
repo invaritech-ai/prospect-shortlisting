@@ -173,6 +173,10 @@ export async function updatePrompt(promptId: string, payload: PromptUpdate): Pro
   })
 }
 
+export async function deletePrompt(promptId: string): Promise<void> {
+  await request<void>(`/v1/prompts/${promptId}`, { method: 'DELETE' })
+}
+
 export async function createRuns(payload: RunCreateRequest): Promise<RunCreateResult> {
   return request<RunCreateResult>('/v1/runs', {
     method: 'POST',

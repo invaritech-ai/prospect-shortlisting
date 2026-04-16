@@ -26,3 +26,4 @@ class PromptRead(UTCReadModel):
     enabled: bool
     prompt_text: str
     created_at: datetime
+    run_count: int = 0
