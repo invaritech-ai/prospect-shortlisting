@@ -22,7 +22,7 @@ interface PipelineFlowProps {
   companyCounts: CompanyCounts | null
   contactCounts: ContactCountsResponse | null
   collapsed: boolean
-  onNavigate: (view: ActiveView, stageFilter?: string) => void
+  onNavigate: (view: ActiveView) => void
 }
 
 function CountPill({ n, active, color }: { n: number | null; active: boolean; color: 'blue' | 'emerald' }) {
@@ -137,8 +137,8 @@ export function PipelineFlow({
   collapsed,
   onNavigate,
 }: PipelineFlowProps) {
-  const companyActive = activeView === 'companies' || activeView === 'jobs' || activeView === 'runs'
-  const contactActive = activeView === 'contacts'
+  const companyActive = activeView === 's1-scraping' || activeView === 's2-ai' || activeView === 's3-contacts'
+  const contactActive = activeView === 's4-validation'
 
   // ── Collapsed mini indicator ─────────────────────────────────
   if (collapsed) {
@@ -147,13 +147,13 @@ export function PipelineFlow({
         <button
           type="button"
           title="Companies pipeline"
-          onClick={() => onNavigate('companies')}
+          onClick={() => onNavigate('s1-scraping')}
           className={`h-2.5 w-2.5 rounded-sm transition ${companyActive ? 'bg-[var(--oc-accent)]' : 'bg-[var(--oc-border)] hover:bg-blue-300'}`}
         />
         <button
           type="button"
           title="Contacts pipeline"
-          onClick={() => onNavigate('contacts')}
+          onClick={() => onNavigate('s4-validation')}
           className={`h-2.5 w-2.5 rounded-sm transition ${contactActive ? 'bg-emerald-500' : 'bg-[var(--oc-border)] hover:bg-emerald-300'}`}
         />
         <span
@@ -181,19 +181,26 @@ export function PipelineFlow({
           total={companyCounts?.total ?? null}
           isActive={companyActive}
           color="blue"
-          onClick={() => onNavigate('companies', 'all')}
+          onClick={() => onNavigate('s1-scraping')}
         />
         <ul className="pb-1.5">
-          {COMPANY_STAGES.map((stage, idx) => (
-            <TrackStageRow
-              key={stage.key}
-              label={stage.label}
-              count={companyCounts?.[stage.key] ?? null}
-              isLast={idx === COMPANY_STAGES.length - 1}
-              color="blue"
-              onClick={() => onNavigate('companies', stage.key)}
-            />
-          ))}
+          {COMPANY_STAGES.map((stage, idx) => {
+            const stageView: ActiveView =
+              stage.key === 'uploaded' ? 's1-scraping'
+              : stage.key === 'scraped' ? 's2-ai'
+              : stage.key === 'classified' ? 's3-contacts'
+              : 's4-validation'
+            return (
+              <TrackStageRow
+                key={stage.key}
+                label={stage.label}
+                count={companyCounts?.[stage.key] ?? null}
+                isLast={idx === COMPANY_STAGES.length - 1}
+                color="blue"
+                onClick={() => onNavigate(stageView)}
+              />
+            )
+          })}
         </ul>
       </div>
 
@@ -204,7 +211,7 @@ export function PipelineFlow({
           total={contactCounts?.total ?? null}
           isActive={contactActive}
           color="emerald"
-          onClick={() => onNavigate('contacts')}
+          onClick={() => onNavigate('s4-validation')}
         />
         <ul className="pb-1.5">
           {CONTACT_STAGES.map((stage, idx) => (
@@ -214,7 +221,7 @@ export function PipelineFlow({
               count={contactCounts?.[stage.key] ?? null}
               isLast={idx === CONTACT_STAGES.length - 1}
               color="emerald"
-              onClick={() => onNavigate('contacts')}
+              onClick={() => onNavigate('s4-validation')}
             />
           ))}
         </ul>

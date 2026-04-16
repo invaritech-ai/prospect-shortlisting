@@ -4,11 +4,9 @@ import {
   IconBuilding,
   IconGlobe,
   IconChart,
-  IconTimeline,
   IconPulse,
   IconUsers,
   IconPencil,
-  IconDownload,
   IconChevronLeft,
   IconChevronRight,
 } from '../ui/icons'
@@ -19,10 +17,8 @@ interface SidebarProps {
   setActiveView: (v: ActiveView) => void
   companyCounts: CompanyCounts | null
   contactCounts: ContactCountsResponse | null
-  onNavigateToPipelineStage: (view: ActiveView, stageFilter?: string) => void
   selectedPrompt: PromptRead | null
   onOpenPromptLibrary: () => void
-  exportUrl: string
   collapsed: boolean
   onToggleCollapsed: () => void
 }
@@ -30,26 +26,23 @@ interface SidebarProps {
 const NAV_ITEMS: Array<{
   value: ActiveView
   label: string
+  stageColor?: string
   Icon: React.FC<{ className?: string; size?: number }>
 }> = [
-  { value: 'companies', label: 'Companies', Icon: IconBuilding },
-  { value: 'jobs', label: 'Scrape Jobs', Icon: IconGlobe },
-  { value: 'runs', label: 'Analysis Runs', Icon: IconChart },
-  { value: 'contacts', label: 'Contacts', Icon: IconUsers },
-  { value: 'operations', label: 'Operations Log', Icon: IconTimeline },
-  { value: 'analytics', label: 'Analytics Snapshot', Icon: IconPulse },
+  { value: 'dashboard', label: 'Dashboard', Icon: IconPulse },
+  { value: 's1-scraping', label: 'S1 · Scraping', stageColor: 'var(--s1)', Icon: IconGlobe },
+  { value: 's2-ai', label: 'S2 · AI Decision', stageColor: 'var(--s2)', Icon: IconChart },
+  { value: 's3-contacts', label: 'S3 · Contacts', stageColor: 'var(--s3)', Icon: IconUsers },
+  { value: 's4-validation', label: 'S4 · Validation', stageColor: 'var(--s4)', Icon: IconBuilding },
 ]
-
 
 export function Sidebar({
   activeView,
   setActiveView,
   companyCounts,
   contactCounts,
-  onNavigateToPipelineStage,
   selectedPrompt,
   onOpenPromptLibrary,
-  exportUrl,
   collapsed,
   onToggleCollapsed,
 }: SidebarProps) {
@@ -72,7 +65,6 @@ export function Sidebar({
             alt="Prospect Console"
             className="h-8 w-8 flex-shrink-0 rounded-lg"
           />
-          {/* Label fades + slides out */}
           <div
             className="overflow-hidden transition-all duration-200"
             style={{
@@ -88,25 +80,39 @@ export function Sidebar({
 
         {/* Nav */}
         <nav className="flex-1 space-y-0.5 overflow-hidden px-2" aria-label="Main navigation">
-          {NAV_ITEMS.map(({ value, label, Icon }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setActiveView(value)}
-              data-active={activeView === value}
-              title={collapsed ? label : undefined}
-              className="oc-nav-item w-full text-left"
-              style={{ justifyContent: collapsed ? 'center' : undefined }}
-            >
-              <Icon size={18} className="flex-shrink-0" />
-              <span
-                className="overflow-hidden whitespace-nowrap transition-all duration-200"
-                style={{ maxWidth: collapsed ? 0 : 200, opacity: collapsed ? 0 : 1 }}
+          {NAV_ITEMS.map(({ value, label, stageColor, Icon }) => {
+            const isActive = activeView === value
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setActiveView(value)}
+                title={collapsed ? label : undefined}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                  isActive
+                    ? 'font-bold'
+                    : 'text-(--oc-muted) hover:bg-(--oc-surface) hover:text-(--oc-text)'
+                }`}
+                style={
+                  isActive
+                    ? {
+                        backgroundColor: stageColor ? `${stageColor}22` : 'var(--oc-accent-soft)',
+                        color: stageColor ?? 'var(--oc-accent-ink)',
+                        justifyContent: collapsed ? 'center' : undefined,
+                      }
+                    : { justifyContent: collapsed ? 'center' : undefined }
+                }
               >
-                {label}
-              </span>
-            </button>
-          ))}
+                <Icon size={18} className="flex-shrink-0" />
+                <span
+                  className="overflow-hidden whitespace-nowrap transition-all duration-200"
+                  style={{ maxWidth: collapsed ? 0 : 200, opacity: collapsed ? 0 : 1 }}
+                >
+                  {label}
+                </span>
+              </button>
+            )
+          })}
         </nav>
 
         {/* Bottom section */}
@@ -154,24 +160,8 @@ export function Sidebar({
             companyCounts={companyCounts}
             contactCounts={contactCounts}
             collapsed={collapsed}
-            onNavigate={onNavigateToPipelineStage}
+            onNavigate={setActiveView}
           />
-
-          {/* Export */}
-          <a
-            href={exportUrl}
-            title={collapsed ? 'Export CSV' : undefined}
-            className="oc-nav-item flex w-full items-center gap-2 no-underline"
-            style={{ justifyContent: collapsed ? 'center' : undefined }}
-          >
-            <IconDownload size={16} className="flex-shrink-0" />
-            <span
-              className="overflow-hidden whitespace-nowrap text-xs font-semibold transition-all duration-200"
-              style={{ maxWidth: collapsed ? 0 : 200, opacity: collapsed ? 0 : 1 }}
-            >
-              Export CSV
-            </span>
-          </a>
         </div>
 
         {/* Collapse toggle */}

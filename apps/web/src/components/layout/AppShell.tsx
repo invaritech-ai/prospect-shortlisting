@@ -4,7 +4,7 @@ import type { StatsResponse, PromptRead, CompanyCounts, ContactCountsResponse } 
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart, IconTimeline, IconPulse, IconUsers } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers } from '../ui/icons'
 
 interface AppShellProps {
   activeView: ActiveView
@@ -12,20 +12,17 @@ interface AppShellProps {
   stats: StatsResponse | null
   companyCounts: CompanyCounts | null
   contactCounts: ContactCountsResponse | null
-  onNavigateToPipelineStage: (view: ActiveView, stageFilter?: string) => void
   selectedPrompt: PromptRead | null
   onOpenPromptLibrary: () => void
-  exportUrl: string
   children: ReactNode
 }
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
-  companies: { label: 'Companies', Icon: IconBuilding },
-  jobs: { label: 'Scrape Jobs', Icon: IconGlobe },
-  runs: { label: 'Analysis Runs', Icon: IconChart },
-  operations: { label: 'Operations Log', Icon: IconTimeline },
-  analytics: { label: 'Analytics Snapshot', Icon: IconPulse },
-  contacts: { label: 'Contacts', Icon: IconUsers },
+  dashboard: { label: 'Dashboard', Icon: IconPulse },
+  's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
+  's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
+  's3-contacts': { label: 'S3 · Contact Fetch', Icon: IconUsers },
+  's4-validation': { label: 'S4 · Validation', Icon: IconBuilding },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'
@@ -36,10 +33,8 @@ export function AppShell({
   stats,
   companyCounts,
   contactCounts,
-  onNavigateToPipelineStage,
   selectedPrompt,
   onOpenPromptLibrary,
-  exportUrl,
   children,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -68,10 +63,8 @@ export function AppShell({
         setActiveView={setActiveView}
         companyCounts={companyCounts}
         contactCounts={contactCounts}
-        onNavigateToPipelineStage={onNavigateToPipelineStage}
         selectedPrompt={selectedPrompt}
         onOpenPromptLibrary={onOpenPromptLibrary}
-        exportUrl={exportUrl}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />
