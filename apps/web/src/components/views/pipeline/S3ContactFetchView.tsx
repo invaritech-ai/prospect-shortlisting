@@ -30,6 +30,16 @@ interface S3ContactFetchViewProps {
   onSort: (field: string) => void
 }
 
+type DecisionSubFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap'
+
+const DECISION_FILTERS: Array<{ value: DecisionSubFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'unlabeled', label: 'Unlabeled' },
+  { value: 'possible', label: 'Possible' },
+  { value: 'unknown', label: 'Unknown' },
+  { value: 'crap', label: 'Crap' },
+]
+
 const FETCH_BUTTONS: Array<{ source: 'apollo' | 'snov' | 'both'; label: string; bg: string }> = [
   { source: 'apollo', label: 'Fetch · Apollo', bg: '#15803d' },
   { source: 'snov', label: 'Fetch · Snov.io', bg: '#0369a1' },
@@ -60,12 +70,19 @@ export function S3ContactFetchView({
   onSort,
 }: S3ContactFetchViewProps) {
   const [search, setSearch] = useState('')
+  const [decisionSub, setDecisionSub] = useState<DecisionSubFilter>('all')
   const selectedSet = new Set(selectedIds)
 
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
     if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
-    return letterOk
+    if (!letterOk) return false
+    const decision = (c.feedback_manual_label ?? c.latest_decision ?? '').toLowerCase()
+    if (decisionSub === 'unlabeled') return !decision
+    if (decisionSub === 'possible') return decision === 'possible'
+    if (decisionSub === 'unknown') return decision === 'unknown'
+    if (decisionSub === 'crap') return decision === 'crap'
+    return true
   })
 
   const allVisibleSelected =
@@ -73,17 +90,17 @@ export function S3ContactFetchView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
-  const isSubFiltered = search !== ''
+  const isSubFiltered = decisionSub !== 'all' || search !== ''
   const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
   const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
 
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
-          <p className="text-xs text-(--oc-muted)">
+          <p className="text-xs" style={{ color: 'var(--s3-text)', opacity: 0.7 }}>
             Find contacts at qualified companies · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
@@ -139,6 +156,25 @@ export function S3ContactFetchView({
         onClear={onClearLetters}
       />
 
+      {/* Decision filter pills */}
+      <div className="flex flex-wrap gap-1.5">
+        {DECISION_FILTERS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setDecisionSub(value)}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition"
+            style={
+              decisionSub === value
+                ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
+                : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <SelectionBar
         stageColor="--s3"
         stageBg="--s3-bg"
@@ -183,11 +219,24 @@ export function S3ContactFetchView({
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={5} className="p-6 text-center text-(--oc-muted)">Loading…</td></tr>
-            )}
+            {isLoading && Array.from({ length: 8 }).map((_, i) => (
+              <tr key={i} className="border-b border-(--oc-border)">
+                <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-5 w-16 rounded-full" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-8 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-6 w-20 rounded-lg" /></td>
+              </tr>
+            ))}
             {!isLoading && visibleCompanies.length === 0 && (
-              <tr><td colSpan={5} className="p-6 text-center text-(--oc-muted)">No companies at this stage.</td></tr>
+              <tr>
+                <td colSpan={5} className="px-6 py-10 text-center">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-(--oc-text)">No classified companies yet</p>
+                    <p className="text-xs text-(--oc-muted)">Run AI analysis in S2 first to qualify prospects.</p>
+                  </div>
+                </td>
+              </tr>
             )}
             {visibleCompanies.map((c) => (
               <tr
@@ -227,14 +276,14 @@ export function S3ContactFetchView({
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'snov')}
-                      className="rounded border border-(--oc-border) px-1.5 py-0.5 text-[10px] transition hover:border-(--s3)"
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
                     >
                       Snov
                     </button>
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'apollo')}
-                      className="rounded border border-(--oc-border) px-1.5 py-0.5 text-[10px] transition hover:border-(--s3)"
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
                     >
                       Apollo
                     </button>

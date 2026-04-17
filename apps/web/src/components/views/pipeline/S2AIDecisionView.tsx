@@ -149,10 +149,10 @@ export function S2AIDecisionView({
         </div>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s2)', backgroundColor: 'var(--s2-bg)' }}>
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
-          <p className="text-xs text-(--oc-muted)">
+          <p className="text-xs" style={{ color: 'var(--s2-text)', opacity: 0.7 }}>
             Qualify prospects with AI classification · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
@@ -274,11 +274,33 @@ export function S2AIDecisionView({
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={5} className="p-6 text-center text-(--oc-muted)">Loading…</td></tr>
-            )}
+            {isLoading && Array.from({ length: 8 }).map((_, i) => (
+              <tr key={i} className="border-b border-(--oc-border)">
+                <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-5 w-16 rounded-full" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-10 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-6 w-24 rounded-lg" /></td>
+              </tr>
+            ))}
             {!isLoading && visibleCompanies.length === 0 && (
-              <tr><td colSpan={5} className="p-6 text-center text-(--oc-muted)">No companies match this filter.</td></tr>
+              <tr>
+                <td colSpan={5} className="px-6 py-10 text-center">
+                  {decisionSub === 'unlabeled' && companies != null ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-emerald-700">All companies have been classified ✓</p>
+                      <p className="text-xs text-(--oc-muted)">Switch to "All" to review results or run a new analysis.</p>
+                    </div>
+                  ) : decisionSub === 'possible' ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-(--oc-text)">No "possible" prospects yet</p>
+                      <p className="text-xs text-(--oc-muted)">Run AI analysis on unlabeled companies first.</p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-(--oc-muted)">No companies match this filter.</p>
+                  )}
+                </td>
+              </tr>
             )}
             {visibleCompanies.map((c) => (
               <tr
@@ -321,14 +343,14 @@ export function S2AIDecisionView({
                       type="button"
                       onClick={() => onClassifyOne(c)}
                       disabled={!!analysisActionState[c.id]}
-                      className="rounded-lg border border-(--oc-border) px-2 py-1 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text) disabled:opacity-50"
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text) disabled:opacity-50"
                     >
                       {analysisActionState[c.id] ?? 'Classify'}
                     </button>
                     <button
                       type="button"
                       onClick={() => onReviewCompany(c)}
-                      className="rounded-lg border border-(--oc-border) px-2 py-1 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
                     >
                       Review
                     </button>
@@ -336,9 +358,9 @@ export function S2AIDecisionView({
                       <button
                         type="button"
                         onClick={() => onViewMarkdown(c)}
-                        className="rounded-lg border border-(--oc-border) px-2 py-1 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
+                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
                       >
-                        Markdown
+                        MD
                       </button>
                     )}
                   </div>

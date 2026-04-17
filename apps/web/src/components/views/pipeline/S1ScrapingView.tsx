@@ -179,10 +179,10 @@ export function S1ScrapingView({
       )}
 
       {/* Header */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}>
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
-          <p className="text-xs text-(--oc-muted)">
+          <p className="text-xs" style={{ color: 'var(--s1-text)', opacity: 0.7 }}>
             Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
@@ -274,11 +274,32 @@ export function S1ScrapingView({
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={4} className="p-6 text-center text-(--oc-muted)">Loading…</td></tr>
-            )}
+            {isLoading && Array.from({ length: 8 }).map((_, i) => (
+              <tr key={i} className="border-b border-(--oc-border)">
+                <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-5 w-20 rounded-full" /></td>
+                <td className="p-3"><div className="oc-skeleton h-6 w-16 rounded-lg" /></td>
+              </tr>
+            ))}
             {!isLoading && visibleCompanies.length === 0 && (
-              <tr><td colSpan={4} className="p-6 text-center text-(--oc-muted)">No companies match this filter.</td></tr>
+              <tr>
+                <td colSpan={4} className="px-6 py-10 text-center">
+                  {subFilter === 'pending' && companies != null ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-emerald-700">All companies have been scraped ✓</p>
+                      <p className="text-xs text-(--oc-muted)">Switch to "All" or "Done" to review results.</p>
+                    </div>
+                  ) : subFilter === 'failed' ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-(--oc-text)">No failed scrapes</p>
+                      <p className="text-xs text-(--oc-muted)">All scrapes completed successfully.</p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-(--oc-muted)">No companies match this filter.</p>
+                  )}
+                </td>
+              </tr>
             )}
             {visibleCompanies.map((c) => (
               <tr
@@ -320,7 +341,7 @@ export function S1ScrapingView({
                       type="button"
                       onClick={() => onScrapeOne(c)}
                       disabled={!!actionState[c.id]}
-                      className="rounded-lg border border-(--oc-border) px-2 py-1 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text) disabled:opacity-50"
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text) disabled:opacity-50"
                     >
                       {actionState[c.id] ?? 'Scrape'}
                     </button>
@@ -328,9 +349,9 @@ export function S1ScrapingView({
                       <button
                         type="button"
                         onClick={() => onOpenDiagnostics(c)}
-                        className="rounded-lg border border-(--oc-border) px-2 py-1 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text)"
+                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text)"
                       >
-                        Diagnostics
+                        Diag
                       </button>
                     )}
                   </div>

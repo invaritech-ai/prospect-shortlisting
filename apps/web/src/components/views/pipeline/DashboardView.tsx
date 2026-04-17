@@ -2,6 +2,15 @@ import type { DragEvent, FormEvent } from 'react'
 import type { CompanyCounts, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
 import { IconUpload } from '../../ui/icons'
 
+function LiveDot({ color }: { color: string }) {
+  return (
+    <span className="relative flex h-2 w-2 shrink-0">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: color }} />
+      <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+    </span>
+  )
+}
+
 type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-validation'
 
 interface DashboardViewProps {
@@ -94,34 +103,42 @@ export function DashboardView({
           Pipeline
         </h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {cards.map((card) => (
-            <button
-              key={card.view}
-              type="button"
-              onClick={() => onNavigate(card.view)}
-              className="group flex flex-col gap-2 rounded-2xl border p-4 text-left transition hover:shadow-md"
-              style={{
-                backgroundColor: `var(${card.stageBg})`,
-                borderColor: `var(${card.stageColor})`,
-              }}
-            >
-              <span
-                className="text-[10px] font-bold uppercase tracking-wider"
-                style={{ color: `var(${card.stageColor})` }}
+          {cards.map((card) => {
+            const isLive =
+              (card.view === 's1-scraping' && (stats?.scrape?.running ?? 0) > 0) ||
+              (card.view === 's2-ai' && (stats?.analysis?.running ?? 0) > 0)
+            return (
+              <button
+                key={card.view}
+                type="button"
+                onClick={() => onNavigate(card.view)}
+                className="group flex flex-col gap-2 rounded-2xl border p-4 text-left transition hover:shadow-md"
+                style={{
+                  backgroundColor: `var(${card.stageBg})`,
+                  borderColor: `var(${card.stageColor})`,
+                }}
               >
-                {card.label}
-              </span>
-              <span
-                className="text-3xl font-black tabular-nums"
-                style={{ color: `var(${card.stageColor})` }}
-              >
-                {card.count != null ? card.count.toLocaleString() : '—'}
-              </span>
-              <span className="text-[11px] text-(--oc-muted)">
-                {card.hint}
-              </span>
-            </button>
-          ))}
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={{ color: `var(${card.stageColor})` }}
+                  >
+                    {card.label}
+                  </span>
+                  {isLive && <LiveDot color={`var(${card.stageColor})`} />}
+                </span>
+                <span
+                  className="text-3xl font-black tabular-nums"
+                  style={{ color: `var(${card.stageColor})` }}
+                >
+                  {card.count != null ? card.count.toLocaleString() : '—'}
+                </span>
+                <span className="text-[11px] text-(--oc-muted)">
+                  {card.hint}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </section>
 

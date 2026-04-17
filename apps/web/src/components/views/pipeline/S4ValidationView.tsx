@@ -107,10 +107,10 @@ export function S4ValidationView({
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+        <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S4 · Validation</h2>
-          <p className="text-xs text-(--oc-muted)">
+          <p className="text-xs" style={{ color: 'var(--s4-text)', opacity: 0.7 }}>
             Validate contact emails with ZeroBounce ·{' '}
             {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
           </p>
@@ -118,7 +118,8 @@ export function S4ValidationView({
         {exportUrl && (
           <a
             href={exportUrl}
-            className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--oc-accent) hover:text-(--oc-accent)"
+            className="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+            style={{ borderColor: 'var(--s4)', color: 'var(--s4-text)' }}
           >
             Export CSV
           </a>
@@ -202,11 +203,42 @@ export function S4ValidationView({
 
       {/* Table */}
       {isLoading && (
-        <p className="p-6 text-center text-sm text-(--oc-muted)">Loading contacts…</p>
+        <div className="oc-panel overflow-hidden">
+          <table className="w-full text-sm">
+            <tbody>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <tr key={i} className="border-b border-(--oc-border)">
+                  <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-4 w-28 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-4 w-24 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-5 w-12 rounded-full" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-4 w-24 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-5 w-16 rounded-full" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-5 w-20 rounded-full" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!isLoading && visibleContacts.length === 0 && (
-        <p className="p-6 text-center text-sm text-(--oc-muted)">No contacts match this filter.</p>
+        <div className="rounded-2xl border border-(--oc-border) bg-white px-6 py-10 text-center">
+          {verifFilter === 'unverified' && contacts != null && contacts.total > 0 ? (
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-emerald-700">All contacts have been verified ✓</p>
+              <p className="text-xs text-(--oc-muted)">Switch to "Valid" or "Campaign ready" to review results.</p>
+            </div>
+          ) : contacts != null && contacts.total === 0 ? (
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-(--oc-text)">No contacts fetched yet</p>
+              <p className="text-xs text-(--oc-muted)">Go to S3 to fetch contacts for classified companies.</p>
+            </div>
+          ) : (
+            <p className="text-sm text-(--oc-muted)">No contacts match this filter.</p>
+          )}
+        </div>
       )}
 
       {!isLoading && visibleContacts.length > 0 && (

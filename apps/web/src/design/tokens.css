@@ -21,7 +21,7 @@
   --oc-danger-text: #7f1d1d;
 
   /* ── Pipeline stage colors ───────────────────────────────── */
-  --s1: #1e40af;
+  --s1: #1d4ed8;
   --s1-bg: #dbeafe;
   --s1-text: #1e3a8a;
   --s2: #92400e;
@@ -72,7 +72,7 @@
       radial-gradient(circle at 100% 0%, rgba(217, 119, 6, 0.07), transparent 40%),
       linear-gradient(180deg, #fbfdff 0%, var(--oc-bg) 48%, #eef3fb 100%);
     color: var(--oc-text);
-    font-family: 'Fira Sans', sans-serif;
+    font-family: 'Plus Jakarta Sans', sans-serif;
     letter-spacing: 0.003em;
   }
 
@@ -157,7 +157,7 @@
 
   .oc-folder-title {
     @apply block;
-    font-family: 'Fira Sans', sans-serif;
+    font-family: 'Plus Jakarta Sans', sans-serif;
     letter-spacing: 0.01em;
   }
 
