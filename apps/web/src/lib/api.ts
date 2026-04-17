@@ -100,8 +100,10 @@ export async function listCompanies(
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
   letter: string | null = null,
+  sortBy = 'domain',
+  sortDir: 'asc' | 'desc' = 'asc',
 ): Promise<CompanyList> {
-  let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}`
+  let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sortBy)}&sort_dir=${sortDir}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
   return request<CompanyList>(url)
 }
@@ -289,6 +291,8 @@ export async function listContacts(
     search?: string
     limit?: number
     offset?: number
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
   } = {},
 ): Promise<ContactListResponse> {
   const params = new URLSearchParams()
@@ -298,6 +302,8 @@ export async function listContacts(
   if (options.search) params.set('search', options.search)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
+  if (options.sortBy) params.set('sort_by', options.sortBy)
+  if (options.sortDir) params.set('sort_dir', options.sortDir)
   return request<ContactListResponse>(`/v1/contacts?${params.toString()}`)
 }
 

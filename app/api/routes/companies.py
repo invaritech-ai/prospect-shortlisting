@@ -204,6 +204,11 @@ def upsert_company_feedback(
 # Company listing, filtering, counts
 # ---------------------------------------------------------------------------
 
+_COMPANY_SORT_FIELDS = frozenset(
+    {"domain", "created_at", "decision", "confidence", "scrape_status", "contact_count"}
+)
+
+
 @router.get("/companies", response_model=CompanyList)
 def list_companies(
     session: Session = Depends(get_session),
@@ -214,6 +219,8 @@ def list_companies(
     include_total: bool = Query(default=False),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
     stage_filter: str = Query(default="all"),
+    sort_by: str = Query(default="domain"),
+    sort_dir: str = Query(default="asc"),
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -275,14 +282,21 @@ def list_companies(
     if letter is not None:
         statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
 
-    if letter is not None:
-        order = statement.order_by(col(Company.domain).asc())
-    else:
-        order = statement.order_by(
-            decision_rank.asc(),
-            col(Company.created_at).desc(),
-            col(Company.domain).asc(),
-        )
+    # Build sort expression
+    _sort_by = sort_by if sort_by in _COMPANY_SORT_FIELDS else "domain"
+    _sort_dir = "desc" if sort_dir.lower() == "desc" else "asc"
+
+    _sort_col_map = {
+        "domain": col(Company.domain),
+        "created_at": col(Company.created_at),
+        "decision": decision_rank,
+        "confidence": latest_confidence,
+        "scrape_status": latest_scrape.c.status,
+        "contact_count": func.coalesce(contact_counts.c.contact_count, 0),
+    }
+    _primary = _sort_col_map[_sort_by]
+    _primary_expr = _primary.desc() if _sort_dir == "desc" else _primary.asc()
+    order = statement.order_by(_primary_expr, col(Company.domain).asc())
 
     rows = list(session.exec(order.offset(offset).limit(limit + 1)))
     has_more = len(rows) > limit

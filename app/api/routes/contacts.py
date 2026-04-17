@@ -428,6 +428,11 @@ def list_contacts_by_company(
     )
 
 
+_CONTACT_SORT_FIELDS = frozenset(
+    {"domain", "created_at", "first_name", "last_name", "title", "verification_status", "pipeline_stage"}
+)
+
+
 @router.get("/contacts", response_model=ContactListResponse)
 def list_all_contacts(
     title_match: bool | None = Query(default=None),
@@ -436,6 +441,8 @@ def list_all_contacts(
     search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    sort_by: str = Query(default="domain"),
+    sort_dir: str = Query(default="asc"),
     session: Session = Depends(get_session),
 ) -> ContactListResponse:
     q = select(ProspectContact, Company.domain).join(
@@ -450,13 +457,24 @@ def list_all_contacts(
     )
 
     total = session.exec(select(func.count()).select_from(q.subquery())).one()
+
+    _sb = sort_by if sort_by in _CONTACT_SORT_FIELDS else "domain"
+    _sd = "desc" if sort_dir.lower() == "desc" else "asc"
+    _contact_sort_map = {
+        "domain": col(Company.domain),
+        "created_at": col(ProspectContact.created_at),
+        "first_name": col(ProspectContact.first_name),
+        "last_name": col(ProspectContact.last_name),
+        "title": col(ProspectContact.title),
+        "verification_status": col(ProspectContact.verification_status),
+        "pipeline_stage": col(ProspectContact.pipeline_stage),
+    }
+    _sort_expr = _contact_sort_map[_sb]
+    _sort_expr = _sort_expr.desc() if _sd == "desc" else _sort_expr.asc()
+
     rows = list(
         session.exec(
-            q.order_by(
-                col(ProspectContact.pipeline_stage).desc(),
-                col(ProspectContact.title_match).desc(),
-                col(ProspectContact.created_at).desc(),
-            )
+            q.order_by(_sort_expr, col(ProspectContact.created_at).desc())
             .offset(offset)
             .limit(limit)
         ).all()

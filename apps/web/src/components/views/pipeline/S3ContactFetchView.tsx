@@ -1,8 +1,10 @@
-import type { CompanyList, CompanyListItem } from '../../../lib/types'
+import { useState } from 'react'
+import type { CompanyList, CompanyListItem, ContactCountsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
+import { SortableHeader } from '../../ui/SortableHeader'
 
 interface S3ContactFetchViewProps {
   companies: CompanyList | null
@@ -13,6 +15,7 @@ interface S3ContactFetchViewProps {
   isLoading: boolean
   isFetching: boolean
   isSelectingAll: boolean
+  contactCounts: ContactCountsResponse | null
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -22,6 +25,9 @@ interface S3ContactFetchViewProps {
   onFetchOne: (company: CompanyListItem, source: 'snov' | 'apollo') => void
   onFetchSelected: (source: 'snov' | 'apollo' | 'both') => void
   onOpenTitleRules: () => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
 }
 
 const FETCH_BUTTONS: Array<{ source: 'apollo' | 'snov' | 'both'; label: string; bg: string }> = [
@@ -39,6 +45,7 @@ export function S3ContactFetchView({
   isLoading,
   isFetching,
   isSelectingAll,
+  contactCounts,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -48,12 +55,18 @@ export function S3ContactFetchView({
   onFetchOne,
   onFetchSelected,
   onOpenTitleRules,
+  sortBy,
+  sortDir,
+  onSort,
 }: S3ContactFetchViewProps) {
+  const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
 
-  const visibleCompanies = (companies?.items ?? []).filter(
-    (c) => activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase()),
-  )
+  const visibleCompanies = (companies?.items ?? []).filter((c) => {
+    if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
+    const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
+    return letterOk
+  })
 
   const allVisibleSelected =
     visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.id))
@@ -62,21 +75,57 @@ export function S3ContactFetchView({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
           <p className="text-xs text-(--oc-muted)">
             Find contacts at qualified companies · {companies?.total != null ? `${companies.total.toLocaleString()} companies` : '—'}
           </p>
         </div>
+        {/* Search */}
+        <div className="relative">
+          <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search domains…"
+            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s3) focus:bg-white"
+            style={{ width: 180 }}
+          />
+        </div>
         <button
           type="button"
           onClick={onOpenTitleRules}
-          className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
+          className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text) whitespace-nowrap"
         >
           Title Rules
         </button>
       </div>
+
+      {/* Contact stats bar */}
+      {contactCounts && (
+        <div className="flex flex-wrap gap-2">
+          {[
+            { label: 'Total contacts', value: contactCounts.total, color: '#14532d', bg: '#dcfce7' },
+            { label: 'Verified', value: contactCounts.verified, color: '#0369a1', bg: '#dbeafe' },
+            { label: 'Eligible to verify', value: contactCounts.eligible_verify, color: '#6b21a8', bg: '#f3e8ff' },
+            { label: 'Campaign ready', value: contactCounts.campaign_ready, color: '#92400e', bg: '#fef3c7' },
+          ].map(({ label, value, color, bg }) => (
+            <div
+              key={label}
+              className="rounded-xl border px-3 py-1.5 text-xs"
+              style={{ borderColor: color + '33', backgroundColor: bg }}
+            >
+              <span className="font-black tabular-nums" style={{ color }}>{value.toLocaleString()}</span>
+              <span className="ml-1.5" style={{ color: color + 'bb' }}>{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <LetterStrip
         multiSelect
@@ -123,9 +172,9 @@ export function S3ContactFetchView({
                   className="cursor-pointer"
                 />
               </th>
-              <th className="p-3 text-left font-semibold">Domain</th>
-              <th className="p-3 text-left font-semibold">Decision</th>
-              <th className="p-3 text-left font-semibold">Contacts</th>
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Contacts" field="contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <th className="p-3 text-left font-semibold">Fetch</th>
             </tr>
           </thead>
@@ -150,7 +199,17 @@ export function S3ContactFetchView({
                     className="cursor-pointer"
                   />
                 </td>
-                <td className="p-3 font-medium">{c.domain}</td>
+                <td className="p-3">
+                  <a
+                    href={c.normalized_url || c.raw_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-[12px] font-medium hover:underline"
+                    style={{ color: 'var(--s3)' }}
+                  >
+                    {c.domain}
+                  </a>
+                </td>
                 <td className="p-3">
                   {(c.feedback_manual_label ?? c.latest_decision) ? (
                     <Badge className={decisionBgClass(c.feedback_manual_label ?? c.latest_decision)}>

@@ -1,12 +1,16 @@
-import type { ContactCompanyListResponse, ContactCountsResponse } from '../../../lib/types'
+import { useState } from 'react'
+import type { ContactCountsResponse, ContactListResponse, ProspectContactRead } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
+import { SortableHeader } from '../../ui/SortableHeader'
+
+type VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match'
 
 interface S4ValidationViewProps {
-  companies: ContactCompanyListResponse | null
+  contacts: ContactListResponse | null
   letterCounts: Record<string, number>
   activeLetters: Set<string>
-  selectedCompanyIds: string[]
+  selectedContactIds: string[]
   totalMatching: number | null
   contactCounts: ContactCountsResponse | null
   isLoading: boolean
@@ -15,18 +19,49 @@ interface S4ValidationViewProps {
   exportUrl: string
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
-  onToggleCompany: (id: string) => void
+  onToggleContact: (id: string) => void
   onToggleAll: (visibleIds: string[]) => void
   onSelectAllMatching: () => void
   onClearSelection: () => void
   onValidateSelected: () => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
+}
+
+const VERIF_FILTERS: Array<{ value: VerifFilter; label: string; color?: string }> = [
+  { value: 'all', label: 'All contacts' },
+  { value: 'valid', label: 'Valid', color: '#15803d' },
+  { value: 'invalid', label: 'Invalid', color: '#dc2626' },
+  { value: 'catch-all', label: 'Catch-all', color: '#d97706' },
+  { value: 'unverified', label: 'Unverified' },
+  { value: 'campaign_ready', label: 'Campaign ready', color: '#6b21a8' },
+  { value: 'title_match', label: 'Title match only' },
+]
+
+function verifBadge(contact: ProspectContactRead) {
+  const s = contact.verification_status?.toLowerCase() ?? ''
+  if (s === 'valid') return { label: 'Valid', bg: '#dcfce7', text: '#14532d', dot: '#15803d' }
+  if (s === 'invalid') return { label: 'Invalid', bg: '#ffe4e6', text: '#9f1239', dot: '#dc2626' }
+  if (s === 'catch-all' || s === 'catchall') return { label: 'Catch-all', bg: '#fef3c7', text: '#92400e', dot: '#d97706' }
+  if (s === 'spamtrap' || s === 'abuse' || s === 'do_not_mail') return { label: s, bg: '#ffe4e6', text: '#9f1239', dot: '#dc2626' }
+  return null
+}
+
+function stageBadge(contact: ProspectContactRead) {
+  if (contact.pipeline_stage === 'campaign_ready') return { label: 'Campaign ready', bg: '#f3e8ff', text: '#581c87' }
+  if (contact.pipeline_stage === 'verified') return { label: 'Verified', bg: '#f1f5f9', text: '#334155' }
+  if (contact.verification_status && contact.verification_status !== 'unverified') {
+    return { label: 'Fetched', bg: '#fef3c7', text: '#92400e' }
+  }
+  return null
 }
 
 export function S4ValidationView({
-  companies,
+  contacts,
   letterCounts,
   activeLetters,
-  selectedCompanyIds,
+  selectedContactIds,
   totalMatching,
   contactCounts,
   isLoading,
@@ -35,37 +70,45 @@ export function S4ValidationView({
   exportUrl,
   onToggleLetter,
   onClearLetters,
-  onToggleCompany,
+  onToggleContact,
   onToggleAll,
   onSelectAllMatching,
   onClearSelection,
   onValidateSelected,
+  sortBy,
+  sortDir,
+  onSort,
 }: S4ValidationViewProps) {
-  const selectedSet = new Set(selectedCompanyIds)
+  const [verifFilter, setVerifFilter] = useState<VerifFilter>('all')
+  const selectedSet = new Set(selectedContactIds)
 
-  const visibleCompanies = (companies?.items ?? []).filter(
-    (c) => activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase()),
-  )
+  const visibleContacts = (contacts?.items ?? []).filter((c) => {
+    const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain?.[0]?.toLowerCase() ?? '')
+    if (!letterOk) return false
+    const vs = c.verification_status?.toLowerCase() ?? ''
+    if (verifFilter === 'valid') return vs === 'valid'
+    if (verifFilter === 'invalid') return vs === 'invalid'
+    if (verifFilter === 'catch-all') return vs === 'catch-all' || vs === 'catchall'
+    if (verifFilter === 'unverified') return !vs || vs === 'unverified'
+    if (verifFilter === 'campaign_ready') return c.pipeline_stage === 'campaign_ready'
+    if (verifFilter === 'title_match') return c.title_match
+    return true
+  })
 
   const allVisibleSelected =
-    visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.company_id))
+    visibleContacts.length > 0 && visibleContacts.every((c) => selectedSet.has(c.id))
   const someVisibleSelected =
-    !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.company_id))
-
-  const totalEligible = visibleCompanies
-    .filter((c) => selectedSet.has(c.company_id))
-    .reduce((sum, c) => sum + c.eligible_verify_count, 0)
+    !allVisibleSelected && visibleContacts.some((c) => selectedSet.has(c.id))
 
   return (
     <div className="space-y-3">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S4 · Validation</h2>
           <p className="text-xs text-(--oc-muted)">
             Validate contact emails with ZeroBounce ·{' '}
-            {contactCounts != null
-              ? `${contactCounts.total.toLocaleString()} contacts`
-              : '—'}
+            {contactCounts != null ? `${contactCounts.total.toLocaleString()} contacts` : '—'}
           </p>
         </div>
         {exportUrl && (
@@ -78,27 +121,28 @@ export function S4ValidationView({
         )}
       </div>
 
-      {/* Stats strip */}
+      {/* Stats bar */}
       {contactCounts && (
         <div className="flex flex-wrap gap-2">
           {[
-            { label: 'Total', value: contactCounts.total, color: 'var(--s4)' },
-            { label: 'Verified', value: contactCounts.verified, color: '#15803d' },
-            { label: 'Campaign ready', value: contactCounts.campaign_ready, color: '#0369a1' },
-            { label: 'Eligible to verify', value: contactCounts.eligible_verify, color: '#92400e' },
-          ].map(({ label, value, color }) => (
+            { label: 'Valid', value: contactCounts.verified, color: '#15803d', bg: '#dcfce7' },
+            { label: 'Eligible', value: contactCounts.eligible_verify, color: '#d97706', bg: '#fef3c7' },
+            { label: 'Unverified', value: contactCounts.total - contactCounts.verified, color: '#334155', bg: '#f1f5f9' },
+            { label: 'Campaign ready', value: contactCounts.campaign_ready, color: '#6b21a8', bg: '#f3e8ff' },
+          ].map(({ label, value, color, bg }) => (
             <div
               key={label}
-              className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs"
-              style={{ borderColor: color + '44', backgroundColor: color + '11' }}
+              className="rounded-xl border px-3 py-1.5 text-xs"
+              style={{ borderColor: color + '33', backgroundColor: bg }}
             >
               <span className="font-black tabular-nums" style={{ color }}>{value.toLocaleString()}</span>
-              <span style={{ color: color + 'aa' }}>{label}</span>
+              <span className="ml-1.5" style={{ color: color + 'bb' }}>{label}</span>
             </div>
           ))}
         </div>
       )}
 
+      {/* Letter strip */}
       <LetterStrip
         multiSelect
         activeLetters={activeLetters}
@@ -107,23 +151,44 @@ export function S4ValidationView({
         onClear={onClearLetters}
       />
 
+      {/* Verification filter chips */}
+      <div className="flex flex-wrap gap-1.5">
+        {VERIF_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            type="button"
+            onClick={() => setVerifFilter(f.value)}
+            className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
+              verifFilter === f.value
+                ? 'text-white'
+                : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s4) hover:text-(--s4-text)'
+            }`}
+            style={
+              verifFilter === f.value
+                ? { backgroundColor: f.color ?? 'var(--s4)' }
+                : {}
+            }
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Selection bar */}
       <SelectionBar
         stageColor="--s4"
         stageBg="--s4-bg"
-        selectedCount={selectedCompanyIds.length}
+        selectedCount={selectedContactIds.length}
         totalMatching={totalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedCompanyIds.length > 0 ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedContactIds.length > 0 ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >
-        <span className="text-xs" style={{ color: 'var(--s4-text)' }}>
-          {totalEligible > 0 && `${totalEligible.toLocaleString()} eligible`}
-        </span>
         <button
           type="button"
           onClick={onValidateSelected}
-          disabled={isValidating || selectedCompanyIds.length === 0}
+          disabled={isValidating || selectedContactIds.length === 0}
           className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
           style={{ backgroundColor: 'var(--s4)' }}
         >
@@ -131,85 +196,131 @@ export function S4ValidationView({
         </button>
       </SelectionBar>
 
+      {/* Table */}
       {isLoading && (
         <p className="p-6 text-center text-sm text-(--oc-muted)">Loading contacts…</p>
       )}
 
-      {!isLoading && visibleCompanies.length === 0 && (
-        <p className="p-6 text-center text-sm text-(--oc-muted)">No companies with contacts found.</p>
+      {!isLoading && visibleContacts.length === 0 && (
+        <p className="p-6 text-center text-sm text-(--oc-muted)">No contacts match this filter.</p>
       )}
 
-      {!isLoading && visibleCompanies.length > 0 && (
+      {!isLoading && visibleContacts.length > 0 && (
         <div className="oc-panel overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-(--oc-border) text-xs text-(--oc-muted)">
+              <tr className="border-b border-(--oc-border) text-[10px] uppercase tracking-wider text-(--oc-muted)">
                 <th className="w-8 p-3">
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
                     ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
                     onChange={() =>
-                      onToggleAll(allVisibleSelected ? [] : visibleCompanies.map((c) => c.company_id))
+                      onToggleAll(allVisibleSelected ? [] : visibleContacts.map((c) => c.id))
                     }
                     className="cursor-pointer"
                   />
                 </th>
-                <th className="p-3 text-left font-semibold">Domain</th>
-                <th className="p-3 text-left font-semibold">Total</th>
-                <th className="p-3 text-left font-semibold">Title matched</th>
-                <th className="p-3 text-left font-semibold">Verified</th>
-                <th className="p-3 text-left font-semibold">Eligible</th>
-                <th className="p-3 text-left font-semibold">Campaign ready</th>
+                <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <th className="p-3 text-left font-semibold">Email</th>
+                <th className="p-3 text-left font-semibold">Source</th>
+                <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               </tr>
             </thead>
             <tbody>
-              {visibleCompanies.map((c) => (
-                <tr
-                  key={c.company_id}
-                  className="border-b border-(--oc-border) last:border-0 transition"
-                  style={selectedSet.has(c.company_id) ? { backgroundColor: 'var(--s4-bg)' } : {}}
-                >
-                  <td className="p-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedSet.has(c.company_id)}
-                      onChange={() => onToggleCompany(c.company_id)}
-                      className="cursor-pointer"
-                    />
-                  </td>
-                  <td className="p-3 font-medium" style={{ color: 'var(--s4-text)' }}>{c.domain}</td>
-                  <td className="p-3 text-xs font-mono text-(--oc-muted)">{c.total_count}</td>
-                  <td className="p-3 text-xs font-mono">
-                    {c.title_matched_count > 0 ? (
-                      <span className="font-semibold text-emerald-700">{c.title_matched_count}</span>
-                    ) : (
-                      <span className="text-(--oc-border)">0</span>
-                    )}
-                  </td>
-                  <td className="p-3 text-xs font-mono">
-                    {c.verified_count > 0 ? (
-                      <span className="font-semibold text-emerald-700">{c.verified_count}</span>
-                    ) : (
-                      <span className="text-(--oc-border)">0</span>
-                    )}
-                  </td>
-                  <td className="p-3 text-xs font-mono">
-                    {c.eligible_verify_count > 0 ? (
-                      <span className="font-semibold" style={{ color: 'var(--s4)' }}>{c.eligible_verify_count}</span>
-                    ) : (
-                      <span className="text-(--oc-border)">0</span>
-                    )}
-                  </td>
-                  <td className="p-3 text-xs font-mono">
-                    {c.campaign_ready_count > 0 ? (
-                      <span className="font-semibold text-blue-700">{c.campaign_ready_count}</span>
-                    ) : (
-                      <span className="text-(--oc-border)">0</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {visibleContacts.map((contact) => {
+                const vb = verifBadge(contact)
+                const sb = stageBadge(contact)
+                const fullName = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || '—'
+                return (
+                  <tr
+                    key={contact.id}
+                    className="border-b border-(--oc-border) last:border-0 transition"
+                    style={selectedSet.has(contact.id) ? { backgroundColor: 'var(--s4-bg)' } : {}}
+                  >
+                    <td className="p-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedSet.has(contact.id)}
+                        onChange={() => onToggleContact(contact.id)}
+                        className="cursor-pointer"
+                      />
+                    </td>
+                    <td className="p-3">
+                      <div className="font-semibold text-sm">{fullName}</div>
+                      {contact.title && (
+                        <div className="text-[11px] text-(--oc-muted)">{contact.title}</div>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <a
+                        href={`https://${contact.domain}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-[11px] font-medium hover:underline"
+                        style={{ color: 'var(--s4-text)' }}
+                      >
+                        {contact.domain}
+                      </a>
+                    </td>
+                    <td className="p-3">
+                      {contact.email ? (
+                        <span className="font-mono text-[11.5px] text-(--oc-text)">{contact.email}</span>
+                      ) : (
+                        <span className="text-xs text-(--oc-muted) italic">No email</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span className="inline-flex items-center rounded-md border border-(--oc-border) bg-(--oc-surface) px-1.5 py-0.5 text-[10px] font-bold text-(--oc-muted)">
+                        {contact.source}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      {contact.title_match ? (
+                        <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"/>
+                          </svg>
+                          Match
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-(--oc-muted)">No match</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {vb ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
+                          style={{ backgroundColor: vb.bg, color: vb.text }}
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full shrink-0"
+                            style={{ backgroundColor: vb.dot }}
+                          />
+                          {vb.label}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-(--oc-muted)">Unverified</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {sb ? (
+                        <span
+                          className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold"
+                          style={{ backgroundColor: sb.bg, color: sb.text }}
+                        >
+                          {sb.label}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-(--oc-muted)">Fetched</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

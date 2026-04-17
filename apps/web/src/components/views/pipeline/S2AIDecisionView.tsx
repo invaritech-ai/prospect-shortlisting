@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import type { CompanyList, CompanyListItem, PromptRead, RunRead } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, PromptRead, RunRead, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
+import { SortableHeader } from '../../ui/SortableHeader'
 
 type DecisionSubFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap'
 
@@ -20,6 +21,7 @@ interface S2AIDecisionViewProps {
   selectedPrompt: PromptRead | null
   recentRuns: RunRead[]
   analysisActionState: Record<string, string>
+  stats: StatsResponse | null
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -29,7 +31,11 @@ interface S2AIDecisionViewProps {
   onAnalyzeSelected: () => void
   onClassifyOne: (company: CompanyListItem) => void
   onReviewCompany: (company: CompanyListItem) => void
+  onViewMarkdown: (company: CompanyListItem) => void
   onOpenPromptLibrary: () => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
 }
 
 const DECISION_FILTERS: Array<{ value: DecisionSubFilter; label: string }> = [
@@ -53,6 +59,7 @@ export function S2AIDecisionView({
   selectedPrompt,
   recentRuns,
   analysisActionState,
+  stats,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -62,20 +69,27 @@ export function S2AIDecisionView({
   onAnalyzeSelected,
   onClassifyOne,
   onReviewCompany,
+  onViewMarkdown,
   onOpenPromptLibrary,
+  sortBy,
+  sortDir,
+  onSort,
 }: S2AIDecisionViewProps) {
   const [decisionSub, setDecisionSub] = useState<DecisionSubFilter>('all')
+  const [search, setSearch] = useState('')
   const [dropOpen, setDropOpen] = useState(false)
   const dropRef = useRef<HTMLDivElement>(null)
   const selectedSet = new Set(selectedIds)
 
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
+    if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
     if (!letterOk) return false
-    if (decisionSub === 'unlabeled') return !c.latest_decision && !c.feedback_manual_label
-    if (decisionSub === 'possible') return c.latest_decision === 'Possible' || c.latest_decision === 'possible' || c.feedback_manual_label === 'possible'
-    if (decisionSub === 'unknown') return c.latest_decision === 'Unknown' || c.latest_decision === 'unknown'
-    if (decisionSub === 'crap') return c.latest_decision === 'Crap' || c.latest_decision === 'crap'
+    const decision = (c.feedback_manual_label ?? c.latest_decision ?? '').toLowerCase()
+    if (decisionSub === 'unlabeled') return !decision
+    if (decisionSub === 'possible') return decision === 'possible'
+    if (decisionSub === 'unknown') return decision === 'unknown'
+    if (decisionSub === 'crap') return decision === 'crap'
     return true
   })
 
@@ -84,19 +98,78 @@ export function S2AIDecisionView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
+  // Analysis pipeline progress
+  const analysis = stats?.analysis
+  const aRunning = analysis?.running ?? 0
+  const aQueued = analysis?.queued ?? 0
+  const aCompleted = analysis?.completed ?? 0
+  const aFailed = analysis?.failed ?? 0
+  const aTotal = analysis?.total ?? 0
+  const aPct = analysis?.pct_done ?? 0
+  const aHasActivity = aRunning > 0 || aQueued > 0
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
+      {/* Analysis pipeline progress */}
+      {analysis && (aHasActivity || aCompleted > 0) && (
+        <div className="rounded-2xl border border-(--oc-border) bg-white p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
+                Analysis Pipeline
+              </span>
+              {aHasActivity && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                  Active
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-(--oc-muted)">{aCompleted.toLocaleString()} / {aTotal.toLocaleString()}</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(aPct, 100)}%`,
+                background: aHasActivity ? 'linear-gradient(90deg, var(--s2), #f59e0b)' : '#16a34a',
+              }}
+            />
+          </div>
+          <div className="mt-2.5 flex gap-5 text-[11px]">
+            {aRunning > 0 && <span className="font-bold text-amber-600">{aRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
+            {aQueued > 0 && <span className="font-bold text-(--oc-muted)">{aQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
+            <span className="font-bold text-emerald-700">{aCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
+            {aFailed > 0 && <span className="font-bold text-rose-600">{aFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
           <p className="text-xs text-(--oc-muted)">
             Qualify prospects with AI classification · {companies?.total != null ? `${companies.total.toLocaleString()} companies` : '—'}
           </p>
         </div>
+        {/* Search */}
+        <div className="relative">
+          <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search domains…"
+            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white"
+            style={{ width: 180 }}
+          />
+        </div>
         <button
           type="button"
           onClick={onOpenPromptLibrary}
-          className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition"
+          className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap"
         >
           {selectedPrompt ? `Prompt: ${selectedPrompt.name}` : 'Select prompt…'}
         </button>
@@ -190,9 +263,9 @@ export function S2AIDecisionView({
                   className="cursor-pointer"
                 />
               </th>
-              <th className="p-3 text-left font-semibold">Domain</th>
-              <th className="p-3 text-left font-semibold">Decision</th>
-              <th className="p-3 text-left font-semibold">Confidence</th>
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Confidence" field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
@@ -217,7 +290,17 @@ export function S2AIDecisionView({
                     className="cursor-pointer"
                   />
                 </td>
-                <td className="p-3 font-medium">{c.domain}</td>
+                <td className="p-3">
+                  <a
+                    href={c.normalized_url || c.raw_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-[12px] font-medium hover:underline"
+                    style={{ color: 'var(--s2)' }}
+                  >
+                    {c.domain}
+                  </a>
+                </td>
                 <td className="p-3">
                   {(c.feedback_manual_label ?? c.latest_decision) ? (
                     <Badge className={decisionBgClass(c.feedback_manual_label ?? c.latest_decision)}>
@@ -245,6 +328,15 @@ export function S2AIDecisionView({
                     >
                       Review
                     </button>
+                    {c.latest_scrape_job_id && (
+                      <button
+                        type="button"
+                        onClick={() => onViewMarkdown(c)}
+                        className="rounded-lg border border-(--oc-border) px-2 py-1 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
+                      >
+                        Markdown
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

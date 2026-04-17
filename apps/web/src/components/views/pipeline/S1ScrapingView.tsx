@@ -3,6 +3,7 @@ import type { CompanyList, CompanyListItem, StatsResponse } from '../../../lib/t
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
+import { SortableHeader } from '../../ui/SortableHeader'
 
 type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed'
 
@@ -30,6 +31,9 @@ interface S1ScrapingViewProps {
   onOpenDiagnostics: (company: CompanyListItem) => void
   onResetStuck: () => void
   onDrainQueue: () => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
 }
 
 const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
@@ -42,10 +46,12 @@ const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
 
 function scrapeBadgeClass(status: string): string {
   const s = status.toLowerCase()
-  if (s === 'succeeded' || s === 'completed') return 'bg-emerald-50 text-emerald-800'
+  if (s === 'completed') return 'bg-emerald-50 text-emerald-800'
   if (s === 'running') return 'bg-blue-50 text-blue-800'
-  if (s === 'queued') return 'bg-amber-50 text-amber-800'
-  if (s === 'failed' || s === 'dead') return 'bg-rose-50 text-rose-800'
+  if (s === 'queued' || s === 'created') return 'bg-amber-50 text-amber-800'
+  if (s === 'failed' || s === 'dead' || s === 'step1_failed') return 'bg-rose-50 text-rose-800'
+  if (s === 'cancelled') return 'bg-slate-100 text-slate-500'
+  if (s === 'site_unavailable') return 'bg-orange-50 text-orange-800'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -73,17 +79,23 @@ export function S1ScrapingView({
   onOpenDiagnostics,
   onResetStuck,
   onDrainQueue,
+  sortBy,
+  sortDir,
+  onSort,
 }: S1ScrapingViewProps) {
   const [subFilter, setSubFilter] = useState<ScrapeSubFilter>('pending')
+  const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
 
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
+    if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
     if (!letterOk) return false
-    if (subFilter === 'pending') return !c.latest_scrape_status || c.latest_scrape_status === 'none'
-    if (subFilter === 'active') return c.latest_scrape_status === 'queued' || c.latest_scrape_status === 'running'
-    if (subFilter === 'done') return !!c.latest_scrape_terminal && c.latest_scrape_status !== 'failed' && c.latest_scrape_status !== 'dead'
-    if (subFilter === 'failed') return c.latest_scrape_status === 'failed' || c.latest_scrape_status === 'dead'
+    const s = c.latest_scrape_status?.toLowerCase() ?? ''
+    if (subFilter === 'pending') return !s || s === 'none'
+    if (subFilter === 'active') return s === 'queued' || s === 'created' || s === 'running'
+    if (subFilter === 'done') return s === 'completed'
+    if (subFilter === 'failed') return s === 'failed' || s === 'dead' || s === 'step1_failed' || s === 'site_unavailable' || s === 'cancelled'
     return true
   })
 
@@ -92,15 +104,96 @@ export function S1ScrapingView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
+  // Pipeline progress from stats
+  const scrape = stats?.scrape
+  const running = scrape?.running ?? 0
+  const queued = scrape?.queued ?? 0
+  const completed = scrape?.completed ?? 0
+  const failed = scrape?.failed ?? 0
+  const total = scrape?.total ?? 0
+  const pctDone = scrape?.pct_done ?? 0
+  const hasActivity = running > 0 || queued > 0
+
   return (
     <div className="space-y-3">
+      {/* Pipeline progress banner */}
+      {scrape && (hasActivity || completed > 0) && (
+        <div className="rounded-2xl border border-(--oc-border) bg-white p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
+                Scraping Pipeline
+              </span>
+              {hasActivity && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                  Active
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-(--oc-muted)">
+              {completed.toLocaleString()} / {total.toLocaleString()}
+            </span>
+          </div>
+          {/* Progress track */}
+          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(pctDone, 100)}%`,
+                background: hasActivity
+                  ? 'linear-gradient(90deg, var(--s1), #3b82f6)'
+                  : '#16a34a',
+              }}
+            />
+          </div>
+          {/* Stat row */}
+          <div className="mt-2.5 flex gap-5 text-[11px]">
+            {running > 0 && (
+              <span className="font-bold text-amber-600">{running.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>
+            )}
+            {queued > 0 && (
+              <span className="font-bold text-(--oc-muted)">{queued.toLocaleString()} <span className="font-normal">queued</span></span>
+            )}
+            <span className="font-bold text-emerald-700">{completed.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
+            {failed > 0 && (
+              <span className="font-bold text-rose-600">{failed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>
+            )}
+            {scrape.stuck_count > 0 && (
+              <button
+                type="button"
+                onClick={onResetStuck}
+                disabled={isResettingStuck}
+                className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50"
+              >
+                {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
           <p className="text-xs text-(--oc-muted)">
             Web content extraction · {companies?.total != null ? `${companies.total.toLocaleString()} companies` : '—'}
           </p>
+        </div>
+        {/* Search */}
+        <div className="relative">
+          <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search domains…"
+            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white"
+            style={{ width: 180 }}
+          />
         </div>
       </div>
 
@@ -158,7 +251,7 @@ export function S1ScrapingView({
       <div className="oc-panel overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-(--oc-border) text-xs text-(--oc-muted)">
+            <tr className="border-b border-(--oc-border) text-[10px] uppercase tracking-wider text-(--oc-muted)">
               <th className="w-8 p-3">
                 <input
                   type="checkbox"
@@ -170,8 +263,8 @@ export function S1ScrapingView({
                   className="cursor-pointer"
                 />
               </th>
-              <th className="p-3 text-left font-semibold">Domain</th>
-              <th className="p-3 text-left font-semibold">Scrape status</th>
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Scrape status" field="scrape_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
@@ -198,10 +291,10 @@ export function S1ScrapingView({
                 </td>
                 <td className="p-3">
                   <a
-                    href={c.raw_url}
+                    href={c.normalized_url || c.raw_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-medium hover:underline"
+                    className="font-mono text-[12px] font-medium hover:underline"
                     style={{ color: 'var(--s1)' }}
                   >
                     {c.domain}
@@ -243,18 +336,10 @@ export function S1ScrapingView({
         </table>
       </div>
 
-      {/* Pipeline operations panel */}
+      {/* Pipeline ops (drain queue) */}
       {stats && (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-(--oc-border) bg-white p-3">
           <p className="mr-2 text-xs font-bold text-(--oc-muted)">Pipeline ops</p>
-          <button
-            type="button"
-            onClick={onResetStuck}
-            disabled={isResettingStuck || stats.scrape.stuck_count === 0}
-            className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-bold transition hover:border-(--oc-accent) hover:text-(--oc-accent-ink) disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isResettingStuck ? 'Resetting…' : `Reset Stuck (${stats.scrape.stuck_count})`}
-          </button>
           <button
             type="button"
             onClick={onDrainQueue}

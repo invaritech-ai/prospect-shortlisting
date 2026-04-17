@@ -7,6 +7,7 @@ import {
   fetchContactsForCompany,
   fetchContactsForCompanyApollo,
   getCompaniesExportUrl,
+  getContactsExportUrl,
   getCompanyCounts,
   getContactCounts,
   getStats,
@@ -405,6 +406,9 @@ function App() {
             }}
             onResetStuck={() => void onResetStuck()}
             onDrainQueue={() => void onDrainQueue()}
+            sortBy={pipeline.pipelineSortBy}
+            sortDir={pipeline.pipelineSortDir}
+            onSort={pipeline.onPipelineSort}
           />
         )}
 
@@ -422,6 +426,7 @@ function App() {
             selectedPrompt={promptMgmt.selectedPrompt}
             recentRuns={recentRuns}
             analysisActionState={analysisActionState}
+            stats={stats}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -431,7 +436,15 @@ function App() {
             onAnalyzeSelected={pipeline.onPipelineAnalyzeSelected}
             onClassifyOne={(c) => void onClassify(c)}
             onReviewCompany={(c) => void panels.openCompanyReview(c)}
+            onViewMarkdown={(c) => {
+              if (c.latest_scrape_job_id) {
+                void panels.openMarkdownDrawer({ id: c.latest_scrape_job_id } as ScrapeJobRead)
+              }
+            }}
             onOpenPromptLibrary={promptMgmt.openPromptSheet}
+            sortBy={pipeline.pipelineSortBy}
+            sortDir={pipeline.pipelineSortDir}
+            onSort={pipeline.onPipelineSort}
           />
         )}
 
@@ -445,6 +458,7 @@ function App() {
             isLoading={pipeline.isPipelineLoading}
             isFetching={pipeline.isPipelineFetching}
             isSelectingAll={pipeline.isPipelineSelectingAll}
+            contactCounts={contactCounts}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -456,28 +470,34 @@ function App() {
             }
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onOpenTitleRules={() => setIsTitleRulesOpen(true)}
+            sortBy={pipeline.pipelineSortBy}
+            sortDir={pipeline.pipelineSortDir}
+            onSort={pipeline.onPipelineSort}
           />
         )}
 
         {activeView === 's4-validation' && (
           <S4ValidationView
-            companies={pipeline.s4Companies}
+            contacts={pipeline.s4Contacts}
             letterCounts={pipeline.s4LetterCounts}
             activeLetters={pipeline.s4ActiveLetters}
-            selectedCompanyIds={pipeline.s4SelectedCompanyIds}
-            totalMatching={pipeline.s4Companies?.total ?? null}
+            selectedContactIds={pipeline.s4SelectedContactIds}
+            totalMatching={pipeline.s4Contacts?.total ?? null}
             contactCounts={contactCounts}
             isLoading={pipeline.isS4Loading}
             isValidating={pipeline.isS4Validating}
             isSelectingAll={false}
-            exportUrl={getCompaniesExportUrl()}
+            exportUrl={getContactsExportUrl()}
             onToggleLetter={pipeline.onS4ToggleLetter}
             onClearLetters={pipeline.onS4ClearLetters}
-            onToggleCompany={pipeline.onS4ToggleCompany}
+            onToggleContact={pipeline.onS4ToggleContact}
             onToggleAll={pipeline.onS4ToggleAll}
-            onSelectAllMatching={() => { /* TODO: implement select-all for S4 */ }}
+            onSelectAllMatching={() => { /* TODO: bulk select S4 contacts */ }}
             onClearSelection={pipeline.onS4ClearSelection}
             onValidateSelected={pipeline.onS4ValidateSelected}
+            sortBy={pipeline.s4SortBy}
+            sortDir={pipeline.s4SortDir}
+            onSort={pipeline.onS4Sort}
           />
         )}
       </AppShell>
