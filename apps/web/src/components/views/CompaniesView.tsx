@@ -499,7 +499,7 @@ function CompanyCard({
   const isScraping = item.latest_scrape_terminal === false
   const isAnalysing = item.latest_analysis_terminal === false
   const canClassify = !!selectedPrompt?.enabled && item.pipeline_stage === 'scraped' && !isAnalysing
-  const canFetchContacts = item.pipeline_stage === 'contact_ready'
+  const canFetchContacts = true
 
   const handleFetchContacts = async () => {
     setIsFetchingContacts(true)
@@ -587,7 +587,7 @@ function CompanyCard({
           onClick={() => void handleFetchContacts()}
           loading={isFetchingContacts}
           disabled={!canFetchContacts}
-          title={canFetchContacts ? 'Fetch contacts via Snov.io' : 'Only contact-ready companies can fetch contacts'}
+          title="Fetch contacts via Snov.io"
         >
           <IconUsers size={13} />
           Snov
@@ -598,7 +598,7 @@ function CompanyCard({
           onClick={() => void handleFetchContactsApollo()}
           loading={isFetchingContactsApollo}
           disabled={!canFetchContacts}
-          title={canFetchContacts ? 'Fetch contacts via Apollo' : 'Only contact-ready companies can fetch contacts'}
+          title="Fetch contacts via Apollo"
         >
           <IconUsers size={13} />
           Apollo
@@ -870,7 +870,7 @@ export function CompaniesView({
                   const isScraping = item.latest_scrape_terminal === false
                   const isAnalysing = item.latest_analysis_terminal === false
                   const canClassify = !!selectedPrompt?.enabled && item.pipeline_stage === 'scraped' && !isAnalysing
-                  const canFetchContacts = item.pipeline_stage === 'contact_ready'
+                  const canFetchContacts = true
 
                   return (
                     <tr key={item.id}>
@@ -955,7 +955,7 @@ export function CompaniesView({
                             size="xs"
                             onClick={() => void onFetchContacts(item)}
                             disabled={!canFetchContacts}
-                            title={canFetchContacts ? 'Fetch contacts via Snov.io' : 'Only contact-ready companies can fetch contacts'}
+                            title="Fetch contacts via Snov.io"
                           >
                             <IconUsers size={13} />
                             {item.contact_count > 0 ? item.contact_count : 'Snov'}
@@ -965,7 +965,7 @@ export function CompaniesView({
                             size="xs"
                             onClick={() => void onFetchContactsApollo(item)}
                             disabled={!canFetchContacts}
-                            title={canFetchContacts ? 'Fetch contacts via Apollo' : 'Only contact-ready companies can fetch contacts'}
+                            title="Fetch contacts via Apollo"
                           >
                             <IconUsers size={13} />
                             Apollo

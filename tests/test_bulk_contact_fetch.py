@@ -69,7 +69,7 @@ def test_bulk_fetch_both_enqueues_snov_and_apollo(sqlite_session: Session) -> No
     assert apollo.call_count == 1
 
 
-def test_bulk_fetch_skips_non_contact_ready(sqlite_session: Session) -> None:
+def test_bulk_fetch_allows_non_contact_ready(sqlite_session: Session) -> None:
     c = _company(sqlite_session, domain="skip.example", stage=CompanyPipelineStage.UPLOADED)
     sqlite_session.commit()
     with patch("app.api.routes.contacts.fetch_contacts.delay") as mock:
@@ -77,8 +77,8 @@ def test_bulk_fetch_skips_non_contact_ready(sqlite_session: Session) -> None:
             BulkContactFetchRequest(company_ids=[c.id], source="snov"),
             session=sqlite_session,
         )
-    assert r.queued_count == 0
-    assert mock.call_count == 0
+    assert r.queued_count == 1
+    assert mock.call_count == 1
 
 
 def test_bulk_fetch_missing_ids_raises_404(sqlite_session: Session) -> None:

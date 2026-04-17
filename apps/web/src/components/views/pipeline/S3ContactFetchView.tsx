@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, ContactCountsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, ContactCountsResponse, DecisionFilter } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -10,12 +10,14 @@ interface S3ContactFetchViewProps {
   companies: CompanyList | null
   letterCounts: Record<string, number>
   activeLetters: Set<string>
+  decisionFilter: DecisionFilter
   selectedIds: string[]
   totalMatching: number | null
   isLoading: boolean
   isFetching: boolean
   isSelectingAll: boolean
   contactCounts: ContactCountsResponse | null
+  onDecisionFilterChange: (filter: DecisionFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -30,9 +32,7 @@ interface S3ContactFetchViewProps {
   onSort: (field: string) => void
 }
 
-type DecisionSubFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap'
-
-const DECISION_FILTERS: Array<{ value: DecisionSubFilter; label: string }> = [
+const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'unlabeled', label: 'Unlabeled' },
   { value: 'possible', label: 'Possible' },
@@ -50,12 +50,14 @@ export function S3ContactFetchView({
   companies,
   letterCounts,
   activeLetters,
+  decisionFilter,
   selectedIds,
   totalMatching,
   isLoading,
   isFetching,
   isSelectingAll,
   contactCounts,
+  onDecisionFilterChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -70,19 +72,12 @@ export function S3ContactFetchView({
   onSort,
 }: S3ContactFetchViewProps) {
   const [search, setSearch] = useState('')
-  const [decisionSub, setDecisionSub] = useState<DecisionSubFilter>('all')
   const selectedSet = new Set(selectedIds)
 
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
     if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
-    if (!letterOk) return false
-    const decision = (c.feedback_manual_label ?? c.latest_decision ?? '').toLowerCase()
-    if (decisionSub === 'unlabeled') return !decision
-    if (decisionSub === 'possible') return decision === 'possible'
-    if (decisionSub === 'unknown') return decision === 'unknown'
-    if (decisionSub === 'crap') return decision === 'crap'
-    return true
+    return letterOk
   })
 
   const allVisibleSelected =
@@ -90,9 +85,9 @@ export function S3ContactFetchView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
-  const isSubFiltered = decisionSub !== 'all' || search !== ''
-  const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
-  const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
+  const isSearchFiltered = search !== ''
+  const displayCount = isSearchFiltered ? visibleCompanies.length : (companies?.total ?? 0)
+  const effectiveTotalMatching = isSearchFiltered ? visibleCompanies.length : totalMatching
 
   return (
     <div className="space-y-3">
@@ -101,7 +96,7 @@ export function S3ContactFetchView({
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
           <p className="text-xs" style={{ color: 'var(--s3-text)', opacity: 0.7 }}>
-            Find contacts at qualified companies · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+            Find contacts at any company · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
         {/* Search */}
@@ -162,10 +157,10 @@ export function S3ContactFetchView({
           <button
             key={value}
             type="button"
-            onClick={() => setDecisionSub(value)}
+            onClick={() => onDecisionFilterChange(value)}
             className="rounded-full border px-3 py-1 text-xs font-medium transition"
             style={
-              decisionSub === value
+              decisionFilter === value
                 ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
                 : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
             }
@@ -181,7 +176,7 @@ export function S3ContactFetchView({
         selectedCount={selectedIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 && !isSearchFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >
@@ -232,8 +227,16 @@ export function S3ContactFetchView({
               <tr>
                 <td colSpan={5} className="px-6 py-10 text-center">
                   <div className="space-y-1">
-                    <p className="text-sm font-semibold text-(--oc-text)">No classified companies yet</p>
-                    <p className="text-xs text-(--oc-muted)">Run AI analysis in S2 first to qualify prospects.</p>
+                    <p className="text-sm font-semibold text-(--oc-text)">
+                      {decisionFilter === 'all'
+                        ? 'No companies yet'
+                        : `No companies match "${decisionFilter}"`}
+                    </p>
+                    <p className="text-xs text-(--oc-muted)">
+                      {decisionFilter === 'all'
+                        ? 'Upload companies first or broaden the current filters.'
+                        : 'Try another decision filter or clear the current search.'}
+                    </p>
                   </div>
                 </td>
               </tr>

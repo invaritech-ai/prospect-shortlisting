@@ -143,16 +143,15 @@ def _enqueue_contact_fetches(
     companies: list[Company],
     provider: str = "snov",
 ) -> ContactFetchResult:
-    eligible_companies = [company for company in companies if company.pipeline_stage == CompanyPipelineStage.CONTACT_READY]
-    if not eligible_companies:
+    if not companies:
         return ContactFetchResult(
-            requested_count=len(companies),
+            requested_count=0,
             queued_count=0,
             already_fetching_count=0,
             queued_job_ids=[],
         )
 
-    company_ids = [c.id for c in eligible_companies]
+    company_ids = [c.id for c in companies]
     active_company_ids: set[UUID] = set(
         session.exec(
             select(ContactFetchJob.company_id).where(
@@ -164,7 +163,7 @@ def _enqueue_contact_fetches(
     )
 
     jobs_to_create: list[ContactFetchJob] = []
-    for company in eligible_companies:
+    for company in companies:
         if company.id in active_company_ids:
             continue
         jobs_to_create.append(ContactFetchJob(company_id=company.id, provider=provider))

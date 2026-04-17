@@ -4,7 +4,7 @@ import type { CompanyStageFilter, DecisionFilter } from './types'
 const PIPELINE_STAGE_MAP: Partial<Record<ActiveView, CompanyStageFilter>> = {
   's1-scraping': 'all',
   's2-ai': 'has_scrape',
-  's3-contacts': 'classified',
+  's3-contacts': 'all',
 }
 
 export function getPipelineCompanyQuery(
@@ -16,6 +16,6 @@ export function getPipelineCompanyQuery(
 
   return {
     stageFilter,
-    decisionFilter: activeView === 's2-ai' ? decisionFilter : 'all',
+    decisionFilter: activeView === 's1-scraping' ? 'all' : decisionFilter,
   }
 }

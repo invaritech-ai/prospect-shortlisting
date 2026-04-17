@@ -17,13 +17,13 @@ test('non-AI pipeline views always use the all decision filter', () => {
   })
 })
 
-test('S3 contact fetch uses contact-ready companies and preserves the decision filter', () => {
+test('S3 contact fetch uses all companies and preserves the decision filter', () => {
   assert.deepEqual(getPipelineCompanyQuery('s3-contacts', 'crap'), {
-    stageFilter: 'contact_ready',
+    stageFilter: 'all',
     decisionFilter: 'crap',
   })
   assert.deepEqual(getPipelineCompanyQuery('s3-contacts', 'possible'), {
-    stageFilter: 'contact_ready',
+    stageFilter: 'all',
     decisionFilter: 'possible',
   })
 })
