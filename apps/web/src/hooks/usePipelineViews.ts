@@ -20,7 +20,7 @@ import { parseApiError } from '../lib/utils'
 
 const PIPELINE_STAGE_MAP: Partial<Record<ActiveView, CompanyStageFilter>> = {
   's1-scraping': 'all',
-  's2-ai': 'scraped',
+  's2-ai': 'has_scrape',
   's3-contacts': 'classified',
 }
 

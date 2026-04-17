@@ -115,7 +115,7 @@ def _latest_contact_fetch_subquery():
 
 _ALLOWED_DECISION_FILTERS = frozenset({"all", "unlabeled", "possible", "unknown", "crap"})
 _ALLOWED_SCRAPE_FILTERS = frozenset({"all", "done", "failed", "none"})
-_ALLOWED_STAGE_FILTERS = frozenset({"all", "uploaded", "scraped", "classified", "contact_ready"})
+_ALLOWED_STAGE_FILTERS = frozenset({"all", "uploaded", "scraped", "classified", "contact_ready", "has_scrape"})
 
 
 def _validate_filters(decision_filter: str, scrape_filter: str, stage_filter: str) -> tuple[str, str, str]:
@@ -153,6 +153,8 @@ def _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter: str):
 def _apply_stage_filter(stmt, normalized_stage_filter: str):
     if normalized_stage_filter == "all":
         return stmt
+    if normalized_stage_filter == "has_scrape":
+        return stmt.where(col(Company.pipeline_stage).in_(["scraped", "classified", "contact_ready"]))
     return stmt.where(col(Company.pipeline_stage) == normalized_stage_filter)
 
 

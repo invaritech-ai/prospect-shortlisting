@@ -40,7 +40,7 @@ export type CompanyRead = {
 }
 
 export type CompanyStage = 'uploaded' | 'scraped' | 'classified' | 'contact_ready'
-export type CompanyStageFilter = 'all' | CompanyStage
+export type CompanyStageFilter = 'all' | CompanyStage | 'has_scrape'
 
 export type CompanyListItem = {
   id: string

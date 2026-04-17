@@ -1,12 +1,11 @@
 import type { DragEvent, FormEvent } from 'react'
-import type { CompanyCounts, ContactCountsResponse, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
+import type { CompanyCounts, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
 import { IconUpload } from '../../ui/icons'
 
 type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-validation'
 
 interface DashboardViewProps {
   companyCounts: CompanyCounts | null
-  contactCounts: ContactCountsResponse | null
   stats: StatsResponse | null
   recentScrapeJobs: ScrapeJobRead[]
   recentRuns: RunRead[]
@@ -32,7 +31,6 @@ interface StageCardDef {
 
 export function DashboardView({
   companyCounts,
-  contactCounts,
   stats,
   recentScrapeJobs,
   recentRuns,

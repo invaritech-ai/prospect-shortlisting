@@ -6,7 +6,6 @@ import {
   drainQueue,
   fetchContactsForCompany,
   fetchContactsForCompanyApollo,
-  getCompaniesExportUrl,
   getContactsExportUrl,
   getCompanyCounts,
   getContactCounts,
@@ -14,7 +13,6 @@ import {
   listRuns,
   listScrapeJobs,
   resetStuckJobs,
-  resetStuckAnalysisJobs,
   scrapeAllCompanies,
   uploadFile,
 } from './lib/api'
@@ -91,7 +89,6 @@ function App() {
   // ── Pipeline ops ──────────────────────────────────────────────────────────
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
-  const [isResettingStuckAnalysis, setIsResettingStuckAnalysis] = useState(false)
 
   // ── Confirm dialogs ───────────────────────────────────────────────────────
   const [bulkConfirm, setBulkConfirm] = useState<null | 'scrape_all' | 'classify_all'>(null)
@@ -292,17 +289,6 @@ function App() {
     finally { setIsResettingStuck(false) }
   }
 
-  const onResetStuckAnalysis = async () => {
-    setError(''); setNotice(''); setIsResettingStuckAnalysis(true)
-    try {
-      const result = await resetStuckAnalysisJobs()
-      void loadStats()
-      pipeline.refreshPipelineView()
-      setNotice(`Reset and re-queued ${result.reset_count.toLocaleString()} stuck analysis jobs.`)
-    } catch (err) { setError(parseApiError(err)) }
-    finally { setIsResettingStuckAnalysis(false) }
-  }
-
   // ── Bulk confirm handlers ─────────────────────────────────────────────────
 
   const runScrapeAll = async () => {
@@ -347,7 +333,6 @@ function App() {
         {activeView === 'dashboard' && (
           <DashboardView
             companyCounts={companyCounts}
-            contactCounts={contactCounts}
             stats={stats}
             recentScrapeJobs={recentScrapeJobs}
             recentRuns={recentRuns}
