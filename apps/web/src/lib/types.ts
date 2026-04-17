@@ -93,6 +93,8 @@ export type CompanyList = {
 
 export type DecisionFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap'
 export type ScrapeFilter = 'all' | 'done' | 'failed' | 'none'
+export type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed'
+export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match'
 
 export type CompanyIdsResult = {
   ids: string[]

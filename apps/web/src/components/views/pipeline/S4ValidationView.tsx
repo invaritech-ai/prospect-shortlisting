@@ -1,15 +1,13 @@
-import { useState } from 'react'
-import type { ContactCountsResponse, ContactListResponse, ProspectContactRead } from '../../../lib/types'
+import type { ContactCountsResponse, ContactListResponse, ProspectContactRead, S4VerifFilter } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
-
-type VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match'
 
 interface S4ValidationViewProps {
   contacts: ContactListResponse | null
   letterCounts: Record<string, number>
   activeLetters: Set<string>
+  verifFilter: S4VerifFilter
   selectedContactIds: string[]
   totalMatching: number | null
   contactCounts: ContactCountsResponse | null
@@ -17,6 +15,7 @@ interface S4ValidationViewProps {
   isValidating: boolean
   isSelectingAll: boolean
   exportUrl: string
+  onVerifFilterChange: (filter: S4VerifFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleContact: (id: string) => void
@@ -29,7 +28,7 @@ interface S4ValidationViewProps {
   onSort: (field: string) => void
 }
 
-const VERIF_FILTERS: Array<{ value: VerifFilter; label: string; color?: string }> = [
+const VERIF_FILTERS: Array<{ value: S4VerifFilter; label: string; color?: string }> = [
   { value: 'all', label: 'All contacts' },
   { value: 'valid', label: 'Valid', color: '#15803d' },
   { value: 'invalid', label: 'Invalid', color: '#dc2626' },
@@ -61,6 +60,7 @@ export function S4ValidationView({
   contacts,
   letterCounts,
   activeLetters,
+  verifFilter,
   selectedContactIds,
   totalMatching,
   contactCounts,
@@ -68,6 +68,7 @@ export function S4ValidationView({
   isValidating,
   isSelectingAll,
   exportUrl,
+  onVerifFilterChange,
   onToggleLetter,
   onClearLetters,
   onToggleContact,
@@ -79,20 +80,12 @@ export function S4ValidationView({
   sortDir,
   onSort,
 }: S4ValidationViewProps) {
-  const [verifFilter, setVerifFilter] = useState<VerifFilter>('all')
   const selectedSet = new Set(selectedContactIds)
 
+  // Server already applies verifFilter; client only applies letter filter
   const visibleContacts = (contacts?.items ?? []).filter((c) => {
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain?.[0]?.toLowerCase() ?? '')
-    if (!letterOk) return false
-    const vs = c.verification_status?.toLowerCase() ?? ''
-    if (verifFilter === 'valid') return vs === 'valid'
-    if (verifFilter === 'invalid') return vs === 'invalid'
-    if (verifFilter === 'catch-all') return vs === 'catch-all' || vs === 'catchall'
-    if (verifFilter === 'unverified') return !vs || vs === 'unverified'
-    if (verifFilter === 'campaign_ready') return c.pipeline_stage === 'campaign_ready'
-    if (verifFilter === 'title_match') return c.title_match
-    return true
+    return letterOk
   })
 
   const allVisibleSelected =
@@ -100,9 +93,8 @@ export function S4ValidationView({
   const someVisibleSelected =
     !allVisibleSelected && visibleContacts.some((c) => selectedSet.has(c.id))
 
-  const isSubFiltered = verifFilter !== 'all'
-  const displayCount = isSubFiltered ? visibleContacts.length : (contacts?.total ?? visibleContacts.length)
-  const effectiveTotalMatching = isSubFiltered ? visibleContacts.length : totalMatching
+  const displayCount = contacts?.total ?? visibleContacts.length
+  const effectiveTotalMatching = totalMatching
 
   return (
     <div className="space-y-3">
@@ -162,7 +154,7 @@ export function S4ValidationView({
           <button
             key={f.value}
             type="button"
-            onClick={() => setVerifFilter(f.value)}
+            onClick={() => onVerifFilterChange(f.value)}
             className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
               verifFilter === f.value
                 ? 'text-white'
@@ -186,7 +178,7 @@ export function S4ValidationView({
         selectedCount={selectedContactIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedContactIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedContactIds.length > 0 ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >
@@ -225,7 +217,7 @@ export function S4ValidationView({
 
       {!isLoading && visibleContacts.length === 0 && (
         <div className="rounded-2xl border border-(--oc-border) bg-white px-6 py-10 text-center">
-          {verifFilter === 'unverified' && contacts != null && contacts.total > 0 ? (
+          {verifFilter === 'unverified' && contacts != null && (contacts.total ?? 0) > 0 ? (
             <div className="space-y-1">
               <p className="text-sm font-semibold text-emerald-700">All contacts have been verified ✓</p>
               <p className="text-xs text-(--oc-muted)">Switch to "Valid" or "Campaign ready" to review results.</p>

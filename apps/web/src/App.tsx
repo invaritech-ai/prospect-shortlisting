@@ -367,6 +367,7 @@ function App() {
             companies={pipeline.pipelineCompanies}
             letterCounts={pipeline.pipelineLetterCounts}
             activeLetters={pipeline.pipelineActiveLetters}
+            scrapeSubFilter={pipeline.pipelineScrapeSubFilter}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
             isLoading={pipeline.isPipelineLoading}
@@ -376,6 +377,7 @@ function App() {
             isResettingStuck={isResettingStuck}
             isDrainingQueue={isDrainingQueue}
             actionState={actionState}
+            onScrapeSubFilterChange={pipeline.onPipelineScrapeSubFilterChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -470,6 +472,7 @@ function App() {
             contacts={pipeline.s4Contacts}
             letterCounts={pipeline.s4LetterCounts}
             activeLetters={pipeline.s4ActiveLetters}
+            verifFilter={pipeline.s4VerifFilter}
             selectedContactIds={pipeline.s4SelectedContactIds}
             totalMatching={pipeline.s4Contacts?.total ?? null}
             contactCounts={contactCounts}
@@ -477,6 +480,7 @@ function App() {
             isValidating={pipeline.isS4Validating}
             isSelectingAll={false}
             exportUrl={getContactsExportUrl()}
+            onVerifFilterChange={pipeline.onS4VerifFilterChange}
             onToggleLetter={pipeline.onS4ToggleLetter}
             onClearLetters={pipeline.onS4ClearLetters}
             onToggleContact={pipeline.onS4ToggleContact}

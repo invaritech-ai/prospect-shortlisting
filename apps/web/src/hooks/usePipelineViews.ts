@@ -2,10 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ActiveView } from '../lib/navigation'
 import type {
   CompanyList,
-  DecisionFilter,
   CompanyStageFilter,
   ContactListResponse,
+  ContactStageFilter,
+  DecisionFilter,
   PromptRead,
+  S4VerifFilter,
+  ScrapeFilter,
+  ScrapeSubFilter,
 } from '../lib/types'
 import {
   createRuns,
@@ -19,6 +23,31 @@ import {
 } from '../lib/api'
 import { getPipelineCompanyQuery } from '../lib/pipelineQuery'
 import { parseApiError } from '../lib/utils'
+
+// Map UI scrape sub-filter to the server-side ScrapeFilter param
+function scrapeSubToFilter(sub: ScrapeSubFilter): ScrapeFilter {
+  if (sub === 'pending') return 'none'
+  if (sub === 'done') return 'done'
+  if (sub === 'failed') return 'failed'
+  return 'all' // 'all' and 'active' — server loads all, client filters for 'active'
+}
+
+// Map S4 verification filter to listContacts params
+function verifFilterToParams(filter: S4VerifFilter): {
+  verificationStatus?: string
+  stageFilter?: ContactStageFilter
+  titleMatch?: boolean
+} {
+  switch (filter) {
+    case 'valid': return { verificationStatus: 'valid' }
+    case 'invalid': return { verificationStatus: 'invalid' }
+    case 'catch-all': return { verificationStatus: 'catch-all' }
+    case 'unverified': return { verificationStatus: 'unverified' }
+    case 'campaign_ready': return { stageFilter: 'campaign_ready' }
+    case 'title_match': return { titleMatch: true }
+    default: return {}
+  }
+}
 
 export interface UsePipelineViewsResult {
   // Full pipeline view
@@ -44,20 +73,24 @@ export interface UsePipelineViewsResult {
   isPipelineFetching: boolean
   isPipelineSelectingAll: boolean
   pipelineDecisionFilter: DecisionFilter
+  pipelineScrapeSubFilter: ScrapeSubFilter
   pipelineSortBy: string
   pipelineSortDir: 'asc' | 'desc'
   onPipelineDecisionFilterChange: (filter: DecisionFilter) => void
+  onPipelineScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
   onPipelineSort: (field: string) => void
   // S4 flat contacts
   s4Contacts: ContactListResponse | null
   s4LetterCounts: Record<string, number>
   s4ActiveLetters: Set<string>
   s4SelectedContactIds: string[]
+  s4VerifFilter: S4VerifFilter
   isS4Loading: boolean
   isS4Validating: boolean
   s4SortBy: string
   s4SortDir: 'asc' | 'desc'
   onS4Sort: (field: string) => void
+  onS4VerifFilterChange: (filter: S4VerifFilter) => void
   // S1–S3 handlers
   onPipelineToggleLetter: (l: string) => void
   onPipelineClearLetters: () => void
@@ -95,6 +128,7 @@ export function usePipelineViews(
   const [isPipelineFetching, setIsPipelineFetching] = useState(false)
   const [isPipelineSelectingAll, setIsPipelineSelectingAll] = useState(false)
   const [pipelineDecisionFilter, setPipelineDecisionFilter] = useState<DecisionFilter>('all')
+  const [pipelineScrapeSubFilter, setPipelineScrapeSubFilter] = useState<ScrapeSubFilter>('pending')
   const [pipelineSortBy, setPipelineSortBy] = useState('domain')
   const [pipelineSortDir, setPipelineSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -111,6 +145,7 @@ export function usePipelineViews(
   const [s4LetterCounts, setS4LetterCounts] = useState<Record<string, number>>({})
   const [s4ActiveLetters, setS4ActiveLetters] = useState(new Set<string>())
   const [s4SelectedContactIds, setS4SelectedContactIds] = useState<string[]>([])
+  const [s4VerifFilter, setS4VerifFilter] = useState<S4VerifFilter>('all')
   const [isS4Loading, setIsS4Loading] = useState(false)
   const [isS4Validating, setIsS4Validating] = useState(false)
   const [s4SortBy, setS4SortBy] = useState('domain')
@@ -122,14 +157,15 @@ export function usePipelineViews(
     async (
       stageFilter: CompanyStageFilter,
       decisionFilter: DecisionFilter,
+      scrapeFilter: ScrapeFilter,
       sortBy = 'domain',
       sortDir: 'asc' | 'desc' = 'asc',
     ) => {
       setIsPipelineLoading(true)
       try {
         const [companies, letterCountsData] = await Promise.all([
-          listCompanies(200, 0, decisionFilter, true, 'all', stageFilter, null, sortBy, sortDir),
-          getLetterCounts(decisionFilter, 'all', stageFilter),
+          listCompanies(200, 0, decisionFilter, true, scrapeFilter, stageFilter, null, sortBy, sortDir),
+          getLetterCounts(decisionFilter, scrapeFilter, stageFilter),
         ])
         setPipelineCompanies(companies)
         setPipelineLetterCounts(letterCountsData.counts)
@@ -142,10 +178,15 @@ export function usePipelineViews(
     [setError],
   )
 
-  const loadS4View = useCallback(async (sortBy = 'domain', sortDir: 'asc' | 'desc' = 'asc') => {
+  const loadS4View = useCallback(async (
+    sortBy = 'domain',
+    sortDir: 'asc' | 'desc' = 'asc',
+    verifFilter: S4VerifFilter = 'all',
+  ) => {
     setIsS4Loading(true)
     try {
-      const data = await listContacts({ limit: 500, sortBy, sortDir })
+      const filterParams = verifFilterToParams(verifFilter)
+      const data = await listContacts({ limit: 500, sortBy, sortDir, ...filterParams })
       setS4Contacts(data)
       const lc: Record<string, number> = {}
       for (const item of data.items) {
@@ -183,12 +224,15 @@ export function usePipelineViews(
   useEffect(() => {
     const query = getPipelineCompanyQuery(activeView, 'all')
     if (query !== null) {
+      const defaultScrapeSubFilter: ScrapeSubFilter = activeView === 's1-scraping' ? 'pending' : 'all'
+      const defaultScrapeFilter = scrapeSubToFilter(defaultScrapeSubFilter)
       setPipelineSelectedIds([])
       setPipelineActiveLetters(new Set())
       setPipelineDecisionFilter('all')
+      setPipelineScrapeSubFilter(defaultScrapeSubFilter)
       setPipelineSortBy('domain')
       setPipelineSortDir('asc')
-      void loadPipelineView(query.stageFilter, query.decisionFilter, 'domain', 'asc')
+      void loadPipelineView(query.stageFilter, query.decisionFilter, defaultScrapeFilter, 'domain', 'asc')
     } else if (activeView === 'full-pipeline') {
       setFullPipelineSelectedIds([])
       setFullPipelineActiveLetter(null)
@@ -196,9 +240,10 @@ export function usePipelineViews(
     } else if (activeView === 's4-validation') {
       setS4SelectedContactIds([])
       setS4ActiveLetters(new Set())
+      setS4VerifFilter('all')
       setS4SortBy('domain')
       setS4SortDir('asc')
-      void loadS4View('domain', 'asc')
+      void loadS4View('domain', 'asc', 'all')
     }
   }, [activeView, loadPipelineView, loadFullPipelineView, loadS4View])
 
@@ -238,11 +283,12 @@ export function usePipelineViews(
     if (query === null) return
     setIsPipelineSelectingAll(true)
     try {
+      const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
       const letters = [...pipelineActiveLetters]
       const results = await Promise.all(
         letters.length > 0
-          ? letters.map((l) => listCompanyIds(query.decisionFilter, 'all', query.stageFilter, l))
-          : [listCompanyIds(query.decisionFilter, 'all', query.stageFilter, null)],
+          ? letters.map((l) => listCompanyIds(query.decisionFilter, sf, query.stageFilter, l))
+          : [listCompanyIds(query.decisionFilter, sf, query.stageFilter, null)],
       )
       setPipelineSelectedIds([...new Set(results.flatMap((r) => r.ids.map((id) => String(id))))])
     } catch (err) {
@@ -250,7 +296,7 @@ export function usePipelineViews(
     } finally {
       setIsPipelineSelectingAll(false)
     }
-  }, [activeView, pipelineActiveLetters, pipelineDecisionFilter, setError])
+  }, [activeView, pipelineActiveLetters, pipelineDecisionFilter, pipelineScrapeSubFilter, setError])
 
   const onPipelineSelectAllMatching = useCallback(() => {
     void selectAllMatchingAsync()
@@ -264,9 +310,22 @@ export function usePipelineViews(
       if (query === null) return
       setPipelineDecisionFilter(decisionFilter)
       setPipelineSelectedIds([])
-      void loadPipelineView(query.stageFilter, query.decisionFilter, pipelineSortBy, pipelineSortDir)
+      const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
+      void loadPipelineView(query.stageFilter, query.decisionFilter, sf, pipelineSortBy, pipelineSortDir)
     },
-    [activeView, loadPipelineView, pipelineSortBy, pipelineSortDir],
+    [activeView, pipelineScrapeSubFilter, loadPipelineView, pipelineSortBy, pipelineSortDir],
+  )
+
+  const onPipelineScrapeSubFilterChange = useCallback(
+    (sub: ScrapeSubFilter) => {
+      const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
+      if (query === null) return
+      setPipelineScrapeSubFilter(sub)
+      setPipelineSelectedIds([])
+      const sf = scrapeSubToFilter(sub)
+      void loadPipelineView(query.stageFilter, query.decisionFilter, sf, pipelineSortBy, pipelineSortDir)
+    },
+    [activeView, pipelineDecisionFilter, loadPipelineView, pipelineSortBy, pipelineSortDir],
   )
 
   const onPipelineSort = useCallback(
@@ -277,9 +336,10 @@ export function usePipelineViews(
         pipelineSortBy === field ? (pipelineSortDir === 'asc' ? 'desc' : 'asc') : 'asc'
       setPipelineSortBy(field)
       setPipelineSortDir(newDir)
-      void loadPipelineView(query.stageFilter, query.decisionFilter, field, newDir)
+      const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
+      void loadPipelineView(query.stageFilter, query.decisionFilter, sf, field, newDir)
     },
-    [activeView, pipelineDecisionFilter, pipelineSortBy, pipelineSortDir, loadPipelineView],
+    [activeView, pipelineDecisionFilter, pipelineScrapeSubFilter, pipelineSortBy, pipelineSortDir, loadPipelineView],
   )
 
   const scrapeSelectedAsync = useCallback(async () => {
@@ -361,10 +421,28 @@ export function usePipelineViews(
 
   const refreshPipelineView = useCallback(() => {
     const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
-    if (query !== null) void loadPipelineView(query.stageFilter, query.decisionFilter, pipelineSortBy, pipelineSortDir)
-    else if (activeView === 'full-pipeline') void loadFullPipelineView(fullPipelineActiveLetter)
-    else if (activeView === 's4-validation') void loadS4View(s4SortBy, s4SortDir)
-  }, [activeView, pipelineDecisionFilter, loadPipelineView, loadFullPipelineView, fullPipelineActiveLetter, loadS4View, pipelineSortBy, pipelineSortDir, s4SortBy, s4SortDir])
+    if (query !== null) {
+      const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
+      void loadPipelineView(query.stageFilter, query.decisionFilter, sf, pipelineSortBy, pipelineSortDir)
+    } else if (activeView === 'full-pipeline') {
+      void loadFullPipelineView(fullPipelineActiveLetter)
+    } else if (activeView === 's4-validation') {
+      void loadS4View(s4SortBy, s4SortDir, s4VerifFilter)
+    }
+  }, [
+    activeView,
+    pipelineDecisionFilter,
+    pipelineScrapeSubFilter,
+    loadPipelineView,
+    loadFullPipelineView,
+    fullPipelineActiveLetter,
+    loadS4View,
+    pipelineSortBy,
+    pipelineSortDir,
+    s4SortBy,
+    s4SortDir,
+    s4VerifFilter,
+  ])
 
   // ── Full pipeline handlers ─────────────────────────────────────────────────
 
@@ -443,15 +521,24 @@ export function usePipelineViews(
 
   const onS4ClearSelection = useCallback(() => setS4SelectedContactIds([]), [])
 
+  const onS4VerifFilterChange = useCallback(
+    (filter: S4VerifFilter) => {
+      setS4VerifFilter(filter)
+      setS4SelectedContactIds([])
+      void loadS4View(s4SortBy, s4SortDir, filter)
+    },
+    [loadS4View, s4SortBy, s4SortDir],
+  )
+
   const onS4Sort = useCallback(
     (field: string) => {
       const newDir: 'asc' | 'desc' =
         s4SortBy === field ? (s4SortDir === 'asc' ? 'desc' : 'asc') : 'asc'
       setS4SortBy(field)
       setS4SortDir(newDir)
-      void loadS4View(field, newDir)
+      void loadS4View(field, newDir, s4VerifFilter)
     },
-    [s4SortBy, s4SortDir, loadS4View],
+    [s4SortBy, s4SortDir, s4VerifFilter, loadS4View],
   )
 
   const validateSelectedAsync = useCallback(async () => {
@@ -496,19 +583,23 @@ export function usePipelineViews(
     isPipelineFetching,
     isPipelineSelectingAll,
     pipelineDecisionFilter,
+    pipelineScrapeSubFilter,
     pipelineSortBy,
     pipelineSortDir,
     onPipelineDecisionFilterChange,
+    onPipelineScrapeSubFilterChange,
     onPipelineSort,
     s4Contacts,
     s4LetterCounts,
     s4ActiveLetters,
     s4SelectedContactIds,
+    s4VerifFilter,
     isS4Loading,
     isS4Validating,
     s4SortBy,
     s4SortDir,
     onS4Sort,
+    onS4VerifFilterChange,
     onPipelineToggleLetter,
     onPipelineClearLetters,
     onPipelineToggleRow,

@@ -1,16 +1,15 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { SortableHeader } from '../../ui/SortableHeader'
 
-type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed'
-
 interface S1ScrapingViewProps {
   companies: CompanyList | null
   letterCounts: Record<string, number>
   activeLetters: Set<string>
+  scrapeSubFilter: ScrapeSubFilter
   selectedIds: string[]
   totalMatching: number | null
   isLoading: boolean
@@ -20,6 +19,7 @@ interface S1ScrapingViewProps {
   isResettingStuck: boolean
   isDrainingQueue: boolean
   actionState: Record<string, string>
+  onScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -59,6 +59,7 @@ export function S1ScrapingView({
   companies,
   letterCounts,
   activeLetters,
+  scrapeSubFilter,
   selectedIds,
   totalMatching,
   isLoading,
@@ -68,6 +69,7 @@ export function S1ScrapingView({
   isResettingStuck,
   isDrainingQueue,
   actionState,
+  onScrapeSubFilterChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -83,19 +85,19 @@ export function S1ScrapingView({
   sortDir,
   onSort,
 }: S1ScrapingViewProps) {
-  const [subFilter, setSubFilter] = useState<ScrapeSubFilter>('pending')
   const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
 
+  // 'active' is the only filter that can't be done server-side (no API equivalent),
+  // so we client-filter on the loaded page. All other filters are applied server-side.
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
     if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
     if (!letterOk) return false
-    const s = c.latest_scrape_status?.toLowerCase() ?? ''
-    if (subFilter === 'pending') return !s || s === 'none'
-    if (subFilter === 'active') return s === 'queued' || s === 'created' || s === 'running'
-    if (subFilter === 'done') return s === 'completed'
-    if (subFilter === 'failed') return s === 'failed' || s === 'dead' || s === 'step1_failed' || s === 'site_unavailable' || s === 'cancelled'
+    if (scrapeSubFilter === 'active') {
+      const s = c.latest_scrape_status?.toLowerCase() ?? ''
+      return s === 'queued' || s === 'created' || s === 'running'
+    }
     return true
   })
 
@@ -104,10 +106,10 @@ export function S1ScrapingView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
-  // When a client-side sub-filter or search is active, use the visible count
-  const isSubFiltered = subFilter !== 'all' || search !== ''
-  const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
-  const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
+  // Only client-side sub-filters count as "sub-filtered" for the total count/select-all logic
+  const isClientFiltered = scrapeSubFilter === 'active' || search !== ''
+  const displayCount = isClientFiltered ? visibleCompanies.length : (companies?.total ?? 0)
+  const effectiveTotalMatching = isClientFiltered ? visibleCompanies.length : totalMatching
 
   // Pipeline progress from stats
   const scrape = stats?.scrape
@@ -217,13 +219,13 @@ export function S1ScrapingView({
           <button
             key={f.value}
             type="button"
-            onClick={() => setSubFilter(f.value)}
+            onClick={() => onScrapeSubFilterChange(f.value)}
             className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
-              subFilter === f.value
+              scrapeSubFilter === f.value
                 ? 'text-white'
                 : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'
             }`}
-            style={subFilter === f.value ? { backgroundColor: 'var(--s1)' } : {}}
+            style={scrapeSubFilter === f.value ? { backgroundColor: 'var(--s1)' } : {}}
           >
             {f.label}
           </button>
@@ -237,7 +239,7 @@ export function S1ScrapingView({
         selectedCount={selectedIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 && !isClientFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >
@@ -285,12 +287,12 @@ export function S1ScrapingView({
             {!isLoading && visibleCompanies.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-6 py-10 text-center">
-                  {subFilter === 'pending' && companies != null ? (
+                  {scrapeSubFilter === 'pending' && companies != null ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-emerald-700">All companies have been scraped ✓</p>
                       <p className="text-xs text-(--oc-muted)">Switch to "All" or "Done" to review results.</p>
                     </div>
-                  ) : subFilter === 'failed' ? (
+                  ) : scrapeSubFilter === 'failed' ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-(--oc-text)">No failed scrapes</p>
                       <p className="text-xs text-(--oc-muted)">All scrapes completed successfully.</p>
