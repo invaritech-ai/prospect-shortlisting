@@ -178,6 +178,7 @@ export type PromptRead = {
   enabled: boolean
   prompt_text: string
   created_at: string
+  run_count: number
 }
 
 export type PromptCreate = {
@@ -407,6 +408,7 @@ export type ContactVerifyResult = {
 export type TitleMatchRuleRead = {
   id: string
   rule_type: 'include' | 'exclude'
+  match_type: 'keyword' | 'regex' | 'seniority'
   keywords: string
   created_at: string
 }
@@ -414,6 +416,27 @@ export type TitleMatchRuleRead = {
 export type TitleMatchRuleCreate = {
   rule_type: 'include' | 'exclude'
   keywords: string
+  match_type?: 'keyword' | 'regex' | 'seniority'
+}
+
+export type TitleTestResult = {
+  matched: boolean
+  matching_rules: string[]
+  excluded_by: string[]
+  normalized_title: string
+}
+
+export type TitleRuleStatItem = {
+  rule_id: string
+  rule_type: string
+  keywords: string
+  contact_match_count: number
+}
+
+export type TitleRuleStatsResponse = {
+  rules: TitleRuleStatItem[]
+  total_contacts: number
+  total_matched: number
 }
 
 export type TitleRuleSeedResult = {

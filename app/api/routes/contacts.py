@@ -10,6 +10,7 @@ from sqlalchemy import Integer, case, func, or_, select as sa_select, text
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
+    BulkContactFetchRequest,
     ContactCompanyListResponse,
     ContactCompanySummary,
     ContactCountsResponse,
@@ -22,6 +23,10 @@ from app.api.schemas.contacts import (
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
     TitleRuleSeedResult,
+    TitleTestRequest,
+    TitleTestResult,
+    TitleRuleStatItem,
+    TitleRuleStatsResponse,
 )
 from app.db.session import get_session
 from app.models import (
@@ -40,7 +45,12 @@ from app.models.pipeline import (
     ContactVerifyJobState,
     PredictedLabel,
 )
-from app.services.contact_service import rematch_existing_contacts, seed_title_rules
+from app.services.contact_service import (
+    compute_title_rule_stats,
+    rematch_existing_contacts,
+    seed_title_rules,
+    test_title_match_detailed,
+)
 from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo, verify_contacts_batch
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
@@ -148,6 +158,7 @@ def _enqueue_contact_fetches(
             select(ContactFetchJob.company_id).where(
                 col(ContactFetchJob.company_id).in_(company_ids),
                 col(ContactFetchJob.terminal_state).is_(False),
+                ContactFetchJob.provider == provider,
             )
         ).all()
     )
@@ -263,6 +274,40 @@ def fetch_apollo_contacts_for_run(
         ).all()
     )
     return _enqueue_contact_fetches(session=session, companies=companies, provider="apollo")
+
+
+@router.post(
+    "/companies/fetch-contacts-selected",
+    response_model=ContactFetchResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def fetch_contacts_selected(
+    payload: BulkContactFetchRequest,
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    requested_ids = list(dict.fromkeys(payload.company_ids))
+    companies = list(
+        session.exec(select(Company).where(col(Company.id).in_(requested_ids)))
+    )
+    if not companies:
+        raise HTTPException(status_code=404, detail="No matching companies found.")
+
+    providers: list[str] = ["snov", "apollo"] if payload.source == "both" else [payload.source]
+    total_queued, total_already_fetching = 0, 0
+    all_job_ids: list[UUID] = []
+
+    for provider in providers:
+        r = _enqueue_contact_fetches(session=session, companies=companies, provider=provider)
+        total_queued += r.queued_count
+        total_already_fetching = max(total_already_fetching, r.already_fetching_count)
+        all_job_ids.extend(r.queued_job_ids)
+
+    return ContactFetchResult(
+        requested_count=len(companies),
+        queued_count=total_queued,
+        already_fetching_count=total_already_fetching,
+        queued_job_ids=all_job_ids,
+    )
 
 
 @router.get("/companies/{company_id}/contacts", response_model=ContactListResponse)
@@ -571,7 +616,7 @@ def create_title_rule(
     payload: TitleMatchRuleCreate,
     session: Session = Depends(get_session),
 ) -> TitleMatchRuleRead:
-    rule = TitleMatchRule(rule_type=payload.rule_type, keywords=payload.keywords)
+    rule = TitleMatchRule(rule_type=payload.rule_type, keywords=payload.keywords, match_type=payload.match_type)
     session.add(rule)
     session.commit()
     session.refresh(rule)
@@ -627,3 +672,18 @@ def seed_rules(session: Session = Depends(get_session)) -> TitleRuleSeedResult:
         inserted=inserted,
         message=f"Inserted {inserted} new rules (duplicates skipped).",
     )
+
+
+@router.post("/title-match-rules/test", response_model=TitleTestResult)
+def run_title_test(
+    payload: TitleTestRequest,
+    session: Session = Depends(get_session),
+) -> TitleTestResult:
+    result = test_title_match_detailed(payload.title, session)
+    return TitleTestResult.model_validate(result)
+
+
+@router.get("/title-match-rules/stats", response_model=TitleRuleStatsResponse)
+def get_title_rule_stats(session: Session = Depends(get_session)) -> TitleRuleStatsResponse:
+    result = compute_title_rule_stats(session)
+    return TitleRuleStatsResponse.model_validate(result)

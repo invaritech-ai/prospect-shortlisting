@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -44,13 +45,15 @@ class ContactFetchResult(BaseModel):
 class TitleMatchRuleRead(BaseModel):
     id: UUID
     rule_type: str
+    match_type: str
     keywords: str
     created_at: datetime
 
 
 class TitleMatchRuleCreate(BaseModel):
     rule_type: str = Field(pattern="^(include|exclude)$")
-    keywords: str = Field(min_length=2, max_length=255)
+    keywords: str = Field(min_length=1, max_length=255)
+    match_type: str = Field(default="keyword", pattern="^(keyword|regex|seniority)$")
 
 
 class TitleRuleSeedResult(BaseModel):
@@ -58,10 +61,39 @@ class TitleRuleSeedResult(BaseModel):
     message: str
 
 
+class BulkContactFetchRequest(BaseModel):
+    company_ids: list[UUID] = Field(min_length=1)
+    source: Literal["snov", "apollo", "both"] = "snov"
+
+
 class RematchResult(BaseModel):
     updated: int
     fetch_jobs_queued: int
     message: str
+
+
+class TitleTestRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+
+
+class TitleTestResult(BaseModel):
+    matched: bool
+    matching_rules: list[str]   # original keyword strings that matched, e.g. ["marketing, director"]
+    excluded_by: list[str]      # exclude keywords that fired, e.g. ["assistant"]
+    normalized_title: str
+
+
+class TitleRuleStatItem(BaseModel):
+    rule_id: UUID
+    rule_type: str
+    keywords: str
+    contact_match_count: int
+
+
+class TitleRuleStatsResponse(BaseModel):
+    rules: list[TitleRuleStatItem]
+    total_contacts: int
+    total_matched: int
 
 
 class ContactCompanySummary(BaseModel):

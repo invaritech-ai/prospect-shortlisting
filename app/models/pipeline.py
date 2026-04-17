@@ -395,6 +395,8 @@ class TitleMatchRule(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     # 'include' or 'exclude'
     rule_type: str = Field(max_length=16, index=True)
-    # Comma-separated keywords, e.g. "marketing, director"
+    # 'keyword' | 'regex' | 'seniority'
+    match_type: str = Field(default="keyword", max_length=32)
+    # Comma-separated keywords, regex pattern, or seniority preset name
     keywords: str = Field(max_length=255)
     created_at: datetime = Field(default_factory=utcnow, index=True)

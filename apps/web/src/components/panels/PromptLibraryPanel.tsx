@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { PromptRead } from '../../lib/types'
 import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
@@ -17,10 +18,13 @@ interface PromptLibraryPanelProps {
   promptEnabled: boolean
   isPromptsLoading: boolean
   isPromptSaving: boolean
+  isPromptDeleting: boolean
   promptError: string
   onSelectPrompt: (prompt: PromptRead) => void
   onNewPrompt: () => void
   onTogglePromptEnabled: (prompt: PromptRead) => void
+  onDeletePrompt: (prompt: PromptRead) => void
+  onClonePrompt: (prompt: PromptRead) => void
   onSaveAsNew: () => void
   onUpdateCurrent: () => void
   onSetPromptName: (v: string) => void
@@ -34,16 +38,22 @@ function PromptListItem({
   isEditing,
   isSelected,
   isSaving,
+  isDeleting,
   onSelect,
   onToggleEnabled,
+  onDelete,
 }: {
   prompt: PromptRead
   isEditing: boolean
   isSelected: boolean
   isSaving: boolean
+  isDeleting: boolean
   onSelect: () => void
   onToggleEnabled: () => void
+  onDelete: () => void
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
   return (
     <div
       className={`rounded-2xl border p-3 transition ${
@@ -57,7 +67,10 @@ function PromptListItem({
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-[var(--oc-accent-ink)]">{prompt.name}</p>
             <p className="mt-0.5 text-[11px] text-[var(--oc-muted)]">
-              {parseUTC(prompt.created_at).toLocaleString()}
+              {parseUTC(prompt.created_at).toLocaleString()} ·{' '}
+              <span className="font-medium">
+                {prompt.run_count} run{prompt.run_count !== 1 ? 's' : ''}
+              </span>
             </p>
           </div>
           {isSelected && <Badge variant="info">Active</Badge>}
@@ -67,14 +80,44 @@ function PromptListItem({
         <Badge variant={prompt.enabled ? 'success' : 'fail'}>
           {prompt.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
-        <button
-          type="button"
-          onClick={onToggleEnabled}
-          disabled={isSaving}
-          className="rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1 text-[11px] font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {prompt.enabled ? 'Disable' : 'Enable'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onToggleEnabled}
+            disabled={isSaving || isDeleting}
+            className="rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1 text-[11px] font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {prompt.enabled ? 'Disable' : 'Enable'}
+          </button>
+          {confirmDelete ? (
+            <>
+              <button
+                type="button"
+                onClick={() => { setConfirmDelete(false); onDelete() }}
+                disabled={isDeleting}
+                className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+              >
+                {isDeleting ? '…' : 'Confirm'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1 text-[11px] text-[var(--oc-muted)] transition hover:border-[var(--oc-accent)]"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              disabled={isSaving || isDeleting}
+              className="rounded-lg border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-600 transition hover:border-rose-400 hover:bg-rose-50 disabled:opacity-50"
+            >
+              Delete
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -91,10 +134,13 @@ export function PromptLibraryPanel({
   promptEnabled,
   isPromptsLoading,
   isPromptSaving,
+  isPromptDeleting,
   promptError,
   onSelectPrompt,
   onNewPrompt,
   onTogglePromptEnabled,
+  onDeletePrompt,
+  onClonePrompt,
   onSaveAsNew,
   onUpdateCurrent,
   onSetPromptName,
@@ -159,8 +205,10 @@ export function PromptLibraryPanel({
                   isEditing={editingPromptId === prompt.id}
                   isSelected={selectedPromptId === prompt.id}
                   isSaving={isPromptSaving}
+                  isDeleting={isPromptDeleting}
                   onSelect={() => onSelectPrompt(prompt)}
                   onToggleEnabled={() => onTogglePromptEnabled(prompt)}
+                  onDelete={() => onDeletePrompt(prompt)}
                 />
               ))}
             </div>
@@ -242,6 +290,17 @@ export function PromptLibraryPanel({
               disabled={!editingPromptId || isPromptSaving}
             >
               Update current
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => {
+                const editing = prompts.find((p) => p.id === editingPromptId)
+                if (editing) onClonePrompt(editing)
+              }}
+              disabled={!editingPromptId || isPromptSaving}
+            >
+              Clone
             </Button>
             <Button variant="ghost" size="md" onClick={onNewPrompt}>
               New blank

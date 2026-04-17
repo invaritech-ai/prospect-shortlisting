@@ -35,6 +35,8 @@ import type {
   TitleMatchRuleCreate,
   TitleMatchRuleRead,
   TitleRuleSeedResult,
+  TitleTestResult,
+  TitleRuleStatsResponse,
   UploadCompanyList,
   UploadCreateResult,
   UploadDetail,
@@ -173,6 +175,10 @@ export async function updatePrompt(promptId: string, payload: PromptUpdate): Pro
   })
 }
 
+export async function deletePrompt(promptId: string): Promise<void> {
+  await request<void>(`/v1/prompts/${promptId}`, { method: 'DELETE' })
+}
+
 export async function createRuns(payload: RunCreateRequest): Promise<RunCreateResult> {
   return request<RunCreateResult>('/v1/runs', {
     method: 'POST',
@@ -264,6 +270,17 @@ export async function fetchContactsForRunApollo(runId: string): Promise<ContactF
   return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo`, { method: 'POST' })
 }
 
+export async function fetchContactsSelected(
+  companyIds: string[],
+  source: 'snov' | 'apollo' | 'both',
+): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_ids: companyIds, source }),
+  })
+}
+
 export async function listContacts(
   options: {
     titleMatch?: boolean
@@ -349,6 +366,18 @@ export async function deleteTitleMatchRule(ruleId: string): Promise<void> {
 
 export async function seedTitleMatchRules(): Promise<TitleRuleSeedResult> {
   return request<TitleRuleSeedResult>('/v1/title-match-rules/seed', { method: 'POST' })
+}
+
+export async function testTitleMatch(title: string): Promise<TitleTestResult> {
+  return request<TitleTestResult>('/v1/title-match-rules/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+}
+
+export async function getTitleRuleStats(): Promise<TitleRuleStatsResponse> {
+  return request<TitleRuleStatsResponse>('/v1/title-match-rules/stats')
 }
 
 /** Parse a date string as UTC.

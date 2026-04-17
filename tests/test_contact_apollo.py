@@ -119,7 +119,7 @@ def test_apollo_fetch_skips_duplicate_company_email(sqlite_engine, sqlite_sessio
         },
     ]
 
-    def fake_search_people(domain: str, page: int = 1) -> list[dict]:
+    def fake_search_people(domain: str, page: int = 1, person_titles: list[str] | None = None) -> list[dict]:
         _apollo.last_error_code = ""
         return prospects_page_1 if page == 1 else []
 

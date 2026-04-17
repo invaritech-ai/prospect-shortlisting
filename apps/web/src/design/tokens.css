@@ -19,6 +19,21 @@
   --oc-fail-text: #9f1239;
   --oc-danger-bg: #fee2e2;
   --oc-danger-text: #7f1d1d;
+
+  /* ── Pipeline stage colors ───────────────────────────────── */
+  --s1: #1e40af;
+  --s1-bg: #dbeafe;
+  --s1-text: #1e3a8a;
+  --s2: #92400e;
+  --s2-bg: #fef3c7;
+  --s2-text: #78350f;
+  --s3: #14532d;
+  --s3-bg: #dcfce7;
+  --s3-text: #14532d;
+  --s4: #6b21a8;
+  --s4-bg: #f3e8ff;
+  --s4-text: #581c87;
+
   --oc-shadow: 0 12px 34px rgba(30, 58, 138, 0.09);
   --oc-radius: 14px;
 
@@ -75,6 +90,11 @@
 @keyframes oc-shimmer {
   0%   { background-position: -600px 0; }
   100% { background-position: 600px 0; }
+}
+
+@keyframes sel-slide-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @layer components {
