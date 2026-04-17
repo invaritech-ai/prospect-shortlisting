@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ActiveView } from '../lib/navigation'
 import type {
   CompanyList,
+  DecisionFilter,
   CompanyStageFilter,
   ContactListResponse,
   PromptRead,
@@ -16,13 +17,8 @@ import {
   scrapeSelectedCompanies,
   verifyContacts,
 } from '../lib/api'
+import { getPipelineCompanyQuery } from '../lib/pipelineQuery'
 import { parseApiError } from '../lib/utils'
-
-const PIPELINE_STAGE_MAP: Partial<Record<ActiveView, CompanyStageFilter>> = {
-  's1-scraping': 'all',
-  's2-ai': 'has_scrape',
-  's3-contacts': 'classified',
-}
 
 export interface UsePipelineViewsResult {
   // Full pipeline view
@@ -47,8 +43,10 @@ export interface UsePipelineViewsResult {
   isPipelineAnalyzing: boolean
   isPipelineFetching: boolean
   isPipelineSelectingAll: boolean
+  pipelineDecisionFilter: DecisionFilter
   pipelineSortBy: string
   pipelineSortDir: 'asc' | 'desc'
+  onPipelineDecisionFilterChange: (filter: DecisionFilter) => void
   onPipelineSort: (field: string) => void
   // S4 flat contacts
   s4Contacts: ContactListResponse | null
@@ -96,6 +94,7 @@ export function usePipelineViews(
   const [isPipelineAnalyzing, setIsPipelineAnalyzing] = useState(false)
   const [isPipelineFetching, setIsPipelineFetching] = useState(false)
   const [isPipelineSelectingAll, setIsPipelineSelectingAll] = useState(false)
+  const [pipelineDecisionFilter, setPipelineDecisionFilter] = useState<DecisionFilter>('all')
   const [pipelineSortBy, setPipelineSortBy] = useState('domain')
   const [pipelineSortDir, setPipelineSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -120,12 +119,17 @@ export function usePipelineViews(
   // ── Load functions ─────────────────────────────────────────────────────────
 
   const loadPipelineView = useCallback(
-    async (stageFilter: CompanyStageFilter, sortBy = 'domain', sortDir: 'asc' | 'desc' = 'asc') => {
+    async (
+      stageFilter: CompanyStageFilter,
+      decisionFilter: DecisionFilter,
+      sortBy = 'domain',
+      sortDir: 'asc' | 'desc' = 'asc',
+    ) => {
       setIsPipelineLoading(true)
       try {
         const [companies, letterCountsData] = await Promise.all([
-          listCompanies(200, 0, 'all', true, 'all', stageFilter, null, sortBy, sortDir),
-          getLetterCounts('all', 'all', stageFilter),
+          listCompanies(200, 0, decisionFilter, true, 'all', stageFilter, null, sortBy, sortDir),
+          getLetterCounts(decisionFilter, 'all', stageFilter),
         ])
         setPipelineCompanies(companies)
         setPipelineLetterCounts(letterCountsData.counts)
@@ -177,13 +181,14 @@ export function usePipelineViews(
 
   // ── Load on view change ────────────────────────────────────────────────────
   useEffect(() => {
-    const stageFilter = PIPELINE_STAGE_MAP[activeView]
-    if (stageFilter !== undefined) {
+    const query = getPipelineCompanyQuery(activeView, 'all')
+    if (query !== null) {
       setPipelineSelectedIds([])
       setPipelineActiveLetters(new Set())
+      setPipelineDecisionFilter('all')
       setPipelineSortBy('domain')
       setPipelineSortDir('asc')
-      void loadPipelineView(stageFilter, 'domain', 'asc')
+      void loadPipelineView(query.stageFilter, query.decisionFilter, 'domain', 'asc')
     } else if (activeView === 'full-pipeline') {
       setFullPipelineSelectedIds([])
       setFullPipelineActiveLetter(null)
@@ -202,7 +207,8 @@ export function usePipelineViews(
   const onPipelineToggleLetter = useCallback((letter: string) => {
     setPipelineActiveLetters((prev) => {
       const next = new Set(prev)
-      next.has(letter) ? next.delete(letter) : next.add(letter)
+      if (next.has(letter)) next.delete(letter)
+      else next.add(letter)
       return next
     })
     setPipelineSelectedIds([])
@@ -228,15 +234,15 @@ export function usePipelineViews(
   }, [])
 
   const selectAllMatchingAsync = useCallback(async () => {
-    const stageFilter = PIPELINE_STAGE_MAP[activeView]
-    if (!stageFilter) return
+    const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
+    if (query === null) return
     setIsPipelineSelectingAll(true)
     try {
       const letters = [...pipelineActiveLetters]
       const results = await Promise.all(
         letters.length > 0
-          ? letters.map((l) => listCompanyIds('all', 'all', stageFilter, l))
-          : [listCompanyIds('all', 'all', stageFilter, null)],
+          ? letters.map((l) => listCompanyIds(query.decisionFilter, 'all', query.stageFilter, l))
+          : [listCompanyIds(query.decisionFilter, 'all', query.stageFilter, null)],
       )
       setPipelineSelectedIds([...new Set(results.flatMap((r) => r.ids.map((id) => String(id))))])
     } catch (err) {
@@ -244,7 +250,7 @@ export function usePipelineViews(
     } finally {
       setIsPipelineSelectingAll(false)
     }
-  }, [activeView, pipelineActiveLetters, setError])
+  }, [activeView, pipelineActiveLetters, pipelineDecisionFilter, setError])
 
   const onPipelineSelectAllMatching = useCallback(() => {
     void selectAllMatchingAsync()
@@ -252,17 +258,28 @@ export function usePipelineViews(
 
   const onPipelineClearSelection = useCallback(() => setPipelineSelectedIds([]), [])
 
+  const onPipelineDecisionFilterChange = useCallback(
+    (decisionFilter: DecisionFilter) => {
+      const query = getPipelineCompanyQuery(activeView, decisionFilter)
+      if (query === null) return
+      setPipelineDecisionFilter(decisionFilter)
+      setPipelineSelectedIds([])
+      void loadPipelineView(query.stageFilter, query.decisionFilter, pipelineSortBy, pipelineSortDir)
+    },
+    [activeView, loadPipelineView, pipelineSortBy, pipelineSortDir],
+  )
+
   const onPipelineSort = useCallback(
     (field: string) => {
-      const stageFilter = PIPELINE_STAGE_MAP[activeView]
-      if (!stageFilter) return
+      const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
+      if (query === null) return
       const newDir: 'asc' | 'desc' =
         pipelineSortBy === field ? (pipelineSortDir === 'asc' ? 'desc' : 'asc') : 'asc'
       setPipelineSortBy(field)
       setPipelineSortDir(newDir)
-      void loadPipelineView(stageFilter, field, newDir)
+      void loadPipelineView(query.stageFilter, query.decisionFilter, field, newDir)
     },
-    [activeView, pipelineSortBy, pipelineSortDir, loadPipelineView],
+    [activeView, pipelineDecisionFilter, pipelineSortBy, pipelineSortDir, loadPipelineView],
   )
 
   const scrapeSelectedAsync = useCallback(async () => {
@@ -343,11 +360,11 @@ export function usePipelineViews(
   )
 
   const refreshPipelineView = useCallback(() => {
-    const stageFilter = PIPELINE_STAGE_MAP[activeView]
-    if (stageFilter !== undefined) void loadPipelineView(stageFilter, pipelineSortBy, pipelineSortDir)
+    const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
+    if (query !== null) void loadPipelineView(query.stageFilter, query.decisionFilter, pipelineSortBy, pipelineSortDir)
     else if (activeView === 'full-pipeline') void loadFullPipelineView(fullPipelineActiveLetter)
     else if (activeView === 's4-validation') void loadS4View(s4SortBy, s4SortDir)
-  }, [activeView, loadPipelineView, loadFullPipelineView, fullPipelineActiveLetter, loadS4View, pipelineSortBy, pipelineSortDir, s4SortBy, s4SortDir])
+  }, [activeView, pipelineDecisionFilter, loadPipelineView, loadFullPipelineView, fullPipelineActiveLetter, loadS4View, pipelineSortBy, pipelineSortDir, s4SortBy, s4SortDir])
 
   // ── Full pipeline handlers ─────────────────────────────────────────────────
 
@@ -398,7 +415,8 @@ export function usePipelineViews(
   const onS4ToggleLetter = useCallback((letter: string) => {
     setS4ActiveLetters((prev) => {
       const next = new Set(prev)
-      next.has(letter) ? next.delete(letter) : next.add(letter)
+      if (next.has(letter)) next.delete(letter)
+      else next.add(letter)
       return next
     })
     setS4SelectedContactIds([])
@@ -477,8 +495,10 @@ export function usePipelineViews(
     isPipelineAnalyzing,
     isPipelineFetching,
     isPipelineSelectingAll,
+    pipelineDecisionFilter,
     pipelineSortBy,
     pipelineSortDir,
+    onPipelineDecisionFilterChange,
     onPipelineSort,
     s4Contacts,
     s4LetterCounts,

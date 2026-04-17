@@ -1,17 +1,16 @@
 import { useRef, useState } from 'react'
-import type { CompanyList, CompanyListItem, PromptRead, RunRead, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, DecisionFilter, PromptRead, RunRead, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
 
-type DecisionSubFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap'
-
 interface S2AIDecisionViewProps {
   companies: CompanyList | null
   letterCounts: Record<string, number>
   activeLetters: Set<string>
+  decisionFilter: DecisionFilter
   selectedIds: string[]
   totalMatching: number | null
   isLoading: boolean
@@ -22,6 +21,7 @@ interface S2AIDecisionViewProps {
   recentRuns: RunRead[]
   analysisActionState: Record<string, string>
   stats: StatsResponse | null
+  onDecisionFilterChange: (filter: DecisionFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -38,7 +38,7 @@ interface S2AIDecisionViewProps {
   onSort: (field: string) => void
 }
 
-const DECISION_FILTERS: Array<{ value: DecisionSubFilter; label: string }> = [
+const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'unlabeled', label: 'Unlabeled' },
   { value: 'possible', label: 'Possible' },
@@ -50,6 +50,7 @@ export function S2AIDecisionView({
   companies,
   letterCounts,
   activeLetters,
+  decisionFilter,
   selectedIds,
   totalMatching,
   isLoading,
@@ -60,6 +61,7 @@ export function S2AIDecisionView({
   recentRuns,
   analysisActionState,
   stats,
+  onDecisionFilterChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -75,7 +77,6 @@ export function S2AIDecisionView({
   sortDir,
   onSort,
 }: S2AIDecisionViewProps) {
-  const [decisionSub, setDecisionSub] = useState<DecisionSubFilter>('all')
   const [search, setSearch] = useState('')
   const [dropOpen, setDropOpen] = useState(false)
   const dropRef = useRef<HTMLDivElement>(null)
@@ -84,13 +85,7 @@ export function S2AIDecisionView({
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
     if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
-    if (!letterOk) return false
-    const decision = (c.feedback_manual_label ?? c.latest_decision ?? '').toLowerCase()
-    if (decisionSub === 'unlabeled') return !decision
-    if (decisionSub === 'possible') return decision === 'possible'
-    if (decisionSub === 'unknown') return decision === 'unknown'
-    if (decisionSub === 'crap') return decision === 'crap'
-    return true
+    return letterOk
   })
 
   const allVisibleSelected =
@@ -98,9 +93,9 @@ export function S2AIDecisionView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
-  const isSubFiltered = decisionSub !== 'all' || search !== ''
-  const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
-  const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
+  const isSearchFiltered = search !== ''
+  const displayCount = isSearchFiltered ? visibleCompanies.length : (companies?.total ?? 0)
+  const effectiveTotalMatching = isSearchFiltered ? visibleCompanies.length : totalMatching
 
   // Analysis pipeline progress
   const analysis = stats?.analysis
@@ -192,13 +187,13 @@ export function S2AIDecisionView({
           <button
             key={f.value}
             type="button"
-            onClick={() => setDecisionSub(f.value)}
+            onClick={() => onDecisionFilterChange(f.value)}
             className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
-              decisionSub === f.value
+              decisionFilter === f.value
                 ? 'text-white'
                 : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s2) hover:text-(--s2-text)'
             }`}
-            style={decisionSub === f.value ? { backgroundColor: 'var(--s2)' } : {}}
+            style={decisionFilter === f.value ? { backgroundColor: 'var(--s2)' } : {}}
           >
             {f.label}
           </button>
@@ -211,7 +206,7 @@ export function S2AIDecisionView({
         selectedCount={selectedIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 && !isSearchFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >
@@ -286,12 +281,12 @@ export function S2AIDecisionView({
             {!isLoading && visibleCompanies.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-10 text-center">
-                  {decisionSub === 'unlabeled' && companies != null ? (
+                  {decisionFilter === 'unlabeled' && companies != null ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-emerald-700">All companies have been classified ✓</p>
                       <p className="text-xs text-(--oc-muted)">Switch to "All" to review results or run a new analysis.</p>
                     </div>
-                  ) : decisionSub === 'possible' ? (
+                  ) : decisionFilter === 'possible' ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-(--oc-text)">No "possible" prospects yet</p>
                       <p className="text-xs text-(--oc-muted)">Run AI analysis on unlabeled companies first.</p>

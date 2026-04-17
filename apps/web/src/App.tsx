@@ -402,6 +402,7 @@ function App() {
             companies={pipeline.pipelineCompanies}
             letterCounts={pipeline.pipelineLetterCounts}
             activeLetters={pipeline.pipelineActiveLetters}
+            decisionFilter={pipeline.pipelineDecisionFilter}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
             isLoading={pipeline.isPipelineLoading}
@@ -412,6 +413,7 @@ function App() {
             recentRuns={recentRuns}
             analysisActionState={analysisActionState}
             stats={stats}
+            onDecisionFilterChange={pipeline.onPipelineDecisionFilterChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
