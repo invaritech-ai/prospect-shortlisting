@@ -43,7 +43,7 @@ import type {
   UploadList,
 } from './types'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8001').replace(/\/+$/, '')
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
 type ScrapeJobFilter = 'all' | 'active' | 'completed' | 'failed'
 
 export class ApiError extends Error {
