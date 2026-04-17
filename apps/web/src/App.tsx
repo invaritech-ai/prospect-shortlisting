@@ -38,6 +38,7 @@ import { AppShell } from './components/layout/AppShell'
 
 // Pipeline views
 import { DashboardView } from './components/views/pipeline/DashboardView'
+import { FullPipelineView } from './components/views/pipeline/FullPipelineView'
 import { S1ScrapingView } from './components/views/pipeline/S1ScrapingView'
 import { S2AIDecisionView } from './components/views/pipeline/S2AIDecisionView'
 import { S3ContactFetchView } from './components/views/pipeline/S3ContactFetchView'
@@ -340,9 +341,6 @@ function App() {
         activeView={activeView}
         setActiveView={setActiveView}
         stats={stats}
-        companyCounts={companyCounts}
-        contactCounts={contactCounts}
-        selectedPrompt={promptMgmt.selectedPrompt}
         onOpenPromptLibrary={promptMgmt.openPromptSheet}
       >
         {activeView === 'dashboard' && (
@@ -359,6 +357,22 @@ function App() {
             onSetIsDragActive={setIsDragActive}
             onUpload={onUpload}
             onNavigate={(view) => setActiveView(view)}
+          />
+        )}
+
+        {activeView === 'full-pipeline' && (
+          <FullPipelineView
+            companies={pipeline.fullPipelineCompanies}
+            letterCounts={pipeline.fullPipelineLetterCounts}
+            activeLetter={pipeline.fullPipelineActiveLetter}
+            selectedIds={pipeline.fullPipelineSelectedIds}
+            isLoading={pipeline.isFullPipelineLoading}
+            isScraping={pipeline.isFullPipelineScraping}
+            onLetterChange={pipeline.onFullPipelineLetterChange}
+            onToggleRow={pipeline.onFullPipelineToggleRow}
+            onToggleAll={pipeline.onFullPipelineToggleAll}
+            onClearSelection={pipeline.onFullPipelineClearSelection}
+            onScrapeSelected={pipeline.onFullPipelineScrapeSelected}
           />
         )}
 

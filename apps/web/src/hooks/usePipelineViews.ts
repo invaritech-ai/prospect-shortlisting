@@ -25,6 +25,18 @@ const PIPELINE_STAGE_MAP: Partial<Record<ActiveView, CompanyStageFilter>> = {
 }
 
 export interface UsePipelineViewsResult {
+  // Full pipeline view
+  fullPipelineCompanies: CompanyList | null
+  fullPipelineLetterCounts: Record<string, number>
+  fullPipelineActiveLetter: string | null
+  fullPipelineSelectedIds: string[]
+  isFullPipelineLoading: boolean
+  isFullPipelineScraping: boolean
+  onFullPipelineLetterChange: (l: string | null) => void
+  onFullPipelineToggleRow: (id: string) => void
+  onFullPipelineToggleAll: (ids: string[]) => void
+  onFullPipelineClearSelection: () => void
+  onFullPipelineScrapeSelected: () => void
   // S1–S3 company list
   pipelineCompanies: CompanyList | null
   pipelineLetterCounts: Record<string, number>
@@ -79,6 +91,14 @@ export function usePipelineViews(
   const [isPipelineFetching, setIsPipelineFetching] = useState(false)
   const [isPipelineSelectingAll, setIsPipelineSelectingAll] = useState(false)
 
+  // Full pipeline state
+  const [fullPipelineCompanies, setFullPipelineCompanies] = useState<CompanyList | null>(null)
+  const [fullPipelineLetterCounts, setFullPipelineLetterCounts] = useState<Record<string, number>>({})
+  const [fullPipelineActiveLetter, setFullPipelineActiveLetter] = useState<string | null>(null)
+  const [fullPipelineSelectedIds, setFullPipelineSelectedIds] = useState<string[]>([])
+  const [isFullPipelineLoading, setIsFullPipelineLoading] = useState(false)
+  const [isFullPipelineScraping, setIsFullPipelineScraping] = useState(false)
+
   // S4 state
   const [s4Companies, setS4Companies] = useState<ContactCompanyListResponse | null>(null)
   const [s4LetterCounts, setS4LetterCounts] = useState<Record<string, number>>({})
@@ -126,6 +146,25 @@ export function usePipelineViews(
     }
   }, [setError])
 
+  const loadFullPipelineView = useCallback(
+    async (letter: string | null) => {
+      setIsFullPipelineLoading(true)
+      try {
+        const [companies, letterCountsData] = await Promise.all([
+          listCompanies(200, 0, 'all', true, 'all', 'all', letter),
+          getLetterCounts('all', 'all', 'all'),
+        ])
+        setFullPipelineCompanies(companies)
+        setFullPipelineLetterCounts(letterCountsData.counts)
+      } catch (err) {
+        setError(parseApiError(err))
+      } finally {
+        setIsFullPipelineLoading(false)
+      }
+    },
+    [setError],
+  )
+
   // ── Load on view change ────────────────────────────────────────────────────
   useEffect(() => {
     const stageFilter = PIPELINE_STAGE_MAP[activeView]
@@ -133,12 +172,16 @@ export function usePipelineViews(
       setPipelineSelectedIds([])
       setPipelineActiveLetters(new Set())
       void loadPipelineView(stageFilter)
+    } else if (activeView === 'full-pipeline') {
+      setFullPipelineSelectedIds([])
+      setFullPipelineActiveLetter(null)
+      void loadFullPipelineView(null)
     } else if (activeView === 's4-validation') {
       setS4SelectedCompanyIds([])
       setS4ActiveLetters(new Set())
       void loadS4View()
     }
-  }, [activeView, loadPipelineView, loadS4View])
+  }, [activeView, loadPipelineView, loadFullPipelineView, loadS4View])
 
   // ── S1–S3 handlers ─────────────────────────────────────────────────────────
 
@@ -275,8 +318,53 @@ export function usePipelineViews(
   const refreshPipelineView = useCallback(() => {
     const stageFilter = PIPELINE_STAGE_MAP[activeView]
     if (stageFilter !== undefined) void loadPipelineView(stageFilter)
+    else if (activeView === 'full-pipeline') void loadFullPipelineView(fullPipelineActiveLetter)
     else if (activeView === 's4-validation') void loadS4View()
-  }, [activeView, loadPipelineView, loadS4View])
+  }, [activeView, loadPipelineView, loadFullPipelineView, fullPipelineActiveLetter, loadS4View])
+
+  // ── Full pipeline handlers ─────────────────────────────────────────────────
+
+  const onFullPipelineLetterChange = useCallback((letter: string | null) => {
+    setFullPipelineActiveLetter(letter)
+    setFullPipelineSelectedIds([])
+    void loadFullPipelineView(letter)
+  }, [loadFullPipelineView])
+
+  const onFullPipelineToggleRow = useCallback((id: string) => {
+    setFullPipelineSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
+  }, [])
+
+  const onFullPipelineToggleAll = useCallback((ids: string[]) => {
+    if (ids.length === 0) {
+      setFullPipelineSelectedIds([])
+    } else {
+      setFullPipelineSelectedIds((prev) => [...new Set([...prev, ...ids])])
+    }
+  }, [])
+
+  const onFullPipelineClearSelection = useCallback(() => setFullPipelineSelectedIds([]), [])
+
+  const fullPipelineScrapeAsync = useCallback(async () => {
+    if (!fullPipelineSelectedIds.length) return
+    setError('')
+    setNotice('')
+    setIsFullPipelineScraping(true)
+    try {
+      const result = await scrapeSelectedCompanies(fullPipelineSelectedIds)
+      setNotice(`Queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'}.`)
+      setFullPipelineSelectedIds([])
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsFullPipelineScraping(false)
+    }
+  }, [fullPipelineSelectedIds, setError, setNotice])
+
+  const onFullPipelineScrapeSelected = useCallback(() => {
+    void fullPipelineScrapeAsync()
+  }, [fullPipelineScrapeAsync])
 
   // ── S4 handlers ────────────────────────────────────────────────────────────
 
@@ -331,6 +419,17 @@ export function usePipelineViews(
   }, [validateSelectedAsync])
 
   return {
+    fullPipelineCompanies,
+    fullPipelineLetterCounts,
+    fullPipelineActiveLetter,
+    fullPipelineSelectedIds,
+    isFullPipelineLoading,
+    isFullPipelineScraping,
+    onFullPipelineLetterChange,
+    onFullPipelineToggleRow,
+    onFullPipelineToggleAll,
+    onFullPipelineClearSelection,
+    onFullPipelineScrapeSelected,
     pipelineCompanies,
     pipelineLetterCounts,
     pipelineActiveLetters,

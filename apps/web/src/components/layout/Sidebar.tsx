@@ -1,4 +1,3 @@
-import type { PromptRead, CompanyCounts, ContactCountsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import {
   IconBuilding,
@@ -6,19 +5,14 @@ import {
   IconChart,
   IconPulse,
   IconUsers,
-  IconPencil,
+  IconTimeline,
   IconChevronLeft,
   IconChevronRight,
 } from '../ui/icons'
-import { PipelineFlow } from './PipelineFlow'
 
 interface SidebarProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
-  companyCounts: CompanyCounts | null
-  contactCounts: ContactCountsResponse | null
-  selectedPrompt: PromptRead | null
-  onOpenPromptLibrary: () => void
   collapsed: boolean
   onToggleCollapsed: () => void
 }
@@ -30,6 +24,7 @@ const NAV_ITEMS: Array<{
   Icon: React.FC<{ className?: string; size?: number }>
 }> = [
   { value: 'dashboard', label: 'Dashboard', Icon: IconPulse },
+  { value: 'full-pipeline', label: 'Full Pipeline', Icon: IconTimeline },
   { value: 's1-scraping', label: 'S1 · Scraping', stageColor: 'var(--s1)', Icon: IconGlobe },
   { value: 's2-ai', label: 'S2 · AI Decision', stageColor: 'var(--s2)', Icon: IconChart },
   { value: 's3-contacts', label: 'S3 · Contacts', stageColor: 'var(--s3)', Icon: IconUsers },
@@ -39,10 +34,6 @@ const NAV_ITEMS: Array<{
 export function Sidebar({
   activeView,
   setActiveView,
-  companyCounts,
-  contactCounts,
-  selectedPrompt,
-  onOpenPromptLibrary,
   collapsed,
   onToggleCollapsed,
 }: SidebarProps) {
@@ -114,55 +105,6 @@ export function Sidebar({
             )
           })}
         </nav>
-
-        {/* Bottom section */}
-        <div className="mt-4 space-y-2 overflow-hidden px-2">
-          {/* Prompt button */}
-          {collapsed ? (
-            <button
-              type="button"
-              onClick={onOpenPromptLibrary}
-              title="Prompt Library"
-              className="oc-nav-item w-full"
-              style={{ justifyContent: 'center' }}
-            >
-              <IconPencil size={18} className="flex-shrink-0" />
-            </button>
-          ) : (
-            <div className="rounded-xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-3">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Active Prompt</p>
-              {selectedPrompt ? (
-                <>
-                  <p className="mt-1.5 truncate text-xs font-semibold text-[var(--oc-accent-ink)]">
-                    {selectedPrompt.name}
-                  </p>
-                  <span className={`mt-1.5 oc-badge ${selectedPrompt.enabled ? 'oc-badge-success' : 'oc-badge-fail'}`}>
-                    {selectedPrompt.enabled ? 'Enabled' : 'Disabled'}
-                  </span>
-                </>
-              ) : (
-                <p className="mt-1.5 text-xs text-(--oc-muted)">No prompt selected</p>
-              )}
-              <button
-                type="button"
-                onClick={onOpenPromptLibrary}
-                className="mt-3 flex w-full items-center gap-1.5 rounded-lg border border-[var(--oc-border)] bg-white px-3 py-1.5 text-[11px] font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
-              >
-                <IconPencil size={13} />
-                Prompt Library
-              </button>
-            </div>
-          )}
-
-          {/* Pipeline stage navigator */}
-          <PipelineFlow
-            activeView={activeView}
-            companyCounts={companyCounts}
-            contactCounts={contactCounts}
-            collapsed={collapsed}
-            onNavigate={setActiveView}
-          />
-        </div>
 
         {/* Collapse toggle */}
         <div className="mt-3 border-t border-[var(--oc-border)] px-2 pt-3">

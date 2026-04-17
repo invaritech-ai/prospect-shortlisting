@@ -1,24 +1,22 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { StatsResponse, PromptRead, CompanyCounts, ContactCountsResponse } from '../../lib/types'
+import type { StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline } from '../ui/icons'
 
 interface AppShellProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
   stats: StatsResponse | null
-  companyCounts: CompanyCounts | null
-  contactCounts: ContactCountsResponse | null
-  selectedPrompt: PromptRead | null
   onOpenPromptLibrary: () => void
   children: ReactNode
 }
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
   dashboard: { label: 'Dashboard', Icon: IconPulse },
+  'full-pipeline': { label: 'Full Pipeline', Icon: IconTimeline },
   's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
   's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
   's3-contacts': { label: 'S3 · Contact Fetch', Icon: IconUsers },
@@ -31,9 +29,6 @@ export function AppShell({
   activeView,
   setActiveView,
   stats,
-  companyCounts,
-  contactCounts,
-  selectedPrompt,
   onOpenPromptLibrary,
   children,
 }: AppShellProps) {
@@ -61,10 +56,6 @@ export function AppShell({
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
-        companyCounts={companyCounts}
-        contactCounts={contactCounts}
-        selectedPrompt={selectedPrompt}
-        onOpenPromptLibrary={onOpenPromptLibrary}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />
