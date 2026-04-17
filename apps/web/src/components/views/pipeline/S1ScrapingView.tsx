@@ -104,6 +104,11 @@ export function S1ScrapingView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
+  // When a client-side sub-filter or search is active, use the visible count
+  const isSubFiltered = subFilter !== 'all' || search !== ''
+  const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
+  const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
+
   // Pipeline progress from stats
   const scrape = stats?.scrape
   const running = scrape?.running ?? 0
@@ -178,7 +183,7 @@ export function S1ScrapingView({
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
           <p className="text-xs text-(--oc-muted)">
-            Web content extraction · {companies?.total != null ? `${companies.total.toLocaleString()} companies` : '—'}
+            Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
         {/* Search */}
@@ -230,9 +235,9 @@ export function S1ScrapingView({
         stageColor="--s1"
         stageBg="--s1-bg"
         selectedCount={selectedIds.length}
-        totalMatching={totalMatching}
+        totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >

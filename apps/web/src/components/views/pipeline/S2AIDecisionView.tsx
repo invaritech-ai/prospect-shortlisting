@@ -98,6 +98,10 @@ export function S2AIDecisionView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
+  const isSubFiltered = decisionSub !== 'all' || search !== ''
+  const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
+  const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
+
   // Analysis pipeline progress
   const analysis = stats?.analysis
   const aRunning = analysis?.running ?? 0
@@ -149,7 +153,7 @@ export function S2AIDecisionView({
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
           <p className="text-xs text-(--oc-muted)">
-            Qualify prospects with AI classification · {companies?.total != null ? `${companies.total.toLocaleString()} companies` : '—'}
+            Qualify prospects with AI classification · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
         {/* Search */}
@@ -205,9 +209,9 @@ export function S2AIDecisionView({
         stageColor="--s2"
         stageBg="--s2-bg"
         selectedCount={selectedIds.length}
-        totalMatching={totalMatching}
+        totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >

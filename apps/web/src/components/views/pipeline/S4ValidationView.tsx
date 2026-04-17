@@ -100,6 +100,10 @@ export function S4ValidationView({
   const someVisibleSelected =
     !allVisibleSelected && visibleContacts.some((c) => selectedSet.has(c.id))
 
+  const isSubFiltered = verifFilter !== 'all'
+  const displayCount = isSubFiltered ? visibleContacts.length : (contacts?.total ?? visibleContacts.length)
+  const effectiveTotalMatching = isSubFiltered ? visibleContacts.length : totalMatching
+
   return (
     <div className="space-y-3">
       {/* Header */}
@@ -108,7 +112,7 @@ export function S4ValidationView({
           <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S4 · Validation</h2>
           <p className="text-xs text-(--oc-muted)">
             Validate contact emails with ZeroBounce ·{' '}
-            {contactCounts != null ? `${contactCounts.total.toLocaleString()} contacts` : '—'}
+            {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
           </p>
         </div>
         {exportUrl && (
@@ -179,9 +183,9 @@ export function S4ValidationView({
         stageColor="--s4"
         stageBg="--s4-bg"
         selectedCount={selectedContactIds.length}
-        totalMatching={totalMatching}
+        totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedContactIds.length > 0 ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedContactIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >

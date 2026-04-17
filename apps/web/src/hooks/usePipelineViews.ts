@@ -256,15 +256,13 @@ export function usePipelineViews(
     (field: string) => {
       const stageFilter = PIPELINE_STAGE_MAP[activeView]
       if (!stageFilter) return
-      setPipelineSortBy((prev) => {
-        const newDir: 'asc' | 'desc' = prev === field ? (pipelineSortDir === 'asc' ? 'desc' : 'asc') : 'asc'
-        const newField = field
-        setPipelineSortDir(newDir)
-        void loadPipelineView(stageFilter, newField, newDir)
-        return newField
-      })
+      const newDir: 'asc' | 'desc' =
+        pipelineSortBy === field ? (pipelineSortDir === 'asc' ? 'desc' : 'asc') : 'asc'
+      setPipelineSortBy(field)
+      setPipelineSortDir(newDir)
+      void loadPipelineView(stageFilter, field, newDir)
     },
-    [activeView, pipelineSortDir, loadPipelineView],
+    [activeView, pipelineSortBy, pipelineSortDir, loadPipelineView],
   )
 
   const scrapeSelectedAsync = useCallback(async () => {
@@ -429,15 +427,13 @@ export function usePipelineViews(
 
   const onS4Sort = useCallback(
     (field: string) => {
-      setS4SortBy((prev) => {
-        const newDir: 'asc' | 'desc' = prev === field ? (s4SortDir === 'asc' ? 'desc' : 'asc') : 'asc'
-        const newField = field
-        setS4SortDir(newDir)
-        void loadS4View(newField, newDir)
-        return newField
-      })
+      const newDir: 'asc' | 'desc' =
+        s4SortBy === field ? (s4SortDir === 'asc' ? 'desc' : 'asc') : 'asc'
+      setS4SortBy(field)
+      setS4SortDir(newDir)
+      void loadS4View(field, newDir)
     },
-    [s4SortDir, loadS4View],
+    [s4SortBy, s4SortDir, loadS4View],
   )
 
   const validateSelectedAsync = useCallback(async () => {

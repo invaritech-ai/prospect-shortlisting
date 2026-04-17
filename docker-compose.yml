@@ -6,13 +6,13 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8001:8001"
     command: >
       sh -c "uv run alembic upgrade head &&
-             uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             uv run uvicorn app.main:app --host 0.0.0.0 --port 8001"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/v1/health/live >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8001/v1/health/live >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

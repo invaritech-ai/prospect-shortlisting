@@ -73,6 +73,10 @@ export function S3ContactFetchView({
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
+  const isSubFiltered = search !== ''
+  const displayCount = isSubFiltered ? visibleCompanies.length : (companies?.total ?? 0)
+  const effectiveTotalMatching = isSubFiltered ? visibleCompanies.length : totalMatching
+
   return (
     <div className="space-y-3">
       {/* Header */}
@@ -80,7 +84,7 @@ export function S3ContactFetchView({
         <div className="flex-1">
           <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
           <p className="text-xs text-(--oc-muted)">
-            Find contacts at qualified companies · {companies?.total != null ? `${companies.total.toLocaleString()} companies` : '—'}
+            Find contacts at qualified companies · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
           </p>
         </div>
         {/* Search */}
@@ -139,9 +143,9 @@ export function S3ContactFetchView({
         stageColor="--s3"
         stageBg="--s3-bg"
         selectedCount={selectedIds.length}
-        totalMatching={totalMatching}
+        totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 && !isSubFiltered ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
       >
