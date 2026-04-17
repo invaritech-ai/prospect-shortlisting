@@ -9,11 +9,13 @@ import type {
   ScrapePageContentRead,
 } from '../lib/types'
 import {
+  getScrapeJob,
   getAnalysisJobDetail,
   listRunJobs,
   listScrapeJobPageContents,
   upsertCompanyFeedback,
 } from '../lib/api'
+import { resolveScrapeJobRead } from '../lib/scrapeJobResolution'
 import { parseApiError } from '../lib/utils'
 
 export interface UsePanelsResult {
@@ -97,10 +99,11 @@ export function usePanels(
 
   // ── Markdown handlers ─────────────────────────────────────────────────────
   const openMarkdownDrawer = useCallback(async (job: ScrapeJobRead) => {
-    setMarkdownJob(job)
     setMarkdownPages([]); setActiveMarkdownPageKind(''); setMarkdownError(''); setMarkdownCopyState('')
     setIsMarkdownLoading(true)
     try {
+      const hydratedJob = await resolveScrapeJobRead(job, getScrapeJob)
+      setMarkdownJob(hydratedJob)
       const pages = await listScrapeJobPageContents(job.id)
       const withContent = pages.filter((p) => p.markdown_content.trim().length > 0)
       const filtered = withContent.sort((a, b) => {
@@ -111,7 +114,10 @@ export function usePanels(
       setMarkdownPages(filtered)
       setActiveMarkdownPageKind(filtered[0]?.page_kind ?? '')
       if (filtered.length === 0) setMarkdownError('No markdown available for this scrape job.')
-    } catch (err) { setMarkdownError(parseApiError(err)) }
+    } catch (err) {
+      setMarkdownJob(null)
+      setMarkdownError(parseApiError(err))
+    }
     finally { setIsMarkdownLoading(false) }
   }, [])
 
@@ -132,12 +138,16 @@ export function usePanels(
 
   // ── Diagnostics handlers ──────────────────────────────────────────────────
   const openScrapeDiagnostics = useCallback(async (job: ScrapeJobRead) => {
-    setDiagnosticsJob(job)
     setDiagnosticsPages([]); setDiagnosticsError(''); setIsDiagnosticsLoading(true)
     try {
+      const hydratedJob = await resolveScrapeJobRead(job, getScrapeJob)
+      setDiagnosticsJob(hydratedJob)
       const pages = await listScrapeJobPageContents(job.id)
       setDiagnosticsPages(pages)
-    } catch (err) { setDiagnosticsError(parseApiError(err)) }
+    } catch (err) {
+      setDiagnosticsJob(null)
+      setDiagnosticsError(parseApiError(err))
+    }
     finally { setIsDiagnosticsLoading(false) }
   }, [])
 
