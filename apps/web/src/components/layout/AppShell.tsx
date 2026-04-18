@@ -9,6 +9,7 @@ import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline 
 interface AppShellProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
+  activeCampaignName?: string | null
   stats: StatsResponse | null
   onOpenPromptLibrary: () => void
   children: ReactNode
@@ -16,6 +17,7 @@ interface AppShellProps {
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
   dashboard: { label: 'Dashboard', Icon: IconPulse },
+  campaigns: { label: 'Campaigns', Icon: IconBuilding },
   'full-pipeline': { label: 'Full Pipeline', Icon: IconTimeline },
   's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
   's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
@@ -28,6 +30,7 @@ const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'
 export function AppShell({
   activeView,
   setActiveView,
+  activeCampaignName,
   stats,
   onOpenPromptLibrary,
   children,
@@ -56,6 +59,7 @@ export function AppShell({
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
+        activeCampaignName={activeCampaignName}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />
@@ -83,7 +87,12 @@ export function AppShell({
             <Icon size={16} className="text-(--oc-accent) shrink-0" />
             <span className="text-sm font-bold text-(--oc-accent-ink) truncate">{label}</span>
           </div>
-          {stats && (stats.scrape.running > 0 || stats.analysis.running > 0) && (
+          {stats && (
+            stats.scrape.running > 0
+            || stats.analysis.running > 0
+            || (stats.contact_fetch?.running ?? 0) > 0
+            || (stats.validation?.running ?? 0) > 0
+          ) && (
             <span className="ml-auto relative flex h-2.5 w-2.5 shrink-0">
               <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-(--oc-accent) opacity-60" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-(--oc-accent)" />

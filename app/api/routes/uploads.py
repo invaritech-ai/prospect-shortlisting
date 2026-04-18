@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import case, func
 from sqlmodel import Session, col, select
 
@@ -17,7 +17,7 @@ from app.api.schemas.upload import (
     UploadValidationError,
 )
 from app.db.session import get_session
-from app.models import Company, Upload
+from app.models import Campaign, Company, Upload
 from app.services.upload_service import UploadIssue, UploadService
 
 
@@ -64,14 +64,18 @@ def _issues_from_upload(upload: Upload) -> list[UploadValidationError]:
 @router.post("/uploads", response_model=UploadCreateResult, status_code=status.HTTP_201_CREATED)
 async def create_upload(
     file: UploadFile = File(...),
+    campaign_id: UUID | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> UploadCreateResult:
     try:
+        if campaign_id is not None and session.get(Campaign, campaign_id) is None:
+            raise ValueError("Campaign not found.")
         raw_bytes = await file.read()
         upload, issues = upload_service.create_upload_from_file(
             session=session,
             filename=file.filename or "upload",
             raw_bytes=raw_bytes,
+            campaign_id=campaign_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
 from sqlmodel import Session, col, select
 
-from app.api.schemas.upload import CompanyScrapeRequest, CompanyScrapeResult
+from app.api.schemas.upload import CompanyScrapeAllRequest, CompanyScrapeRequest, CompanyScrapeResult
 from app.core.config import settings
 from app.db.session import get_session
 from app.models import Company, ScrapeJob
@@ -210,6 +210,7 @@ def scrape_selected_companies(
 
 @router.post("/companies/scrape-all", response_model=CompanyScrapeResult)
 def scrape_all_companies(
+    payload: CompanyScrapeAllRequest | None = Body(default=None),
     session: Session = Depends(get_session),
     upload_id: UUID | None = Query(default=None),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
@@ -219,7 +220,13 @@ def scrape_all_companies(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    request_payload = {"route": "companies/scrape-all", "upload_id": str(upload_id) if upload_id else None}
+    effective_upload_id = payload.upload_id if payload and payload.upload_id is not None else upload_id
+    scrape_rules = payload.scrape_rules.model_dump(exclude_none=True) if payload and payload.scrape_rules else None
+    request_payload = {
+        "route": "companies/scrape-all",
+        "upload_id": str(effective_upload_id) if effective_upload_id else None,
+        "scrape_rules": scrape_rules,
+    }
     try:
         replay = check_idempotency(
             namespace="scrape-all",
@@ -237,8 +244,8 @@ def scrape_all_companies(
 
     try:
         stmt = select(Company).order_by(col(Company.created_at).asc())
-        if upload_id is not None:
-            stmt = stmt.where(col(Company.upload_id) == upload_id)
+        if effective_upload_id is not None:
+            stmt = stmt.where(col(Company.upload_id) == effective_upload_id)
         companies = list(session.exec(stmt))
         if not companies:
             result = CompanyScrapeResult(
@@ -253,6 +260,7 @@ def scrape_all_companies(
             result = _enqueue_scrapes_for_companies(
                 session=session,
                 companies=companies,
+                scrape_rules=scrape_rules,
                 idempotency_key=idempotency_key,
             )
 

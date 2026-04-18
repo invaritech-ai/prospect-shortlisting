@@ -1,6 +1,10 @@
 import type {
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
+  CampaignCreate,
+  CampaignList,
+  CampaignRead,
+  CampaignUpdate,
   CompanyCounts,
   CompanyDeleteResult,
   CompanyIdsResult,
@@ -84,8 +88,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function uploadFile(file: File): Promise<UploadCreateResult> {
+  return uploadFileToCampaign(file)
+}
+
+export async function uploadFileToCampaign(file: File, campaignId?: string): Promise<UploadCreateResult> {
   const form = new FormData()
   form.append('file', file)
+  if (campaignId) form.append('campaign_id', campaignId)
   return request<UploadCreateResult>('/v1/uploads', {
     method: 'POST',
     body: form,
@@ -100,6 +109,38 @@ export async function listUploads(limit = 20, offset = 0): Promise<UploadList> {
   return request<UploadList>(`/v1/uploads?limit=${limit}&offset=${offset}`)
 }
 
+export async function listCampaigns(limit = 50, offset = 0): Promise<CampaignList> {
+  return request<CampaignList>(`/v1/campaigns?limit=${limit}&offset=${offset}`)
+}
+
+export async function createCampaign(payload: CampaignCreate): Promise<CampaignRead> {
+  return request<CampaignRead>('/v1/campaigns', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateCampaign(campaignId: string, payload: CampaignUpdate): Promise<CampaignRead> {
+  return request<CampaignRead>(`/v1/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteCampaign(campaignId: string): Promise<void> {
+  await request<void>(`/v1/campaigns/${campaignId}`, { method: 'DELETE' })
+}
+
+export async function assignUploadsToCampaign(campaignId: string, uploadIds: string[]): Promise<CampaignRead> {
+  return request<CampaignRead>(`/v1/campaigns/${campaignId}/assign-uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ upload_ids: uploadIds }),
+  })
+}
+
 export async function listCompanies(
   limit = 25,
   offset = 0,
@@ -111,9 +152,11 @@ export async function listCompanies(
   sortBy = 'domain',
   sortDir: 'asc' | 'desc' = 'asc',
   uploadId?: string,
+  letters?: string[],
 ): Promise<CompanyList> {
   let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sortBy)}&sort_dir=${sortDir}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
+  if (letters && letters.length > 0) url += `&letters=${encodeURIComponent(letters.join(','))}`
   if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
   return request<CompanyList>(url)
 }
@@ -144,13 +187,19 @@ export async function scrapeSelectedCompanies(
   })
 }
 
-export async function scrapeAllCompanies(options: { uploadId?: string; idempotencyKey?: string } = {}): Promise<CompanyScrapeResult> {
-  const params = new URLSearchParams()
-  if (options.uploadId) params.set('upload_id', options.uploadId)
-  const suffix = params.toString() ? `?${params.toString()}` : ''
-  return request<CompanyScrapeResult>(`/v1/companies/scrape-all${suffix}`, {
+export async function scrapeAllCompanies(
+  options: { uploadId?: string; idempotencyKey?: string; scrapeRules?: ScrapeRules } = {},
+): Promise<CompanyScrapeResult> {
+  return request<CompanyScrapeResult>('/v1/companies/scrape-all', {
     method: 'POST',
-    headers: options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : undefined,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
+    },
+    body: JSON.stringify({
+      upload_id: options.uploadId,
+      scrape_rules: options.scrapeRules,
+    }),
   })
 }
 
@@ -277,9 +326,11 @@ export async function listCompanyIds(
   stageFilter: CompanyStageFilter = 'all',
   letter: string | null = null,
   uploadId?: string,
+  letters?: string[],
 ): Promise<CompanyIdsResult> {
   let url = `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
+  if (letters && letters.length > 0) url += `&letters=${encodeURIComponent(letters.join(','))}`
   if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
   return request<CompanyIdsResult>(url)
 }
@@ -334,22 +385,30 @@ export async function listContacts(
     titleMatch?: boolean
     verificationStatus?: string
     stageFilter?: ContactStageFilter
+    staleDays?: number
     search?: string
     limit?: number
     offset?: number
     sortBy?: string
     sortDir?: 'asc' | 'desc'
+    letters?: string[]
+    uploadId?: string
+    countByLetters?: boolean
   } = {},
 ): Promise<ContactListResponse> {
   const params = new URLSearchParams()
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
   if (options.stageFilter) params.set('stage_filter', options.stageFilter)
+  if (options.staleDays) params.set('stale_days', String(options.staleDays))
   if (options.search) params.set('search', options.search)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   if (options.sortBy) params.set('sort_by', options.sortBy)
   if (options.sortDir) params.set('sort_dir', options.sortDir)
+  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
+  if (options.uploadId) params.set('upload_id', options.uploadId)
+  if (options.countByLetters) params.set('count_by_letters', 'true')
   return request<ContactListResponse>(`/v1/contacts?${params.toString()}`)
 }
 

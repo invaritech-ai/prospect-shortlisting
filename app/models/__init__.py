@@ -1,6 +1,7 @@
 from app.models.scrape import ScrapeJob, ScrapePage
 from app.models.pipeline import (
     AnalysisJob,
+    Campaign,
     ClassificationResult,
     Company,
     CompanyFeedback,
@@ -19,6 +20,7 @@ from app.models.pipeline import (
 __all__ = [
     "ScrapeJob",
     "ScrapePage",
+    "Campaign",
     "Upload",
     "Company",
     "CompanyFeedback",

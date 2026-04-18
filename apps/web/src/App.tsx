@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  assignUploadsToCampaign,
+  createCampaign,
   createRuns,
   createScrapeJob,
+  deleteCampaign,
   drainQueue,
   fetchContactsForCompany,
   fetchContactsForCompanyApollo,
@@ -12,14 +15,18 @@ import {
   getStats,
   listRuns,
   listScrapeJobs,
+  listCampaigns,
+  listUploads,
   resetStuckJobs,
   scrapeAllCompanies,
-  uploadFile,
+  uploadFileToCampaign,
 } from './lib/api'
 import type {
+  CampaignRead,
   CompanyCounts,
   CompanyListItem,
   ContactCountsResponse,
+  UploadRead,
   RunRead,
   ScrapeJobRead,
   StatsResponse,
@@ -42,6 +49,7 @@ import { S1ScrapingView } from './components/views/pipeline/S1ScrapingView'
 import { S2AIDecisionView } from './components/views/pipeline/S2AIDecisionView'
 import { S3ContactFetchView } from './components/views/pipeline/S3ContactFetchView'
 import { S4ValidationView } from './components/views/pipeline/S4ValidationView'
+import { CampaignsView } from './components/views/campaigns/CampaignsView'
 
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
@@ -82,6 +90,15 @@ function App() {
   // ── Recent data (for Dashboard) ───────────────────────────────────────────
   const [recentScrapeJobs, setRecentScrapeJobs] = useState<ScrapeJobRead[]>([])
   const [recentRuns, setRecentRuns] = useState<RunRead[]>([])
+  const [campaigns, setCampaigns] = useState<CampaignRead[]>([])
+  const [uploads, setUploads] = useState<UploadRead[]>([])
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
+  const [isCampaignLoading, setIsCampaignLoading] = useState(false)
+  const [isCampaignSaving, setIsCampaignSaving] = useState(false)
+  const activeCampaignName =
+    campaigns.find((c) => c.id === selectedCampaignId)?.name ??
+    campaigns[0]?.name ??
+    null
 
   // ── Per-row action state ──────────────────────────────────────────────────
   const [actionState, setActionState] = useState<Record<string, string>>({})
@@ -142,6 +159,32 @@ function App() {
     } catch { /* non-critical */ }
   }, [])
 
+  const loadCampaignData = useCallback(async () => {
+    setIsCampaignLoading(true)
+    try {
+      const [campaignRows, uploadRows] = await Promise.all([
+        listCampaigns(200, 0),
+        listUploads(200, 0),
+      ])
+      setCampaigns(campaignRows.items)
+      setUploads(uploadRows.items)
+      if (campaignRows.items.length > 0) {
+        if (selectedCampaignId && campaignRows.items.some((c) => c.id === selectedCampaignId)) {
+          // keep current selection
+        } else {
+          const pilot = campaignRows.items.find((c) => c.name.toLowerCase().includes('pilot'))
+          setSelectedCampaignId((pilot ?? campaignRows.items[0]).id)
+        }
+      } else if (selectedCampaignId) {
+        setSelectedCampaignId(null)
+      }
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsCampaignLoading(false)
+    }
+  }, [selectedCampaignId])
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -154,13 +197,14 @@ function App() {
     void loadCompanyCounts()
     void loadContactCounts()
     void loadRecentActivity()
+    void loadCampaignData()
     const timer = window.setInterval(() => {
       void loadStats()
       void loadCompanyCounts()
       void loadContactCounts()
     }, 10000)
     return () => window.clearInterval(timer)
-  }, [loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity])
+  }, [loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignData])
 
   useEffect(() => {
     if (!error) return
@@ -187,14 +231,64 @@ function App() {
     if (!file) { setError('Choose a file first.'); return }
     setError(''); setNotice(''); setIsUploading(true)
     try {
-      await uploadFile(file)
+      await uploadFileToCampaign(file, selectedCampaignId || undefined)
       setFile(null)
       void loadCompanyCounts()
       pipeline.refreshPipelineView()
       void loadRecentActivity()
-      setNotice('Upload parsed and companies refreshed.')
+      void loadCampaignData()
+      setNotice(
+        selectedCampaignId
+          ? 'Upload assigned to selected campaign and companies refreshed.'
+          : 'Upload parsed and companies refreshed.',
+      )
     } catch (err) { setError(parseApiError(err)) }
     finally { setIsUploading(false) }
+  }
+
+  const onCreateCampaign = async (name: string, description: string) => {
+    setIsCampaignSaving(true)
+    setError('')
+    try {
+      const created = await createCampaign({ name, description })
+      setSelectedCampaignId(created.id)
+      setNotice(`Campaign "${created.name}" created.`)
+      await loadCampaignData()
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsCampaignSaving(false)
+    }
+  }
+
+  const onDeleteCampaign = async (campaignId: string) => {
+    setIsCampaignSaving(true)
+    setError('')
+    try {
+      await deleteCampaign(campaignId)
+      if (selectedCampaignId === campaignId) setSelectedCampaignId(null)
+      setNotice('Campaign deleted.')
+      await loadCampaignData()
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsCampaignSaving(false)
+    }
+  }
+
+  const onAssignUploads = async (campaignId: string, uploadIds: string[]) => {
+    setIsCampaignSaving(true)
+    setError('')
+    try {
+      const updated = await assignUploadsToCampaign(campaignId, uploadIds)
+      setNotice(`Assigned ${uploadIds.length} upload(s) to "${updated.name}".`)
+      await loadCampaignData()
+      await loadCompanyCounts()
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsCampaignSaving(false)
+    }
   }
 
   // ── Per-row scrape (S1) ───────────────────────────────────────────────────
@@ -295,7 +389,7 @@ function App() {
   const runScrapeAll = async () => {
     setError(''); setNotice(''); setNoticeAction(null)
     try {
-      const result = await scrapeAllCompanies()
+      const result = await scrapeAllCompanies({ scrapeRules: pipeline.pipelineScrapeRules ?? undefined })
       void loadCompanyCounts()
       pipeline.refreshPipelineView()
       void loadRecentActivity()
@@ -328,6 +422,7 @@ function App() {
       <AppShell
         activeView={activeView}
         setActiveView={setActiveView}
+        activeCampaignName={activeCampaignName}
         stats={stats}
         onOpenPromptLibrary={promptMgmt.openPromptSheet}
       >
@@ -347,19 +442,40 @@ function App() {
           />
         )}
 
+        {activeView === 'campaigns' && (
+          <CampaignsView
+            campaigns={campaigns}
+            uploads={uploads}
+            selectedCampaignId={selectedCampaignId}
+            isLoading={isCampaignLoading}
+            isSaving={isCampaignSaving}
+            onSelectCampaign={setSelectedCampaignId}
+            onCreateCampaign={(name, description) => void onCreateCampaign(name, description)}
+            onDeleteCampaign={(campaignId) => void onDeleteCampaign(campaignId)}
+            onAssignUploads={(campaignId, uploadIds) => void onAssignUploads(campaignId, uploadIds)}
+          />
+        )}
+
         {activeView === 'full-pipeline' && (
           <FullPipelineView
             companies={pipeline.fullPipelineCompanies}
             letterCounts={pipeline.fullPipelineLetterCounts}
             activeLetter={pipeline.fullPipelineActiveLetter}
             selectedIds={pipeline.fullPipelineSelectedIds}
+            resumeActionState={pipeline.fullPipelineResumeState}
             isLoading={pipeline.isFullPipelineLoading}
+            offset={pipeline.fullPipelineOffset}
+            pageSize={pipeline.fullPipelinePageSize}
             isScraping={pipeline.isFullPipelineScraping}
             onLetterChange={pipeline.onFullPipelineLetterChange}
             onToggleRow={pipeline.onFullPipelineToggleRow}
             onToggleAll={pipeline.onFullPipelineToggleAll}
             onClearSelection={pipeline.onFullPipelineClearSelection}
             onScrapeSelected={pipeline.onFullPipelineScrapeSelected}
+            onResumeCompany={pipeline.onFullPipelineResumeCompany}
+            onPagePrev={pipeline.onFullPipelinePagePrev}
+            onPageNext={pipeline.onFullPipelinePageNext}
+            onPageSizeChange={pipeline.onFullPipelinePageSizeChange}
           />
         )}
 
@@ -369,6 +485,7 @@ function App() {
             letterCounts={pipeline.pipelineLetterCounts}
             activeLetters={pipeline.pipelineActiveLetters}
             scrapeSubFilter={pipeline.pipelineScrapeSubFilter}
+            scrapeRules={pipeline.pipelineScrapeRules}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
             isLoading={pipeline.isPipelineLoading}
@@ -379,6 +496,7 @@ function App() {
             isDrainingQueue={isDrainingQueue}
             actionState={actionState}
             onScrapeSubFilterChange={pipeline.onPipelineScrapeSubFilterChange}
+            onScrapeRulesChange={pipeline.onPipelineScrapeRulesChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -595,8 +713,11 @@ function App() {
       <CompanyContactsPreviewPanel
         company={panels.companyContactsCompany}
         contacts={panels.companyContacts}
+        summary={panels.companyContactSummary}
+        matchGapFilter={panels.companyContactGapFilter}
         isLoading={panels.isCompanyContactsLoading}
         error={panels.companyContactsError}
+        onMatchGapFilterChange={panels.setCompanyContactGapFilter}
         onClose={panels.closeCompanyContacts}
       />
 

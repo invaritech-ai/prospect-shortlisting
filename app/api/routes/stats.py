@@ -10,7 +10,7 @@ from sqlalchemy import case, literal_column
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
-from app.models import AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, ScrapeJob
+from app.models import AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, ProspectContact, ScrapeJob
 from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState
 
 
@@ -352,9 +352,67 @@ def _contact_fetch_stats(session: Session, upload_id: UUID | None = None) -> Pip
     )
 
 
-def _validation_stats(session: Session, upload_id: UUID | None = None) -> PipelineStageStats:  # noqa: ARG001
-    row = session.exec(
-        select(
+def _validation_stats(session: Session, upload_id: UUID | None = None) -> PipelineStageStats:
+    base_stmt = select(ContactVerifyJob)
+    if upload_id is not None:
+        company_contact_ids = set(
+            str(contact_id)
+            for contact_id in session.exec(
+                select(ProspectContact.id)
+                .join(Company, col(Company.id) == col(ProspectContact.company_id))
+                .where(col(Company.upload_id) == upload_id)
+            ).all()
+        )
+        if not company_contact_ids:
+            return PipelineStageStats(
+                total=0,
+                completed=0,
+                failed=0,
+                site_unavailable=0,
+                running=0,
+                queued=0,
+                stuck_count=0,
+                pct_done=0.0,
+                avg_job_sec=None,
+                eta_seconds=None,
+                eta_at=None,
+            )
+
+        matching_job_ids: list[UUID] = []
+        for job in session.exec(base_stmt).all():
+            contact_ids = job.contact_ids_json or []
+            if any(contact_id in company_contact_ids for contact_id in contact_ids):
+                matching_job_ids.append(job.id)
+        if not matching_job_ids:
+            return PipelineStageStats(
+                total=0,
+                completed=0,
+                failed=0,
+                site_unavailable=0,
+                running=0,
+                queued=0,
+                stuck_count=0,
+                pct_done=0.0,
+                avg_job_sec=None,
+                eta_seconds=None,
+                eta_at=None,
+            )
+        stats_stmt = select(
+            func.count().label("total"),
+            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("completed"),
+            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.FAILED, 1))).label("failed"),
+            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.RUNNING, 1))).label("running"),
+            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.QUEUED, 1))).label("queued"),
+            func.count(case((
+                col(ContactVerifyJob.terminal_state).is_(False)
+                & (col(ContactVerifyJob.state) == ContactVerifyJobState.RUNNING)
+                & col(ContactVerifyJob.lock_expires_at).is_not(None)
+                & (col(ContactVerifyJob.lock_expires_at) < _utcnow()),
+                1,
+            ))).label("stuck_count"),
+        ).select_from(ContactVerifyJob).where(col(ContactVerifyJob.id).in_(matching_job_ids))
+    else:
+        stats_stmt = select(
             func.count().label("total"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("completed"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.FAILED, 1))).label("failed"),
@@ -368,7 +426,7 @@ def _validation_stats(session: Session, upload_id: UUID | None = None) -> Pipeli
                 1,
             ))).label("stuck_count"),
         ).select_from(ContactVerifyJob)
-    ).one()
+    row = session.exec(stats_stmt).one()
     total = row.total or 0
     completed = row.completed or 0
     failed = row.failed or 0
@@ -424,7 +482,9 @@ def get_cost_stats(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> CostStatsResponse:
+    window_cutoff = _utcnow() - timedelta(days=window_days)
     statement = select(Company.id, Company.domain).order_by(col(Company.domain).asc())
+    statement = statement.where(col(Company.created_at) >= window_cutoff)
     if upload_id:
         statement = statement.where(col(Company.upload_id) == upload_id)
 

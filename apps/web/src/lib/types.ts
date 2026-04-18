@@ -7,6 +7,7 @@ export type UploadValidationError = {
 
 export type UploadRead = {
   id: string
+  campaign_id: string | null
   filename: string
   checksum: string
   row_count: number
@@ -27,6 +28,34 @@ export type UploadList = {
   limit: number
   offset: number
   items: UploadRead[]
+}
+
+export type CampaignRead = {
+  id: string
+  name: string
+  description: string | null
+  upload_count: number
+  company_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type CampaignList = {
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+  items: CampaignRead[]
+}
+
+export type CampaignCreate = {
+  name: string
+  description?: string | null
+}
+
+export type CampaignUpdate = {
+  name?: string
+  description?: string | null
 }
 
 export type CompanyRead = {
@@ -93,8 +122,8 @@ export type CompanyList = {
 
 export type DecisionFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap' | 'labeled'
 export type ScrapeFilter = 'all' | 'done' | 'failed' | 'none'
-export type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed'
-export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match'
+export type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed' | 'permanent' | 'soft'
+export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match' | 'stale_30d'
 
 export type CompanyIdsResult = {
   ids: string[]
@@ -418,6 +447,7 @@ export type ContactListResponse = {
   limit: number
   offset: number
   items: ProspectContactRead[]
+  letter_counts?: Record<string, number>
 }
 
 export type ContactFetchResult = {

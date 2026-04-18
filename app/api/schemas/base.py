@@ -16,7 +16,7 @@ class UTCReadModel(BaseModel):
 
     @model_validator(mode="after")
     def _ensure_utc(self) -> "UTCReadModel":
-        for field_name in self.model_fields:
+        for field_name in type(self).model_fields:
             value = getattr(self, field_name, None)
             if isinstance(value, datetime) and value.tzinfo is None:
                 setattr(self, field_name, value.replace(tzinfo=timezone.utc))

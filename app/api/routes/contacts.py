@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -45,6 +46,7 @@ from app.models.pipeline import (
     CompanyPipelineStage,
     ContactVerifyJobState,
     PredictedLabel,
+    utcnow,
 )
 from app.services.contact_service import (
     compute_title_rule_stats,
@@ -101,9 +103,19 @@ def _apply_contact_filters(
     verification_status: str | None = None,
     search: str | None = None,
     stage_filter: str = "all",
+    stale_days: int | None = None,
     company_id: UUID | None = None,
     company_ids: list[UUID] | None = None,
+    letters: list[str] | None = None,
 ):
+    if not isinstance(verification_status, str):
+        verification_status = getattr(verification_status, "default", None)
+    if not isinstance(search, str):
+        search = getattr(search, "default", None)
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
+    if not isinstance(stale_days, int):
+        stale_days = getattr(stale_days, "default", None)
     normalized_stage = _validate_contact_stage_filter(stage_filter)
     if company_id:
         stmt = stmt.where(col(ProspectContact.company_id) == company_id)
@@ -115,6 +127,15 @@ def _apply_contact_filters(
         stmt = stmt.where(col(ProspectContact.verification_status) == verification_status.strip().lower())
     if normalized_stage != "all":
         stmt = stmt.where(col(ProspectContact.pipeline_stage) == normalized_stage)
+    if stale_days is not None and stale_days > 0:
+        cutoff = utcnow() - timedelta(days=stale_days)
+        stmt = stmt.where(
+            col(ProspectContact.verification_status) != "unverified",
+            col(ProspectContact.pipeline_stage).in_(["verified", "campaign_ready"]),
+            col(ProspectContact.updated_at) <= cutoff,
+        )
+    if letters:
+        stmt = stmt.where(_domain_first_letter_expr().in_(letters))
     if search:
         term = f"%{search.lower()}%"
         stmt = stmt.where(
@@ -562,19 +583,59 @@ _CONTACT_SORT_FIELDS = frozenset(
 )
 
 
+def _domain_first_letter_expr():
+    return func.lower(func.substr(Company.domain, 1, 1))
+
+
+def _parse_letters(letters: str | None) -> list[str]:
+    if not isinstance(letters, str):
+        letters = getattr(letters, "default", None)
+    if not letters:
+        return []
+    normalized = sorted({part.strip().lower() for part in letters.split(",") if part.strip()})
+    return [ltr for ltr in normalized if len(ltr) == 1 and "a" <= ltr <= "z"]
+
+
 @router.get("/contacts", response_model=ContactListResponse)
 def list_all_contacts(
     title_match: bool | None = Query(default=None),
     verification_status: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
+    stale_days: int | None = Query(default=None, ge=1, le=365),
     search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     sort_by: str = Query(default="domain"),
     sort_dir: str = Query(default="asc"),
+    letters: str | None = Query(default=None),
+    count_by_letters: bool = Query(default=False),
     upload_id: UUID | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> ContactListResponse:
+    if not isinstance(title_match, bool):
+        title_match = getattr(title_match, "default", None)
+    if not isinstance(verification_status, str):
+        verification_status = getattr(verification_status, "default", None)
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
+    if not isinstance(stale_days, int):
+        stale_days = getattr(stale_days, "default", None)
+    if not isinstance(search, str):
+        search = getattr(search, "default", None)
+    if not isinstance(limit, int):
+        limit = int(getattr(limit, "default", 50))
+    if not isinstance(offset, int):
+        offset = int(getattr(offset, "default", 0))
+    if not isinstance(sort_by, str):
+        sort_by = getattr(sort_by, "default", "domain")
+    if not isinstance(sort_dir, str):
+        sort_dir = getattr(sort_dir, "default", "asc")
+    if not isinstance(count_by_letters, bool):
+        count_by_letters = bool(getattr(count_by_letters, "default", False))
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+
+    letter_values = _parse_letters(letters)
     q = select(ProspectContact, Company.domain).join(
         Company, col(Company.id) == col(ProspectContact.company_id)
     )
@@ -584,14 +645,21 @@ def list_all_contacts(
         verification_status=verification_status,
         search=search,
         stage_filter=stage_filter,
+        stale_days=stale_days,
+        letters=letter_values or None,
     )
     if upload_id is not None:
         q = q.where(col(Company.upload_id) == upload_id)
 
     total = session.exec(select(func.count()).select_from(q.subquery())).one()
 
-    _sb = sort_by if sort_by in _CONTACT_SORT_FIELDS else "domain"
-    _sd = "desc" if sort_dir.lower() == "desc" else "asc"
+    if sort_by not in _CONTACT_SORT_FIELDS:
+        raise HTTPException(status_code=422, detail="Invalid sort_by.")
+    _sb = sort_by
+    _sort_dir_normalized = sort_dir.strip().lower()
+    if _sort_dir_normalized not in {"asc", "desc"}:
+        raise HTTPException(status_code=422, detail="Invalid sort_dir.")
+    _sd = _sort_dir_normalized
     _contact_sort_map = {
         "domain": col(Company.domain),
         "created_at": col(ProspectContact.created_at),
@@ -616,12 +684,38 @@ def list_all_contacts(
     for contact, domain in rows:
         items.append(ProspectContactRead.model_validate({**contact.__dict__, "domain": domain}))
 
+    letter_counts: dict[str, int] | None = None
+    if count_by_letters:
+        letter_expr = _domain_first_letter_expr()
+        letter_stmt = (
+            select(letter_expr.label("letter"), func.count().label("cnt"))
+            .select_from(ProspectContact)
+            .join(Company, col(Company.id) == col(ProspectContact.company_id))
+            .where(letter_expr.between("a", "z"))
+            .group_by(letter_expr)
+        )
+        letter_stmt = _apply_contact_filters(
+            letter_stmt,
+            title_match=title_match,
+            verification_status=verification_status,
+            search=search,
+            stage_filter=stage_filter,
+            stale_days=stale_days,
+        )
+        if upload_id is not None:
+            letter_stmt = letter_stmt.where(col(Company.upload_id) == upload_id)
+        letter_counts = {chr(ord("a") + i): 0 for i in range(26)}
+        for ltr, cnt in session.exec(letter_stmt).all():
+            if ltr in letter_counts:
+                letter_counts[ltr] = int(cnt)
+
     return ContactListResponse(
         total=total,
         has_more=(offset + len(items)) < total,
         limit=limit,
         offset=offset,
         items=items,
+        letter_counts=letter_counts,
     )
 
 

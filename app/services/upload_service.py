@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 from dataclasses import dataclass
+from uuid import UUID
 
 import pandas as pd
 import polars as pl
@@ -35,6 +36,7 @@ class UploadService:
         session: Session,
         filename: str,
         raw_bytes: bytes,
+        campaign_id: UUID | None = None,
     ) -> tuple[Upload, list[UploadIssue]]:
         if not raw_bytes:
             raise ValueError("Uploaded file is empty.")
@@ -117,6 +119,7 @@ class UploadService:
             company_rows.append((raw_url, normalized, domain, row_number))
 
         upload = Upload(
+            campaign_id=campaign_id,
             filename=filename or "upload",
             checksum=checksum,
             row_count=len(rows),

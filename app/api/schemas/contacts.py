@@ -6,8 +6,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.api.schemas.base import UTCReadModel
 
-class ProspectContactRead(BaseModel):
+
+class ProspectContactRead(UTCReadModel):
     id: UUID
     company_id: UUID
     contact_fetch_job_id: UUID
@@ -33,6 +35,7 @@ class ContactListResponse(BaseModel):
     limit: int
     offset: int
     items: list[ProspectContactRead]
+    letter_counts: dict[str, int] | None = None
 
 
 class ContactFetchResult(BaseModel):
@@ -44,7 +47,7 @@ class ContactFetchResult(BaseModel):
     idempotency_replayed: bool = False
 
 
-class TitleMatchRuleRead(BaseModel):
+class TitleMatchRuleRead(UTCReadModel):
     id: UUID
     rule_type: str
     match_type: str
@@ -98,7 +101,7 @@ class TitleRuleStatsResponse(BaseModel):
     total_matched: int
 
 
-class ContactCompanySummary(BaseModel):
+class ContactCompanySummary(UTCReadModel):
     company_id: UUID
     domain: str
     total_count: int

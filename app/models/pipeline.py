@@ -77,10 +77,21 @@ class ContactVerifyJobState(StrEnum):
     FAILED = "failed"
 
 
+class Campaign(SQLModel, table=True):
+    __tablename__ = "campaigns"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    name: str = Field(max_length=255, index=True)
+    description: str | None = Field(default=None, max_length=2000)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class Upload(SQLModel, table=True):
     __tablename__ = "uploads"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    campaign_id: UUID | None = Field(default=None, foreign_key="campaigns.id", index=True)
     filename: str = Field(max_length=1024)
     checksum: str = Field(max_length=128, index=True)
     row_count: int = Field(default=0, ge=0)

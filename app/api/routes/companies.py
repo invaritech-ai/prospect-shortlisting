@@ -42,6 +42,10 @@ from app.services.pipeline_service import recompute_company_stages
 router = APIRouter(prefix="/v1", tags=["companies"])
 
 
+def _domain_first_letter_expr():
+    return func.lower(func.substr(Company.domain, 1, 1))
+
+
 # ---------------------------------------------------------------------------
 # Shared subquery helpers
 # ---------------------------------------------------------------------------
@@ -119,6 +123,12 @@ _ALLOWED_STAGE_FILTERS = frozenset({"all", "uploaded", "scraped", "classified", 
 
 
 def _validate_filters(decision_filter: str, scrape_filter: str, stage_filter: str) -> tuple[str, str, str]:
+    if not isinstance(decision_filter, str):
+        decision_filter = getattr(decision_filter, "default", "all")
+    if not isinstance(scrape_filter, str):
+        scrape_filter = getattr(scrape_filter, "default", "all")
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
     ndf = decision_filter.strip().lower()
     nsf = scrape_filter.strip().lower()
     ngf = stage_filter.strip().lower()
@@ -222,11 +232,34 @@ def list_companies(
     scrape_filter: str = Query(default="all"),
     include_total: bool = Query(default=False),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
+    letters: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
     sort_by: str = Query(default="domain"),
     sort_dir: str = Query(default="asc"),
     upload_id: UUID | None = Query(default=None),
 ) -> CompanyList:
+    if not isinstance(limit, int):
+        limit = int(getattr(limit, "default", 25))
+    if not isinstance(offset, int):
+        offset = int(getattr(offset, "default", 0))
+    if not isinstance(include_total, bool):
+        include_total = bool(getattr(include_total, "default", False))
+    if not isinstance(letter, str):
+        letter = getattr(letter, "default", None)
+    if not isinstance(letters, str):
+        letters = getattr(letters, "default", None)
+    if not isinstance(sort_by, str):
+        sort_by = getattr(sort_by, "default", "domain")
+    if not isinstance(sort_dir, str):
+        sort_dir = getattr(sort_dir, "default", "asc")
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+
+    letter_values: list[str] = []
+    if letters:
+        letter_values = sorted({part.strip().lower() for part in letters.split(",") if part.strip()})
+        letter_values = [ltr for ltr in letter_values if len(ltr) == 1 and "a" <= ltr <= "z"]
+
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     latest_analysis = _latest_analysis_subquery()
@@ -286,12 +319,19 @@ def list_companies(
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
     statement = _apply_stage_filter(statement, normalized_stage_filter)
-    if letter is not None:
-        statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
+    if letter_values:
+        statement = statement.where(_domain_first_letter_expr().in_(letter_values))
+    elif letter is not None:
+        statement = statement.where(_domain_first_letter_expr() == letter.lower())
 
     # Build sort expression
-    _sort_by = sort_by if sort_by in _COMPANY_SORT_FIELDS else "domain"
-    _sort_dir = "desc" if sort_dir.lower() == "desc" else "asc"
+    if sort_by not in _COMPANY_SORT_FIELDS:
+        raise HTTPException(status_code=422, detail="Invalid sort_by.")
+    _sort_by = sort_by
+    _sort_dir_normalized = sort_dir.strip().lower()
+    if _sort_dir_normalized not in {"asc", "desc"}:
+        raise HTTPException(status_code=422, detail="Invalid sort_dir.")
+    _sort_dir = _sort_dir_normalized
 
     _sort_col_map = {
         "domain": col(Company.domain),
@@ -322,8 +362,10 @@ def list_companies(
         total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
         total_stmt = _apply_scrape_filter(total_stmt, latest_scrape, normalized_scrape_filter)
         total_stmt = _apply_stage_filter(total_stmt, normalized_stage_filter)
-        if letter is not None:
-            total_stmt = total_stmt.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
+        if letter_values:
+            total_stmt = total_stmt.where(_domain_first_letter_expr().in_(letter_values))
+        elif letter is not None:
+            total_stmt = total_stmt.where(_domain_first_letter_expr() == letter.lower())
         total = session.exec(total_stmt).one()
     items = [
         CompanyListItem(
@@ -335,7 +377,7 @@ def list_companies(
             domain=row[5],
             pipeline_stage=str(row[6]),
             created_at=row[7],
-            latest_decision=str(row[8]) if row[8] is not None else None,
+            latest_decision=str(row[8]).lower() if row[8] is not None else None,
             latest_confidence=row[9],
             latest_scrape_job_id=row[10],
             latest_scrape_status=str(row[11]) if row[11] is not None else None,
@@ -362,9 +404,15 @@ def list_company_ids(
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
+    letters: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
     upload_id: UUID | None = Query(default=None),
 ) -> CompanyIdsResult:
+    letter_values: list[str] = []
+    if letters:
+        letter_values = sorted({part.strip().lower() for part in letters.split(",") if part.strip()})
+        letter_values = [ltr for ltr in letter_values if len(ltr) == 1 and "a" <= ltr <= "z"]
+
     """Return all company IDs matching the given filters (no pagination) for bulk selection."""
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -386,8 +434,10 @@ def list_company_ids(
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
     statement = _apply_stage_filter(statement, normalized_stage_filter)
-    if letter is not None:
-        statement = statement.where(func.lower(func.left(Company.domain, 1)) == letter.lower())
+    if letter_values:
+        statement = statement.where(_domain_first_letter_expr().in_(letter_values))
+    elif letter is not None:
+        statement = statement.where(_domain_first_letter_expr() == letter.lower())
 
     ids = list(session.exec(statement))
     return CompanyIdsResult(ids=ids, total=len(ids))
@@ -410,7 +460,7 @@ def get_letter_counts(
     normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
         decision_filter, scrape_filter, stage_filter
     )
-    letter_expr = func.lower(func.left(Company.domain, 1))
+    letter_expr = _domain_first_letter_expr()
     stmt = (
         select(letter_expr.label("letter"), func.count().label("cnt"))
         .select_from(Company)
@@ -435,14 +485,19 @@ def get_letter_counts(
 
 
 @router.get("/companies/counts", response_model=CompanyCounts)
-def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts:
+def get_company_counts(
+    session: Session = Depends(get_session),
+    upload_id: UUID | None = Query(default=None),
+) -> CompanyCounts:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_classification.c.predicted_label)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
     scrape_status = latest_scrape.c.status
 
-    row = session.exec(
+    counts_stmt = (
         select(
             func.count().label("total"),
             func.sum(case((decision_lower == "", 1), else_=0)).label("unlabeled"),
@@ -457,14 +512,27 @@ def get_company_counts(session: Session = Depends(get_session)) -> CompanyCounts
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
-    ).one()
+    )
+    if upload_id is not None:
+        counts_stmt = counts_stmt.where(col(Company.upload_id) == upload_id)
+    row = session.exec(counts_stmt).one()
+
+    stage_stmt = select(
+        func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.UPLOADED, 1), else_=0)).label("uploaded"),
+        func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED, 1), else_=0)).label("scraped"),
+        func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.CLASSIFIED, 1), else_=0)).label("classified"),
+        func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.CONTACT_READY, 1), else_=0)).label("contact_ready"),
+    ).select_from(Company)
+    if upload_id is not None:
+        stage_stmt = stage_stmt.where(col(Company.upload_id) == upload_id)
+    stage_row = session.exec(stage_stmt).one()
 
     return CompanyCounts(
         total=row[0] or 0,
-        uploaded=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.UPLOADED)).one() or 0,
-        scraped=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED)).one() or 0,
-        classified=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.CLASSIFIED)).one() or 0,
-        contact_ready=session.exec(select(func.count()).select_from(Company).where(col(Company.pipeline_stage) == CompanyPipelineStage.CONTACT_READY)).one() or 0,
+        uploaded=stage_row.uploaded or 0,
+        scraped=stage_row.scraped or 0,
+        classified=stage_row.classified or 0,
+        contact_ready=stage_row.contact_ready or 0,
         unlabeled=row[1] or 0,
         possible=row[2] or 0,
         unknown=row[3] or 0,

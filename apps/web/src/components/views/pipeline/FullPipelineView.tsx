@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { CompanyList, CompanyListItem } from '../../../lib/types'
+import { getResumeStageForCompany } from '../../../lib/pipelineMappings'
 import { LetterStrip } from '../../ui/LetterStrip'
+import { Pager } from '../../ui/Pager'
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -18,8 +20,8 @@ function s1Status(c: CompanyListItem): CellStatus {
   if (s === 'created') return { label: 'Queued', variant: 'run' }
   if (s === 'running') return { label: 'Scraping…', variant: 'run' }
   if (s === 'cancelled') return { label: 'Cancelled', variant: 'neu' }
-  if (s === 'site_unavailable') return { label: 'Unavailable', variant: 'err' }
-  if (s === 'failed' || s === 'step1_failed') return { label: 'Failed', variant: 'err' }
+  if (s === 'site_unavailable') return { label: 'Permanent fail', variant: 'err' }
+  if (s === 'failed' || s === 'step1_failed') return { label: 'Soft fail', variant: 'warn' }
   return { label: s, variant: 'neu' }
 }
 
@@ -59,7 +61,7 @@ function s4Status(c: CompanyListItem): CellStatus {
 // analysis states: 'SUCCEEDED', 'DEAD', 'FAILED' (uppercase enum)
 // predicted_label: 'POSSIBLE', 'CRAP', 'UNKNOWN' (uppercase)
 // contact_fetch state: 'succeeded', 'failed' (lowercase)
-type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'cancelled' | 'complete' | 'has-failures'
+type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'cancelled' | 'complete' | 'has-failures' | 'permanent-failures' | 'soft-failures'
 
 function matchesStatus(c: CompanyListItem, f: StatusFilter): boolean {
   if (f === 'all') return true
@@ -89,6 +91,9 @@ function matchesStatus(c: CompanyListItem, f: StatusFilter): boolean {
       analysis === 'dead' ||
       contact === 'failed'
     )
+  if (f === 'permanent-failures') return scrape === 'site_unavailable'
+  if (f === 'soft-failures')
+    return scrape === 'failed' || scrape === 'step1_failed' || scrape === 'dead' || analysis === 'failed' || contact === 'failed'
   return true
 }
 
@@ -133,6 +138,8 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'complete', label: 'Complete' },
   { value: 'has-failures', label: 'Has failures' },
+  { value: 'permanent-failures', label: 'Permanent' },
+  { value: 'soft-failures', label: 'Soft' },
 ]
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -142,13 +149,20 @@ interface FullPipelineViewProps {
   letterCounts: Record<string, number>
   activeLetter: string | null
   selectedIds: string[]
+  resumeActionState: Record<string, string>
   isLoading: boolean
+  offset: number
+  pageSize: number
   onLetterChange: (l: string | null) => void
   onToggleRow: (id: string) => void
   onToggleAll: (ids: string[]) => void
   onClearSelection: () => void
   onScrapeSelected: () => void
+  onResumeCompany: (company: CompanyListItem) => void
   isScraping: boolean
+  onPagePrev: () => void
+  onPageNext: () => void
+  onPageSizeChange: (size: number) => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -158,20 +172,26 @@ export function FullPipelineView({
   letterCounts,
   activeLetter,
   selectedIds,
+  resumeActionState,
   isLoading,
+  offset,
+  pageSize,
   onLetterChange,
   onToggleRow,
   onToggleAll,
   onClearSelection,
   onScrapeSelected,
+  onResumeCompany,
   isScraping,
+  onPagePrev,
+  onPageNext,
+  onPageSizeChange,
 }: FullPipelineViewProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
 
   const allItems = companies?.items ?? []
-
   const visible = allItems.filter((c) => {
     if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     if (!matchesStatus(c, statusFilter)) return false
@@ -227,6 +247,16 @@ export function FullPipelineView({
             </button>
           ))}
         </div>
+        <span className="h-5 w-px bg-(--oc-border)" />
+        <Pager
+          offset={offset}
+          pageSize={pageSize}
+          total={companies?.total ?? null}
+          hasMore={companies?.has_more ?? false}
+          onPrev={onPagePrev}
+          onNext={onPageNext}
+          onPageSizeChange={onPageSizeChange}
+        />
       </div>
 
       {/* Selection bar */}
@@ -293,23 +323,28 @@ export function FullPipelineView({
                     </div>
                   </th>
                 ))}
+                <th className="min-w-32 p-3 text-left text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
+                  <td colSpan={7} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
                 </tr>
               )}
               {!isLoading && visible.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-sm text-(--oc-muted)">
+                  <td colSpan={7} className="p-8 text-center text-sm text-(--oc-muted)">
                     No companies match this filter.
                   </td>
                 </tr>
               )}
               {visible.map((c) => {
                 const isSelected = selectedSet.has(c.id)
+                const resumeStage = getResumeStageForCompany(c)
+                const resumeLabel = resumeActionState[c.id]
                 return (
                   <tr
                     key={c.id}
@@ -344,6 +379,20 @@ export function FullPipelineView({
                     <td className="p-3"><StatusBadge {...s2Status(c)} /></td>
                     <td className="p-3"><StatusBadge {...s3Status(c)} /></td>
                     <td className="p-3"><StatusBadge {...s4Status(c)} /></td>
+                    <td className="p-3">
+                      {resumeStage ? (
+                        <button
+                          type="button"
+                          onClick={() => onResumeCompany(c)}
+                          disabled={Boolean(resumeLabel)}
+                          className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-semibold transition hover:border-(--oc-accent) hover:text-(--oc-accent-ink) disabled:opacity-50"
+                        >
+                          {resumeLabel ?? `Resume ${resumeStage}`}
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-(--oc-muted)">—</span>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
@@ -356,7 +405,7 @@ export function FullPipelineView({
       {companies && (
         <div className="flex shrink-0 items-center justify-between border-t border-(--oc-border) px-4 py-2.5 text-xs text-(--oc-muted)">
           <span>
-            Showing {visible.length.toLocaleString()} of {(companies.total ?? 0).toLocaleString()} domains
+            Showing {visible.length.toLocaleString()} of {(allItems.length ?? 0).toLocaleString()} on this page
           </span>
           {companies.has_more && (
             <span className="text-xs text-(--oc-accent)">Scroll or adjust letter filter to see more</span>

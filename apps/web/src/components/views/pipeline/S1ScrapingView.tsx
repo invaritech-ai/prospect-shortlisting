@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, ScrapePageKind, ScrapeRules, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -11,6 +11,7 @@ interface S1ScrapingViewProps {
   letterCounts: Record<string, number>
   activeLetters: Set<string>
   scrapeSubFilter: ScrapeSubFilter
+  scrapeRules: ScrapeRules | null
   selectedIds: string[]
   totalMatching: number | null
   isLoading: boolean
@@ -23,6 +24,7 @@ interface S1ScrapingViewProps {
   offset: number
   pageSize: number
   onScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
+  onScrapeRulesChange: (rules: ScrapeRules | null) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -48,7 +50,42 @@ const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
   { value: 'active', label: 'In progress' },
   { value: 'done', label: 'Done' },
   { value: 'failed', label: 'Failed' },
+  { value: 'permanent', label: 'Permanent' },
+  { value: 'soft', label: 'Soft' },
 ]
+
+const PAGE_KIND_OPTIONS: Array<{ value: ScrapePageKind; label: string }> = [
+  { value: 'home', label: 'Home' },
+  { value: 'about', label: 'About' },
+  { value: 'products', label: 'Products' },
+  { value: 'contact', label: 'Contact' },
+  { value: 'team', label: 'Team' },
+  { value: 'leadership', label: 'Leadership' },
+  { value: 'services', label: 'Services' },
+  { value: 'pricing', label: 'Pricing' },
+]
+
+function normalizeScrapeRules(rules: ScrapeRules): ScrapeRules | null {
+  const pageKinds = [...new Set(rules.page_kinds ?? [])]
+  const fallbackEnabled = rules.fallback_enabled ?? true
+  const fallbackLimit = Math.max(0, Math.min(3, Number(rules.fallback_limit ?? 1)))
+  const fallbackPriority = [...new Set((rules.fallback_priority ?? []).filter((k) => k !== 'home'))]
+  const hasOverrides = pageKinds.length > 0
+    || rules.js_fallback != null
+    || rules.include_sitemap != null
+    || fallbackEnabled !== true
+    || fallbackLimit !== 1
+    || fallbackPriority.length > 0
+  if (!hasOverrides) return null
+  return {
+    page_kinds: pageKinds,
+    fallback_enabled: fallbackEnabled,
+    fallback_limit: fallbackLimit,
+    fallback_priority: fallbackPriority,
+    js_fallback: rules.js_fallback ?? null,
+    include_sitemap: rules.include_sitemap ?? null,
+  }
+}
 
 function scrapeBadgeClass(status: string): string {
   const s = status.toLowerCase()
@@ -61,11 +98,19 @@ function scrapeBadgeClass(status: string): string {
   return 'bg-slate-100 text-slate-600'
 }
 
+function scrapeBadgeLabel(status: string): string {
+  const s = status.toLowerCase()
+  if (s === 'site_unavailable') return 'site_unavailable (permanent)'
+  if (s === 'failed' || s === 'step1_failed') return `${s} (soft)`
+  return status
+}
+
 export function S1ScrapingView({
   companies,
   letterCounts,
   activeLetters,
   scrapeSubFilter,
+  scrapeRules,
   selectedIds,
   totalMatching,
   isLoading,
@@ -78,6 +123,7 @@ export function S1ScrapingView({
   offset,
   pageSize,
   onScrapeSubFilterChange,
+  onScrapeRulesChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -98,6 +144,12 @@ export function S1ScrapingView({
 }: S1ScrapingViewProps) {
   const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
+  const effectiveRules: ScrapeRules = scrapeRules ?? {
+    page_kinds: [],
+    fallback_enabled: true,
+    fallback_limit: 1,
+    fallback_priority: [],
+  }
 
   // 'active' is the only filter that can't be done server-side (no API equivalent),
   // so we client-filter on the loaded page. All other filters are applied server-side.
@@ -109,6 +161,14 @@ export function S1ScrapingView({
       const s = c.latest_scrape_status?.toLowerCase() ?? ''
       return s === 'queued' || s === 'created' || s === 'running'
     }
+    if (scrapeSubFilter === 'permanent') {
+      const s = c.latest_scrape_status?.toLowerCase() ?? ''
+      return s === 'site_unavailable'
+    }
+    if (scrapeSubFilter === 'soft') {
+      const s = c.latest_scrape_status?.toLowerCase() ?? ''
+      return s === 'failed' || s === 'step1_failed' || s === 'dead'
+    }
     return true
   })
 
@@ -118,7 +178,11 @@ export function S1ScrapingView({
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
   // Only client-side sub-filters count as "sub-filtered" for the total count/select-all logic
-  const isClientFiltered = scrapeSubFilter === 'active' || search !== ''
+  const isClientFiltered =
+    scrapeSubFilter === 'active'
+    || scrapeSubFilter === 'permanent'
+    || scrapeSubFilter === 'soft'
+    || search !== ''
   const displayCount = isClientFiltered ? visibleCompanies.length : (companies?.total ?? 0)
   const effectiveTotalMatching = isClientFiltered ? visibleCompanies.length : totalMatching
 
@@ -200,6 +264,70 @@ export function S1ScrapingView({
 
         {/* Letter strip */}
         <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} />
+
+        <div className="rounded-xl border border-(--oc-border) bg-white px-3 py-2.5">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-(--oc-muted)">Pages of interest</p>
+            <button
+              type="button"
+              onClick={() => onScrapeRulesChange(null)}
+              className="text-[11px] text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text)"
+            >
+              Reset defaults
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {PAGE_KIND_OPTIONS.map((option) => {
+              const selected = (effectiveRules.page_kinds ?? []).includes(option.value)
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    const nextKinds = selected
+                      ? (effectiveRules.page_kinds ?? []).filter((k) => k !== option.value)
+                      : [...(effectiveRules.page_kinds ?? []), option.value]
+                    onScrapeRulesChange(normalizeScrapeRules({ ...effectiveRules, page_kinds: nextKinds }))
+                  }}
+                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
+                    selected
+                      ? 'bg-(--s1) text-white'
+                      : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-(--oc-muted)">
+            <label className="inline-flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={effectiveRules.fallback_enabled ?? true}
+                onChange={(e) =>
+                  onScrapeRulesChange(normalizeScrapeRules({ ...effectiveRules, fallback_enabled: e.target.checked }))
+                }
+              />
+              Fallback
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              Limit
+              <select
+                value={String(effectiveRules.fallback_limit ?? 1)}
+                onChange={(e) =>
+                  onScrapeRulesChange(normalizeScrapeRules({ ...effectiveRules, fallback_limit: Number(e.target.value) }))
+                }
+                className="rounded border border-(--oc-border) bg-white px-1.5 py-0.5 text-[11px] text-(--oc-text)"
+              >
+                <option value="0">0</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+              </select>
+            </label>
+          </div>
+        </div>
 
         {/* Sub-filter chips + Pager */}
           <div className="flex items-center justify-between gap-2">
@@ -312,7 +440,7 @@ export function S1ScrapingView({
                 <td className="p-3">
                   {c.latest_scrape_status ? (
                     <Badge className={scrapeBadgeClass(c.latest_scrape_status)}>
-                      {c.latest_scrape_status}
+                      {scrapeBadgeLabel(c.latest_scrape_status)}
                     </Badge>
                   ) : (
                     <span className="text-xs text-(--oc-muted)">not scraped</span>
@@ -324,6 +452,9 @@ export function S1ScrapingView({
                       type="button"
                       onClick={() => onScrapeOne(c)}
                       disabled={!!actionState[c.id]}
+                      title={(c.latest_scrape_status ?? '').toLowerCase() === 'site_unavailable'
+                        ? 'Permanent failure marker exists. Retry will attempt recovery explicitly.'
+                        : undefined}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text) disabled:opacity-50"
                     >
                       {actionState[c.id] ?? 'Scrape'}

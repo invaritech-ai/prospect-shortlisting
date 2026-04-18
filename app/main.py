@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.analysis import router as analysis_router
+from app.api.routes.campaigns import router as campaigns_router
 from app.api.routes.contacts import router as contacts_router
 from app.api.routes.companies import router as companies_router
 from app.api.routes.prompts import router as prompts_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
         return {"status": "ready"}
 
     app.include_router(analysis_router)
+    app.include_router(campaigns_router)
     app.include_router(contacts_router)
     app.include_router(companies_router)
     app.include_router(prompts_router)

@@ -1,4 +1,5 @@
 import type { ContactCountsResponse, ContactListResponse, ProspectContactRead, S4VerifFilter } from '../../../lib/types'
+import { parseUTC } from '../../../lib/api'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
@@ -42,7 +43,22 @@ const VERIF_FILTERS: Array<{ value: S4VerifFilter; label: string; color?: string
   { value: 'unverified', label: 'Unverified' },
   { value: 'campaign_ready', label: 'Campaign ready', color: '#6b21a8' },
   { value: 'title_match', label: 'Title match only' },
+  { value: 'stale_30d', label: 'Stale >30d', color: '#b45309' },
 ]
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
+function getLastValidatedAt(contact: ProspectContactRead): Date | null {
+  if (!contact.verification_status || contact.verification_status.toLowerCase() === 'unverified') return null
+  if (contact.pipeline_stage !== 'verified' && contact.pipeline_stage !== 'campaign_ready') return null
+  return parseUTC(contact.updated_at)
+}
+
+function isStaleOver30Days(contact: ProspectContactRead): boolean {
+  const validatedAt = getLastValidatedAt(contact)
+  if (!validatedAt) return false
+  return (Date.now() - validatedAt.getTime()) > THIRTY_DAYS_MS
+}
 
 function verifBadge(contact: ProspectContactRead) {
   const s = contact.verification_status?.toLowerCase() ?? ''
@@ -93,11 +109,8 @@ export function S4ValidationView({
 }: S4ValidationViewProps) {
   const selectedSet = new Set(selectedContactIds)
 
-  // Server already applies verifFilter; client only applies letter filter
-  const visibleContacts = (contacts?.items ?? []).filter((c) => {
-    const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain?.[0]?.toLowerCase() ?? '')
-    return letterOk
-  })
+  // Server applies both verification and letter filters for paginated correctness.
+  const visibleContacts = contacts?.items ?? []
 
   const allVisibleSelected =
     visibleContacts.length > 0 && visibleContacts.every((c) => selectedSet.has(c.id))
@@ -223,6 +236,7 @@ export function S4ValidationView({
                   <td className="p-3"><div className="oc-skeleton h-5 w-12 rounded-full" /></td>
                   <td className="p-3"><div className="oc-skeleton h-4 w-24 rounded" /></td>
                   <td className="p-3"><div className="oc-skeleton h-5 w-16 rounded-full" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-4 w-24 rounded" /></td>
                   <td className="p-3"><div className="oc-skeleton h-5 w-20 rounded-full" /></td>
                 </tr>
               ))}
@@ -271,6 +285,7 @@ export function S4ValidationView({
                 <th className="p-3 text-left font-semibold">Source</th>
                 <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <th className="p-3 text-left font-semibold">Last validated</th>
                 <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               </tr>
             </thead>
@@ -349,6 +364,18 @@ export function S4ValidationView({
                       ) : (
                         <span className="text-[11px] text-(--oc-muted)">Unverified</span>
                       )}
+                    </td>
+                    <td className="p-3">
+                      {(() => {
+                        const validatedAt = getLastValidatedAt(contact)
+                        if (!validatedAt) return <span className="text-[11px] text-(--oc-muted)">Unknown</span>
+                        const stale = isStaleOver30Days(contact)
+                        return (
+                          <span className={`text-[11px] ${stale ? 'text-amber-700' : 'text-emerald-700'}`}>
+                            {validatedAt.toLocaleDateString()} {stale ? '(stale)' : '(fresh)'}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="p-3">
                       {sb ? (

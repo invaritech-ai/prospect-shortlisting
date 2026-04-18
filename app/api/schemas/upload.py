@@ -19,6 +19,7 @@ class UploadValidationError(BaseModel):
 
 class UploadRead(UTCReadModel):
     id: UUID
+    campaign_id: UUID | None = None
     filename: str
     checksum: str
     row_count: int
@@ -111,6 +112,11 @@ class CompanyScrapeRequest(BaseModel):
     company_ids: list[UUID] = Field(min_length=1)
     scrape_rules: ScrapeRules | None = None
     upload_id: UUID | None = None
+
+
+class CompanyScrapeAllRequest(BaseModel):
+    upload_id: UUID | None = None
+    scrape_rules: ScrapeRules | None = None
 
 
 class CompanyScrapeResult(BaseModel):

@@ -1,4 +1,5 @@
 Architecture and data pipeline overview: [docs/repository-mental-model.md](docs/repository-mental-model.md).
+Pre-merge guardrails for pipeline changes: [docs/pipeline-consistency-checklist.md](docs/pipeline-consistency-checklist.md).
 
 ## Run with Docker (API + Worker)
 
@@ -68,11 +69,17 @@ uv run pytest tests/test_idempotency_service.py tests/test_scrape_page_rules.py 
 Frontend API contract tests:
 
 ```bash
-node --test "apps/web/tests/apiContracts.test.ts"
+node --test "apps/web/tests/*.test.ts"
 ```
 
 Frontend build/type check:
 
 ```bash
 npm --prefix "/Users/avi/Documents/Projects/AI/Prospect_shortlisting/apps/web" run build
+```
+
+Backend regression suite (excluding exploratory scripts under `scripts/`):
+
+```bash
+uv run pytest -q tests
 ```

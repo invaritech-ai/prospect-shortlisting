@@ -13,6 +13,7 @@ import {
 interface SidebarProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
+  activeCampaignName?: string | null
   collapsed: boolean
   onToggleCollapsed: () => void
 }
@@ -24,6 +25,7 @@ const NAV_ITEMS: Array<{
   Icon: React.FC<{ className?: string; size?: number }>
 }> = [
   { value: 'dashboard', label: 'Dashboard', Icon: IconPulse },
+  { value: 'campaigns', label: 'Campaigns', Icon: IconBuilding },
   { value: 'full-pipeline', label: 'Full Pipeline', Icon: IconTimeline },
   { value: 's1-scraping', label: 'S1 · Scraping', stageColor: 'var(--s1)', Icon: IconGlobe },
   { value: 's2-ai', label: 'S2 · AI Decision', stageColor: 'var(--s2)', Icon: IconChart },
@@ -34,6 +36,7 @@ const NAV_ITEMS: Array<{
 export function Sidebar({
   activeView,
   setActiveView,
+  activeCampaignName,
   collapsed,
   onToggleCollapsed,
 }: SidebarProps) {
@@ -65,7 +68,14 @@ export function Sidebar({
             }}
           >
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-(--oc-muted)">Prospect</p>
-            <p className="text-sm font-extrabold text-[var(--oc-accent-ink)] leading-none">Console</p>
+            <p className="text-sm font-extrabold text-(--oc-accent-ink) leading-none">Console</p>
+            {activeCampaignName ? (
+              <p className="mt-1 truncate text-[11px] font-medium text-(--oc-muted)">
+                Campaign: <span className="font-semibold text-(--oc-text)">{activeCampaignName}</span>
+              </p>
+            ) : (
+              <p className="mt-1 truncate text-[11px] text-(--oc-muted)">Campaign: none</p>
+            )}
           </div>
         </div>
 
