@@ -113,7 +113,7 @@ def _latest_contact_fetch_subquery():
     )
 
 
-_ALLOWED_DECISION_FILTERS = frozenset({"all", "unlabeled", "possible", "unknown", "crap"})
+_ALLOWED_DECISION_FILTERS = frozenset({"all", "unlabeled", "possible", "unknown", "crap", "labeled"})
 _ALLOWED_SCRAPE_FILTERS = frozenset({"all", "done", "failed", "none"})
 _ALLOWED_STAGE_FILTERS = frozenset({"all", "uploaded", "scraped", "classified", "contact_ready", "has_scrape"})
 
@@ -135,6 +135,8 @@ def _validate_filters(decision_filter: str, scrape_filter: str, stage_filter: st
 def _apply_decision_filter(stmt, decision_lower, normalized_filter: str):
     if normalized_filter == "unlabeled":
         return stmt.where(decision_lower == "")
+    if normalized_filter == "labeled":
+        return stmt.where(decision_lower.in_(["possible", "unknown", "crap"]))
     if normalized_filter in {"possible", "unknown", "crap"}:
         return stmt.where(decision_lower == normalized_filter)
     return stmt

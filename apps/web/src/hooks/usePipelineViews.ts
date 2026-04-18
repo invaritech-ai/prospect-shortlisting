@@ -248,13 +248,14 @@ export function usePipelineViews(
 
   // ── Load on view change ────────────────────────────────────────────────────
   useEffect(() => {
-    const query = getPipelineCompanyQuery(activeView, 'all')
+    const defaultDecisionFilter: DecisionFilter = activeView === 's3-contacts' ? 'labeled' : 'all'
+    const query = getPipelineCompanyQuery(activeView, defaultDecisionFilter)
     if (query !== null) {
       const defaultScrapeSubFilter = getDefaultPipelineScrapeSubFilter(activeView)
       const defaultScrapeFilter = scrapeSubToFilter(defaultScrapeSubFilter)
       setPipelineSelectedIds([])
       setPipelineActiveLetters(new Set())
-      setPipelineDecisionFilter('all')
+      setPipelineDecisionFilter(defaultDecisionFilter)
       setPipelineManualLabelActionState({})
       setPipelineScrapeSubFilter(defaultScrapeSubFilter)
       setPipelineOffset(0)
@@ -269,12 +270,12 @@ export function usePipelineViews(
     } else if (activeView === 's4-validation') {
       setS4SelectedContactIds([])
       setS4ActiveLetters(new Set())
-      setS4VerifFilter('all')
+      setS4VerifFilter('valid')
       setS4Offset(0)
       setS4PageSize(DEFAULT_PAGE_SIZE)
       setS4SortBy('domain')
       setS4SortDir('asc')
-      void loadS4View('domain', 'asc', 'all', DEFAULT_PAGE_SIZE, 0)
+      void loadS4View('domain', 'asc', 'valid', DEFAULT_PAGE_SIZE, 0)
     }
   }, [activeView, loadPipelineView, loadFullPipelineView, loadS4View])
 

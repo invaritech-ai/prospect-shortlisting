@@ -40,10 +40,11 @@ interface S3ContactFetchViewProps {
 
 const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'unlabeled', label: 'Unlabeled' },
+  { value: 'labeled', label: 'Labeled' },
   { value: 'possible', label: 'Possible' },
   { value: 'unknown', label: 'Unknown' },
   { value: 'crap', label: 'Crap' },
+  { value: 'unlabeled', label: 'Unlabeled' },
 ]
 
 const FETCH_BUTTONS: Array<{ source: 'apollo' | 'snov' | 'both'; label: string; bg: string }> = [
