@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.api.schemas.base import UTCReadModel
+from app.api.schemas.scrape import ScrapeRules
 
 
 class UploadValidationError(BaseModel):
@@ -108,6 +109,8 @@ class CompanyDeleteResult(BaseModel):
 
 class CompanyScrapeRequest(BaseModel):
     company_ids: list[UUID] = Field(min_length=1)
+    scrape_rules: ScrapeRules | None = None
+    upload_id: UUID | None = None
 
 
 class CompanyScrapeResult(BaseModel):
@@ -115,6 +118,8 @@ class CompanyScrapeResult(BaseModel):
     queued_count: int
     queued_job_ids: list[UUID]
     failed_company_ids: list[UUID]
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False
 
 
 class CompanyIdsResult(BaseModel):

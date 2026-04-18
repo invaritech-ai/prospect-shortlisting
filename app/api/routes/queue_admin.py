@@ -12,6 +12,7 @@ from app.db.session import get_session
 from app.models import AnalysisJob, Run, ScrapeJob
 from app.models.pipeline import AnalysisJobState, RunStatus
 from app.services.pipeline_service import recompute_all_stages
+from app.services.scrape_rules_store import load_rules_for_job
 
 
 router = APIRouter(prefix="/v1", tags=["queue-admin"])
@@ -105,7 +106,7 @@ def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResul
         )
         session.commit()
         for job_id in stuck_ids:
-            scrape_website.delay(str(job_id))
+            scrape_website.delay(str(job_id), scrape_rules=load_rules_for_job(session=session, job_id=job_id))
 
     return ResetStuckResult(reset_count=len(stuck_ids))
 

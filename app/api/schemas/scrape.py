@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.api.schemas.base import UTCReadModel
+
+ScrapePageKind = Literal[
+    "home",
+    "about",
+    "products",
+    "contact",
+    "team",
+    "leadership",
+    "services",
+    "pricing",
+]
+
+
+class ScrapeRules(BaseModel):
+    page_kinds: list[ScrapePageKind] = Field(default_factory=list)
+    fallback_enabled: bool = True
+    fallback_limit: int = Field(default=1, ge=0, le=3)
+    fallback_priority: list[ScrapePageKind] = Field(default_factory=list)
+    js_fallback: bool | None = None
+    include_sitemap: bool | None = None
 
 
 class ScrapeJobCreate(BaseModel):
@@ -19,6 +40,7 @@ class ScrapeJobCreate(BaseModel):
     classify_model: str | None = Field(
         default=None, min_length=2, max_length=128
     )
+    scrape_rules: ScrapeRules | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -52,6 +74,9 @@ class ScrapeJobRead(UTCReadModel):
     updated_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    selected_page_kinds: list[ScrapePageKind] | None = None
+    effective_page_plan_count: int | None = None
+    effective_page_plan_json: list[dict[str, str]] | None = None
 
 
 class ScrapePageRead(UTCReadModel):
@@ -92,3 +117,5 @@ class JobEnqueueResult(BaseModel):
     job_id: UUID
     celery_task_id: str
     message: str
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False

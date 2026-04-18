@@ -5,7 +5,7 @@ import csv
 import io
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import Integer, case, func, or_, select as sa_select, text
 from sqlmodel import Session, col, select
 
@@ -18,6 +18,7 @@ from app.api.schemas.contacts import (
     ContactListResponse,
     ContactVerifyRequest,
     ContactVerifyResult,
+    MatchGapFilter,
     ProspectContactRead,
     RematchResult,
     TitleMatchRuleCreate,
@@ -51,18 +52,38 @@ from app.services.contact_service import (
     seed_title_rules,
     test_title_match_detailed,
 )
+from app.services.idempotency_service import (
+    IdempotencyConflictError,
+    IdempotencyUnavailableError,
+    check_idempotency,
+    clear_idempotency_reservation,
+    normalize_idempotency_key,
+    store_idempotency_response,
+)
 from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo, verify_contacts_batch
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
 
 _ALLOWED_CONTACT_STAGE_FILTERS = frozenset({"all", "fetched", "verified", "campaign_ready"})
+_ALLOWED_MATCH_GAP_FILTERS = frozenset({"all", "contacts_no_match", "matched_no_email", "ready_candidates"})
 
 
 def _validate_contact_stage_filter(stage_filter: str) -> str:
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
     normalized = (stage_filter or "all").strip().lower()
     if normalized not in _ALLOWED_CONTACT_STAGE_FILTERS:
         raise HTTPException(status_code=422, detail="Invalid stage_filter.")
     return normalized
+
+
+def _validate_match_gap_filter(value: str) -> MatchGapFilter:
+    if not isinstance(value, str):
+        value = getattr(value, "default", "all")
+    normalized = (value or "all").strip().lower()
+    if normalized not in _ALLOWED_MATCH_GAP_FILTERS:
+        raise HTTPException(status_code=422, detail="Invalid match_gap_filter.")
+    return normalized  # type: ignore[return-value]
 
 
 def _verification_eligible_condition():
@@ -283,30 +304,69 @@ def fetch_apollo_contacts_for_run(
 def fetch_contacts_selected(
     payload: BulkContactFetchRequest,
     session: Session = Depends(get_session),
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ) -> ContactFetchResult:
-    requested_ids = list(dict.fromkeys(payload.company_ids))
-    companies = list(
-        session.exec(select(Company).where(col(Company.id).in_(requested_ids)))
-    )
-    if not companies:
-        raise HTTPException(status_code=404, detail="No matching companies found.")
+    try:
+        idempotency_key = normalize_idempotency_key(x_idempotency_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    request_payload = payload.model_dump(mode="json", exclude_none=True)
+    request_payload["route"] = "companies/fetch-contacts-selected"
+    try:
+        replay = check_idempotency(
+            namespace="contacts-fetch-selected",
+            idempotency_key=idempotency_key,
+            payload=request_payload,
+        )
+    except IdempotencyUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if replay.replayed and replay.response is not None:
+        response_payload = dict(replay.response)
+        response_payload["idempotency_replayed"] = True
+        return ContactFetchResult(**response_payload)
 
-    providers: list[str] = ["snov", "apollo"] if payload.source == "both" else [payload.source]
-    total_queued, total_already_fetching = 0, 0
-    all_job_ids: list[UUID] = []
+    try:
+        requested_ids = list(dict.fromkeys(payload.company_ids))
+        companies = list(
+            session.exec(select(Company).where(col(Company.id).in_(requested_ids)))
+        )
+        if not companies:
+            raise HTTPException(status_code=404, detail="No matching companies found.")
 
-    for provider in providers:
-        r = _enqueue_contact_fetches(session=session, companies=companies, provider=provider)
-        total_queued += r.queued_count
-        total_already_fetching = max(total_already_fetching, r.already_fetching_count)
-        all_job_ids.extend(r.queued_job_ids)
+        providers: list[str] = ["snov", "apollo"] if payload.source == "both" else [payload.source]
+        total_queued, total_already_fetching = 0, 0
+        all_job_ids: list[UUID] = []
 
-    return ContactFetchResult(
-        requested_count=len(companies),
-        queued_count=total_queued,
-        already_fetching_count=total_already_fetching,
-        queued_job_ids=all_job_ids,
-    )
+        for provider in providers:
+            r = _enqueue_contact_fetches(session=session, companies=companies, provider=provider)
+            total_queued += r.queued_count
+            total_already_fetching = max(total_already_fetching, r.already_fetching_count)
+            all_job_ids.extend(r.queued_job_ids)
+
+        result = ContactFetchResult(
+            requested_count=len(companies),
+            queued_count=total_queued,
+            already_fetching_count=total_already_fetching,
+            queued_job_ids=all_job_ids,
+            idempotency_key=idempotency_key,
+            idempotency_replayed=False,
+        )
+        store_idempotency_response(
+            namespace="contacts-fetch-selected",
+            idempotency_key=idempotency_key,
+            payload=request_payload,
+            response=result.model_dump(mode="json"),
+        )
+        return result
+    except Exception:
+        clear_idempotency_reservation(
+            namespace="contacts-fetch-selected",
+            idempotency_key=idempotency_key,
+            payload=request_payload,
+        )
+        raise
 
 
 @router.get("/companies/{company_id}/contacts", response_model=ContactListResponse)
@@ -357,17 +417,58 @@ def list_contacts_by_company(
     title_match: bool | None = Query(default=None),
     verification_status: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
+    match_gap_filter: str = Query(default="all"),
+    upload_id: UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> ContactCompanyListResponse:
+    if not isinstance(search, str):
+        search = getattr(search, "default", None)
+    if not isinstance(verification_status, str):
+        verification_status = getattr(verification_status, "default", None)
+    if not isinstance(title_match, bool):
+        title_match = getattr(title_match, "default", None)
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    if not isinstance(limit, int):
+        limit = int(getattr(limit, "default", 50))
+    if not isinstance(offset, int):
+        offset = int(getattr(offset, "default", 0))
+
     normalized_stage = _validate_contact_stage_filter(stage_filter)
+    normalized_gap = _validate_match_gap_filter(match_gap_filter)
+    latest_contact_attempt = (
+        sa_select(
+            col(ContactFetchJob.company_id).label("company_id"),
+            func.max(func.coalesce(col(ContactFetchJob.updated_at), col(ContactFetchJob.created_at))).label("last_attempted_at"),
+        )
+        .group_by(col(ContactFetchJob.company_id))
+        .subquery()
+    )
     stmt = (
         sa_select(
             col(Company.id).label("company_id"),
             col(Company.domain).label("domain"),
             func.count(col(ProspectContact.id)).label("total_count"),
             func.coalesce(func.sum(col(ProspectContact.title_match).cast(Integer)), 0).label("title_matched_count"),
+            (
+                func.count(col(ProspectContact.id))
+                - func.coalesce(func.sum(col(ProspectContact.title_match).cast(Integer)), 0)
+            ).label("unmatched_count"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            col(ProspectContact.title_match).is_(True)
+                            & col(ProspectContact.email).is_(None),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("matched_no_email_count"),
             func.count(col(ProspectContact.email)).label("email_count"),
             func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "fetched", 1), else_=0)), 0).label("fetched_count"),
             func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "verified", 1), else_=0)), 0).label("verified_count"),
@@ -386,11 +487,15 @@ def list_contacts_by_company(
                 ),
                 0,
             ).label("eligible_verify_count"),
+            latest_contact_attempt.c.last_attempted_at.label("last_contact_attempted_at"),
         )
         .select_from(Company)
         .join(ProspectContact, col(ProspectContact.company_id) == col(Company.id))
-        .group_by(col(Company.id), col(Company.domain))
+        .outerjoin(latest_contact_attempt, latest_contact_attempt.c.company_id == col(Company.id))
+        .group_by(col(Company.id), col(Company.domain), latest_contact_attempt.c.last_attempted_at)
     )
+    if upload_id is not None:
+        stmt = stmt.where(col(Company.upload_id) == upload_id)
     if search:
         stmt = stmt.where(func.lower(col(Company.domain)).like(f"%{search.lower()}%"))
     if title_match is not None:
@@ -399,6 +504,28 @@ def list_contacts_by_company(
         stmt = stmt.where(col(ProspectContact.verification_status) == verification_status.strip().lower())
     if normalized_stage != "all":
         stmt = stmt.where(col(ProspectContact.pipeline_stage) == normalized_stage)
+    if normalized_gap == "contacts_no_match":
+        stmt = stmt.having(func.coalesce(func.sum(col(ProspectContact.title_match).cast(Integer)), 0) == 0)
+    elif normalized_gap == "matched_no_email":
+        stmt = stmt.having(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            col(ProspectContact.title_match).is_(True)
+                            & col(ProspectContact.email).is_(None),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ) > 0
+        )
+    elif normalized_gap == "ready_candidates":
+        stmt = stmt.having(
+            func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "campaign_ready", 1), else_=0)), 0) > 0
+        )
 
     total = session.execute(sa_select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = session.execute(
@@ -416,11 +543,14 @@ def list_contacts_by_company(
                 domain=row.domain,
                 total_count=row.total_count,
                 title_matched_count=row.title_matched_count,
+                unmatched_count=row.unmatched_count,
+                matched_no_email_count=row.matched_no_email_count,
                 email_count=row.email_count,
                 fetched_count=row.fetched_count,
                 verified_count=row.verified_count,
                 campaign_ready_count=row.campaign_ready_count,
                 eligible_verify_count=row.eligible_verify_count,
+                last_contact_attempted_at=row.last_contact_attempted_at,
             )
             for row in rows
         ],
@@ -442,6 +572,7 @@ def list_all_contacts(
     offset: int = Query(default=0, ge=0),
     sort_by: str = Query(default="domain"),
     sort_dir: str = Query(default="asc"),
+    upload_id: UUID | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> ContactListResponse:
     q = select(ProspectContact, Company.domain).join(
@@ -454,6 +585,8 @@ def list_all_contacts(
         search=search,
         stage_filter=stage_filter,
     )
+    if upload_id is not None:
+        q = q.where(col(Company.upload_id) == upload_id)
 
     total = session.exec(select(func.count()).select_from(q.subquery())).one()
 
@@ -493,28 +626,36 @@ def list_all_contacts(
 
 
 @router.get("/contacts/counts", response_model=ContactCountsResponse)
-def get_contact_counts(session: Session = Depends(get_session)) -> ContactCountsResponse:
+def get_contact_counts(
+    session: Session = Depends(get_session),
+    upload_id: UUID | None = Query(default=None),
+) -> ContactCountsResponse:
+    statement = select(
+        func.count().label("total"),
+        func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "fetched", 1), else_=0)), 0).label("fetched"),
+        func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "verified", 1), else_=0)), 0).label("verified"),
+        func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "campaign_ready", 1), else_=0)), 0).label("campaign_ready"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        col(ProspectContact.title_match).is_(True)
+                        & col(ProspectContact.email).is_not(None)
+                        & (col(ProspectContact.verification_status) == "unverified"),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("eligible_verify"),
+    ).select_from(ProspectContact)
+    if upload_id is not None:
+        statement = statement.join(Company, col(Company.id) == col(ProspectContact.company_id)).where(
+            col(Company.upload_id) == upload_id
+        )
     row = session.exec(
-        select(
-            func.count().label("total"),
-            func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "fetched", 1), else_=0)), 0).label("fetched"),
-            func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "verified", 1), else_=0)), 0).label("verified"),
-            func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "campaign_ready", 1), else_=0)), 0).label("campaign_ready"),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            col(ProspectContact.title_match).is_(True)
-                            & col(ProspectContact.email).is_not(None)
-                            & (col(ProspectContact.verification_status) == "unverified"),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("eligible_verify"),
-        ).select_from(ProspectContact)
+        statement
     ).one()
 
     return ContactCountsResponse(
@@ -532,6 +673,7 @@ def export_contacts_csv(
     verification_status: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
     company_id: UUID | None = Query(default=None),
+    upload_id: UUID | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> Response:
     q = select(ProspectContact, Company.domain).join(
@@ -544,6 +686,8 @@ def export_contacts_csv(
         stage_filter=stage_filter,
         company_id=company_id,
     )
+    if upload_id is not None:
+        q = q.where(col(Company.upload_id) == upload_id)
 
     rows = list(session.exec(q.order_by(col(ProspectContact.created_at).desc())).all())
 
@@ -588,34 +732,73 @@ def export_contacts_csv(
 def verify_contacts(
     payload: ContactVerifyRequest,
     session: Session = Depends(get_session),
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ) -> ContactVerifyResult:
-    contact_ids = _select_verification_contact_ids(session, payload)
-    if not contact_ids:
-        raise HTTPException(status_code=422, detail="No eligible contacts to verify.")
-
-    job = ContactVerifyJob(
-        state=ContactVerifyJobState.QUEUED,
-        terminal_state=False,
-        filter_snapshot_json=payload.model_dump(mode="json", exclude_none=True),
-        contact_ids_json=[str(contact_id) for contact_id in contact_ids],
-        selected_count=len(contact_ids),
-        verified_count=0,
-        skipped_count=0,
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
+    try:
+        idempotency_key = normalize_idempotency_key(x_idempotency_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    request_payload = payload.model_dump(mode="json", exclude_none=True)
+    request_payload["route"] = "contacts/verify"
+    try:
+        replay = check_idempotency(
+            namespace="contacts-verify",
+            idempotency_key=idempotency_key,
+            payload=request_payload,
+        )
+    except IdempotencyUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if replay.replayed and replay.response is not None:
+        response_payload = dict(replay.response)
+        response_payload["idempotency_replayed"] = True
+        return ContactVerifyResult(**response_payload)
 
     try:
-        verify_contacts_batch.delay(str(job.id))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
+        contact_ids = _select_verification_contact_ids(session, payload)
+        if not contact_ids:
+            raise HTTPException(status_code=422, detail="No eligible contacts to verify.")
 
-    return ContactVerifyResult(
-        job_id=job.id,
-        selected_count=len(contact_ids),
-        message=f"Queued ZeroBounce verification for {len(contact_ids)} contacts.",
-    )
+        job = ContactVerifyJob(
+            state=ContactVerifyJobState.QUEUED,
+            terminal_state=False,
+            filter_snapshot_json=payload.model_dump(mode="json", exclude_none=True),
+            contact_ids_json=[str(contact_id) for contact_id in contact_ids],
+            selected_count=len(contact_ids),
+            verified_count=0,
+            skipped_count=0,
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        try:
+            verify_contacts_batch.delay(str(job.id))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
+
+        result = ContactVerifyResult(
+            job_id=job.id,
+            selected_count=len(contact_ids),
+            message=f"Queued ZeroBounce verification for {len(contact_ids)} contacts.",
+            idempotency_key=idempotency_key,
+            idempotency_replayed=False,
+        )
+        store_idempotency_response(
+            namespace="contacts-verify",
+            idempotency_key=idempotency_key,
+            payload=request_payload,
+            response=result.model_dump(mode="json"),
+        )
+        return result
+    except Exception:
+        clear_idempotency_reservation(
+            namespace="contacts-verify",
+            idempotency_key=idempotency_key,
+            payload=request_payload,
+        )
+        raise
 
 
 @router.get("/title-match-rules", response_model=list[TitleMatchRuleRead])

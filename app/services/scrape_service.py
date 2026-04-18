@@ -26,7 +26,7 @@ from app.services.fetch_service import (
     should_skip_url,
     stealth_fetch_many,
 )
-from app.services.link_service import discover_focus_targets
+from app.services.link_service import apply_page_selection_rules, discover_focus_targets
 from app.services.markdown_service import MarkdownService
 from app.services.pipeline_service import recompute_company_stages
 from app.services.url_utils import canonical_internal_url, clean_text, domain_from_url, normalize_url
@@ -171,7 +171,13 @@ class ScrapeService:
         session.refresh(job)
         return job
 
-    async def run_scrape(self, *, engine: Engine, job_id: Any) -> None:
+    async def run_scrape(
+        self,
+        *,
+        engine: Engine,
+        job_id: Any,
+        scrape_rules: dict | None = None,
+    ) -> None:
         """Single-pass scrape: DNS check → discover pages → fetch → markdown → write.
 
         Uses a CAS lock so that if Celery re-delivers the task (e.g. after a
@@ -258,8 +264,9 @@ class ScrapeService:
             use_js_fallback=js_fallback,
             classify_model=classify_model,
         )
+        selected_targets = apply_page_selection_rules(targets=targets, rules=scrape_rules)
         log_event(logger, "scrape_discover_done", job_id=str(job_id), domain=domain,
-                  targets={k: v for k, v in targets.items() if v})
+                  targets={k: v for k, v in selected_targets.items() if v})
 
         seen_urls: set[str] = set()
         fetched_pages: list[dict] = []
@@ -270,7 +277,7 @@ class ScrapeService:
         # to avoid a predictable crawl pattern that bot detectors can fingerprint.
         page_plan: list[tuple[str, str, int]] = []  # (kind, canonical_url, depth)
         for kind, depth in _PAGE_KINDS:
-            target_url = targets.get(kind, "")
+            target_url = selected_targets.get(kind, "")
             canonical = canonical_internal_url(target_url, domain) if target_url else ""
             if not canonical or canonical in seen_urls:
                 continue

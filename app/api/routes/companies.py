@@ -225,6 +225,7 @@ def list_companies(
     stage_filter: str = Query(default="all"),
     sort_by: str = Query(default="domain"),
     sort_dir: str = Query(default="asc"),
+    upload_id: UUID | None = Query(default=None),
 ) -> CompanyList:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -280,6 +281,8 @@ def list_companies(
         .outerjoin(contact_counts, contact_counts.c.company_id == Company.id)
         .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
     )
+    if upload_id is not None:
+        statement = statement.where(col(Company.upload_id) == upload_id)
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
     statement = _apply_stage_filter(statement, normalized_stage_filter)
@@ -314,6 +317,8 @@ def list_companies(
             .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
             .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         )
+        if upload_id is not None:
+            total_stmt = total_stmt.where(col(Company.upload_id) == upload_id)
         total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
         total_stmt = _apply_scrape_filter(total_stmt, latest_scrape, normalized_scrape_filter)
         total_stmt = _apply_stage_filter(total_stmt, normalized_stage_filter)
@@ -358,6 +363,7 @@ def list_company_ids(
     scrape_filter: str = Query(default="all"),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
     stage_filter: str = Query(default="all"),
+    upload_id: UUID | None = Query(default=None),
 ) -> CompanyIdsResult:
     """Return all company IDs matching the given filters (no pagination) for bulk selection."""
     latest_classification = _latest_classification_subquery()
@@ -375,6 +381,8 @@ def list_company_ids(
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
+    if upload_id is not None:
+        statement = statement.where(col(Company.upload_id) == upload_id)
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
     statement = _apply_stage_filter(statement, normalized_stage_filter)
@@ -391,6 +399,7 @@ def get_letter_counts(
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     stage_filter: str = Query(default="all"),
+    upload_id: UUID | None = Query(default=None),
 ) -> LetterCounts:
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
@@ -411,6 +420,8 @@ def get_letter_counts(
         .where(letter_expr.between("a", "z"))
         .group_by(letter_expr)
     )
+    if upload_id is not None:
+        stmt = stmt.where(col(Company.upload_id) == upload_id)
     stmt = _apply_decision_filter(stmt, decision_lower, normalized_filter)
     stmt = _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter)
     stmt = _apply_stage_filter(stmt, normalized_stage_filter)

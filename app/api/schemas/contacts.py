@@ -40,6 +40,8 @@ class ContactFetchResult(BaseModel):
     queued_count: int
     already_fetching_count: int
     queued_job_ids: list[UUID]
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False
 
 
 class TitleMatchRuleRead(BaseModel):
@@ -101,11 +103,14 @@ class ContactCompanySummary(BaseModel):
     domain: str
     total_count: int
     title_matched_count: int
+    unmatched_count: int = 0
+    matched_no_email_count: int = 0
     email_count: int
     fetched_count: int
     verified_count: int
     campaign_ready_count: int
     eligible_verify_count: int
+    last_contact_attempted_at: datetime | None = None
 
 
 class ContactCompanyListResponse(BaseModel):
@@ -137,3 +142,8 @@ class ContactVerifyResult(BaseModel):
     job_id: UUID
     selected_count: int
     message: str
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False
+
+
+MatchGapFilter = Literal["all", "contacts_no_match", "matched_no_email", "ready_candidates"]

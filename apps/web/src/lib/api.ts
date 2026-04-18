@@ -7,6 +7,7 @@ import type {
   CompanyList,
   CompanyScrapeResult,
   CompanyStageFilter,
+  CostStatsResponse,
   ContactCompanyListResponse,
   ContactCountsResponse,
   ContactFetchResult,
@@ -30,6 +31,7 @@ import type {
   ScrapeFilter,
   ScrapeJobCreate,
   ScrapeJobRead,
+  ScrapeRules,
   ScrapePageContentRead,
   StatsResponse,
   TitleMatchRuleCreate,
@@ -41,9 +43,15 @@ import type {
   UploadCreateResult,
   UploadDetail,
   UploadList,
+  MatchGapFilter,
 } from './types'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
+const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env
+const API_BASE_URL = (
+  viteEnv?.VITE_API_BASE_URL ??
+  (globalThis as { __API_BASE_URL__?: string }).__API_BASE_URL__ ??
+  'http://localhost:8000'
+).replace(/\/+$/, '')
 type ScrapeJobFilter = 'all' | 'active' | 'completed' | 'failed'
 
 export class ApiError extends Error {
@@ -102,9 +110,11 @@ export async function listCompanies(
   letter: string | null = null,
   sortBy = 'domain',
   sortDir: 'asc' | 'desc' = 'asc',
+  uploadId?: string,
 ): Promise<CompanyList> {
   let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sortBy)}&sort_dir=${sortDir}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
+  if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
   return request<CompanyList>(url)
 }
 
@@ -116,17 +126,31 @@ export async function deleteCompanies(companyIds: string[]): Promise<CompanyDele
   })
 }
 
-export async function scrapeSelectedCompanies(companyIds: string[]): Promise<CompanyScrapeResult> {
+export async function scrapeSelectedCompanies(
+  companyIds: string[],
+  options: { scrapeRules?: ScrapeRules; uploadId?: string; idempotencyKey?: string } = {},
+): Promise<CompanyScrapeResult> {
   return request<CompanyScrapeResult>('/v1/companies/scrape-selected', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_ids: companyIds }),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
+    },
+    body: JSON.stringify({
+      company_ids: companyIds,
+      scrape_rules: options.scrapeRules,
+      upload_id: options.uploadId,
+    }),
   })
 }
 
-export async function scrapeAllCompanies(): Promise<CompanyScrapeResult> {
-  return request<CompanyScrapeResult>('/v1/companies/scrape-all', {
+export async function scrapeAllCompanies(options: { uploadId?: string; idempotencyKey?: string } = {}): Promise<CompanyScrapeResult> {
+  const params = new URLSearchParams()
+  if (options.uploadId) params.set('upload_id', options.uploadId)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return request<CompanyScrapeResult>(`/v1/companies/scrape-all${suffix}`, {
     method: 'POST',
+    headers: options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : undefined,
   })
 }
 
@@ -201,8 +225,22 @@ export async function getAnalysisJobDetail(analysisJobId: string): Promise<Analy
   return request<AnalysisJobDetailRead>(`/v1/analysis-jobs/${analysisJobId}`)
 }
 
-export async function getStats(): Promise<StatsResponse> {
-  return request<StatsResponse>('/v1/stats')
+export async function getStats(uploadId?: string): Promise<StatsResponse> {
+  const params = new URLSearchParams()
+  if (uploadId) params.set('upload_id', uploadId)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return request<StatsResponse>(`/v1/stats${suffix}`)
+}
+
+export async function getCostStats(
+  options: { windowDays?: number; uploadId?: string; limit?: number; offset?: number } = {},
+): Promise<CostStatsResponse> {
+  const params = new URLSearchParams()
+  if (options.windowDays) params.set('window_days', String(options.windowDays))
+  if (options.uploadId) params.set('upload_id', options.uploadId)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  return request<CostStatsResponse>(`/v1/stats/costs?${params.toString()}`)
 }
 
 export async function drainQueue(): Promise<DrainQueueResult> {
@@ -238,9 +276,11 @@ export async function listCompanyIds(
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
   letter: string | null = null,
+  uploadId?: string,
 ): Promise<CompanyIdsResult> {
   let url = `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
+  if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
   return request<CompanyIdsResult>(url)
 }
 
@@ -248,9 +288,11 @@ export async function getLetterCounts(
   decisionFilter: DecisionFilter = 'all',
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
+  uploadId?: string,
 ): Promise<LetterCounts> {
+  const uploadParam = uploadId ? `&upload_id=${encodeURIComponent(uploadId)}` : ''
   return request<LetterCounts>(
-    `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`,
+    `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}${uploadParam}`,
   )
 }
 
@@ -275,10 +317,14 @@ export async function fetchContactsForRunApollo(runId: string): Promise<ContactF
 export async function fetchContactsSelected(
   companyIds: string[],
   source: 'snov' | 'apollo' | 'both',
+  options: { idempotencyKey?: string } = {},
 ): Promise<ContactFetchResult> {
   return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
+    },
     body: JSON.stringify({ company_ids: companyIds, source }),
   })
 }
@@ -321,35 +367,55 @@ export async function listCompanyContacts(
 }
 
 export async function listContactCompanies(
-  options: { search?: string; limit?: number; offset?: number; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter } = {},
+  options: {
+    search?: string
+    limit?: number
+    offset?: number
+    titleMatch?: boolean
+    verificationStatus?: string
+    stageFilter?: ContactStageFilter
+    matchGapFilter?: MatchGapFilter
+    uploadId?: string
+  } = {},
 ): Promise<ContactCompanyListResponse> {
   const params = new URLSearchParams()
   if (options.search) params.set('search', options.search)
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
   if (options.stageFilter) params.set('stage_filter', options.stageFilter)
+  if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
+  if (options.uploadId) params.set('upload_id', options.uploadId)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   return request<ContactCompanyListResponse>(`/v1/contacts/companies?${params.toString()}`)
 }
 
-export function getContactsExportUrl(options: { titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter; companyId?: string } = {}): string {
+export function getContactsExportUrl(
+  options: { titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter; companyId?: string; uploadId?: string } = {},
+): string {
   const params = new URLSearchParams()
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
   if (options.stageFilter) params.set('stage_filter', options.stageFilter)
   if (options.companyId) params.set('company_id', options.companyId)
+  if (options.uploadId) params.set('upload_id', options.uploadId)
   return `${API_BASE_URL}/v1/contacts/export.csv?${params.toString()}`
 }
 
-export async function getContactCounts(): Promise<ContactCountsResponse> {
-  return request<ContactCountsResponse>('/v1/contacts/counts')
+export async function getContactCounts(uploadId?: string): Promise<ContactCountsResponse> {
+  const params = new URLSearchParams()
+  if (uploadId) params.set('upload_id', uploadId)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return request<ContactCountsResponse>(`/v1/contacts/counts${suffix}`)
 }
 
-export async function verifyContacts(payload: ContactVerifyRequest): Promise<ContactVerifyResult> {
+export async function verifyContacts(payload: ContactVerifyRequest, idempotencyKey?: string): Promise<ContactVerifyResult> {
   return request<ContactVerifyResult>('/v1/contacts/verify', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}),
+    },
     body: JSON.stringify(payload),
   })
 }
