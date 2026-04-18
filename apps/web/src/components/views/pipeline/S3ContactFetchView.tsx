@@ -25,7 +25,7 @@ interface S3ContactFetchViewProps {
   onToggleAll: (visibleIds: string[]) => void
   onSelectAllMatching: () => void
   onClearSelection: () => void
-  onFetchOne: (company: CompanyListItem, source: 'snov' | 'apollo') => void
+  onFetchOne: (company: CompanyListItem, source: 'snov' | 'apollo' | 'both') => void
   onFetchSelected: (source: 'snov' | 'apollo' | 'both') => void
   onOpenTitleRules: () => void
   offset: number
@@ -293,6 +293,14 @@ export function S3ContactFetchView({
                 <td className="p-3 text-xs font-mono">{c.contact_count ?? 0}</td>
                 <td className="p-3">
                   <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onFetchOne(c, 'both')}
+                      className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition"
+                      style={{ backgroundColor: 'var(--s3)' }}
+                    >
+                      Both
+                    </button>
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'snov')}

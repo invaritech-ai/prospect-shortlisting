@@ -468,9 +468,11 @@ function App() {
             onToggleAll={pipeline.onPipelineToggleAll}
             onSelectAllMatching={pipeline.onPipelineSelectAllMatching}
             onClearSelection={pipeline.onPipelineClearSelection}
-            onFetchOne={(c, source) =>
-              source === 'snov' ? void onFetchContacts(c) : void onFetchContactsApollo(c)
-            }
+            onFetchOne={(c, source) => {
+              if (source === 'snov') { void onFetchContacts(c) }
+              else if (source === 'apollo') { void onFetchContactsApollo(c) }
+              else { void onFetchContacts(c); void onFetchContactsApollo(c) }
+            }}
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onOpenTitleRules={() => setIsTitleRulesOpen(true)}
             offset={pipeline.pipelineOffset}
