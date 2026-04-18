@@ -393,6 +393,11 @@ function App() {
             }}
             onResetStuck={() => void onResetStuck()}
             onDrainQueue={() => void onDrainQueue()}
+            offset={pipeline.pipelineOffset}
+            pageSize={pipeline.pipelinePageSize}
+            onPagePrev={pipeline.onPipelinePagePrev}
+            onPageNext={pipeline.onPipelinePageNext}
+            onPageSizeChange={pipeline.onPipelinePageSizeChange}
             sortBy={pipeline.pipelineSortBy}
             sortDir={pipeline.pipelineSortDir}
             onSort={pipeline.onPipelineSort}
@@ -414,6 +419,7 @@ function App() {
             selectedPrompt={promptMgmt.selectedPrompt}
             recentRuns={recentRuns}
             analysisActionState={analysisActionState}
+            manualLabelActionState={pipeline.pipelineManualLabelActionState}
             stats={stats}
             onDecisionFilterChange={pipeline.onPipelineDecisionFilterChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
@@ -424,6 +430,7 @@ function App() {
             onClearSelection={pipeline.onPipelineClearSelection}
             onAnalyzeSelected={pipeline.onPipelineAnalyzeSelected}
             onClassifyOne={(c) => void onClassify(c)}
+            onSetManualLabel={(c, label) => void pipeline.onPipelineSetManualLabel(c, label)}
             onReviewCompany={(c) => void panels.openCompanyReview(c)}
             onViewMarkdown={(c) => {
               if (c.latest_scrape_job_id) {
@@ -431,6 +438,11 @@ function App() {
               }
             }}
             onOpenPromptLibrary={promptMgmt.openPromptSheet}
+            offset={pipeline.pipelineOffset}
+            pageSize={pipeline.pipelinePageSize}
+            onPagePrev={pipeline.onPipelinePagePrev}
+            onPageNext={pipeline.onPipelinePageNext}
+            onPageSizeChange={pipeline.onPipelinePageSizeChange}
             sortBy={pipeline.pipelineSortBy}
             sortDir={pipeline.pipelineSortDir}
             onSort={pipeline.onPipelineSort}
@@ -461,6 +473,11 @@ function App() {
             }
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onOpenTitleRules={() => setIsTitleRulesOpen(true)}
+            offset={pipeline.pipelineOffset}
+            pageSize={pipeline.pipelinePageSize}
+            onPagePrev={pipeline.onPipelinePagePrev}
+            onPageNext={pipeline.onPipelinePageNext}
+            onPageSizeChange={pipeline.onPipelinePageSizeChange}
             sortBy={pipeline.pipelineSortBy}
             sortDir={pipeline.pipelineSortDir}
             onSort={pipeline.onPipelineSort}
@@ -483,6 +500,11 @@ function App() {
             onVerifFilterChange={pipeline.onS4VerifFilterChange}
             onToggleLetter={pipeline.onS4ToggleLetter}
             onClearLetters={pipeline.onS4ClearLetters}
+            offset={pipeline.s4Offset}
+            pageSize={pipeline.s4PageSize}
+            onPagePrev={pipeline.onS4PagePrev}
+            onPageNext={pipeline.onS4PageNext}
+            onPageSizeChange={pipeline.onS4PageSizeChange}
             onToggleContact={pipeline.onS4ToggleContact}
             onToggleAll={pipeline.onS4ToggleAll}
             onSelectAllMatching={() => { /* TODO: bulk select S4 contacts */ }}
@@ -514,7 +536,7 @@ function App() {
         isLoading={panels.isDiagnosticsLoading}
         error={panels.diagnosticsError}
         onClose={panels.closeScrapeDiagnostics}
-        onOpenMarkdown={(job) => void panels.openMarkdownDrawer(job)}
+        onOpenMarkdown={(job) => void panels.openMarkdownFromDiagnostics(job)}
       />
 
       <PromptLibraryPanel

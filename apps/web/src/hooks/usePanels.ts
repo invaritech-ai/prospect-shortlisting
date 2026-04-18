@@ -15,7 +15,7 @@ import {
   listScrapeJobPageContents,
   upsertCompanyFeedback,
 } from '../lib/api'
-import { resolveScrapeJobRead } from '../lib/scrapeJobResolution'
+import { canRenderScrapeJobPanel, resolveScrapeJobRead } from '../lib/scrapeJobResolution'
 import { parseApiError } from '../lib/utils'
 
 export interface UsePanelsResult {
@@ -27,6 +27,7 @@ export interface UsePanelsResult {
   markdownError: string
   markdownCopyState: string
   openMarkdownDrawer: (job: ScrapeJobRead) => Promise<void>
+  openMarkdownFromDiagnostics: (job: ScrapeJobRead) => Promise<void>
   closeMarkdownDrawer: () => void
   setActiveMarkdownPageKind: (k: string) => void
   copyMarkdown: (content: string) => Promise<void>
@@ -98,11 +99,15 @@ export function usePanels(
   const [analysisDetailError, setAnalysisDetailError] = useState('')
 
   // ── Markdown handlers ─────────────────────────────────────────────────────
-  const openMarkdownDrawer = useCallback(async (job: ScrapeJobRead) => {
+  const loadMarkdownDrawer = useCallback(async (
+    job: ScrapeJobRead,
+    initialJob: ScrapeJobRead | null = null,
+  ) => {
     setMarkdownPages([]); setActiveMarkdownPageKind(''); setMarkdownError(''); setMarkdownCopyState('')
+    setMarkdownJob(initialJob)
     setIsMarkdownLoading(true)
     try {
-      const hydratedJob = await resolveScrapeJobRead(job, getScrapeJob)
+      const hydratedJob = initialJob ?? await resolveScrapeJobRead(job, getScrapeJob)
       setMarkdownJob(hydratedJob)
       const pages = await listScrapeJobPageContents(job.id)
       const withContent = pages.filter((p) => p.markdown_content.trim().length > 0)
@@ -115,11 +120,22 @@ export function usePanels(
       setActiveMarkdownPageKind(filtered[0]?.page_kind ?? '')
       if (filtered.length === 0) setMarkdownError('No markdown available for this scrape job.')
     } catch (err) {
-      setMarkdownJob(null)
+      setMarkdownJob((current) => current ?? initialJob)
       setMarkdownError(parseApiError(err))
     }
     finally { setIsMarkdownLoading(false) }
   }, [])
+
+  const openMarkdownDrawer = useCallback(async (job: ScrapeJobRead) => {
+    const initialJob = canRenderScrapeJobPanel(job) ? job : null
+    await loadMarkdownDrawer(job, initialJob)
+  }, [loadMarkdownDrawer])
+
+  const openMarkdownFromDiagnostics = useCallback(async (job: ScrapeJobRead) => {
+    setDiagnosticsJob(null); setDiagnosticsPages([]); setDiagnosticsError(''); setIsDiagnosticsLoading(false)
+    const initialJob = canRenderScrapeJobPanel(job) ? job : null
+    await loadMarkdownDrawer(job, initialJob)
+  }, [loadMarkdownDrawer])
 
   const closeMarkdownDrawer = useCallback(() => {
     setMarkdownJob(null); setMarkdownPages([]); setActiveMarkdownPageKind('')
@@ -225,7 +241,7 @@ export function usePanels(
   return {
     markdownJob, markdownPages, activeMarkdownPageKind, isMarkdownLoading,
     markdownError, markdownCopyState,
-    openMarkdownDrawer, closeMarkdownDrawer, setActiveMarkdownPageKind, copyMarkdown,
+    openMarkdownDrawer, openMarkdownFromDiagnostics, closeMarkdownDrawer, setActiveMarkdownPageKind, copyMarkdown,
     diagnosticsJob, diagnosticsPages, isDiagnosticsLoading, diagnosticsError,
     openScrapeDiagnostics, closeScrapeDiagnostics,
     reviewedCompany, companyReviewDetail, isCompanyReviewLoading, companyReviewError,

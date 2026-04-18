@@ -2,6 +2,7 @@ import type { ContactCountsResponse, ContactListResponse, ProspectContactRead, S
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
+import { Pager } from '../../ui/Pager'
 
 interface S4ValidationViewProps {
   contacts: ContactListResponse | null
@@ -23,6 +24,11 @@ interface S4ValidationViewProps {
   onSelectAllMatching: () => void
   onClearSelection: () => void
   onValidateSelected: () => void
+  offset: number
+  pageSize: number
+  onPagePrev: () => void
+  onPageNext: () => void
+  onPageSizeChange: (size: number) => void
   sortBy: string
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void
@@ -76,6 +82,11 @@ export function S4ValidationView({
   onSelectAllMatching,
   onClearSelection,
   onValidateSelected,
+  offset,
+  pageSize,
+  onPagePrev,
+  onPageNext,
+  onPageSizeChange,
   sortBy,
   sortDir,
   onSort,
@@ -98,6 +109,7 @@ export function S4ValidationView({
 
   return (
     <div className="space-y-3">
+      <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
       {/* Header */}
       <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
         <div className="flex-1">
@@ -148,27 +160,30 @@ export function S4ValidationView({
         onClear={onClearLetters}
       />
 
-      {/* Verification filter chips */}
-      <div className="flex flex-wrap gap-1.5">
-        {VERIF_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => onVerifFilterChange(f.value)}
-            className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
-              verifFilter === f.value
-                ? 'text-white'
-                : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s4) hover:text-(--s4-text)'
-            }`}
-            style={
-              verifFilter === f.value
-                ? { backgroundColor: f.color ?? 'var(--s4)' }
-                : {}
-            }
-          >
-            {f.label}
-          </button>
-        ))}
+      {/* Verification filter chips + pager */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {VERIF_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => onVerifFilterChange(f.value)}
+              className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
+                verifFilter === f.value
+                  ? 'text-white'
+                  : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s4) hover:text-(--s4-text)'
+              }`}
+              style={
+                verifFilter === f.value
+                  ? { backgroundColor: f.color ?? 'var(--s4)' }
+                  : {}
+              }
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <Pager offset={offset} pageSize={pageSize} total={contacts?.total ?? null} hasMore={contacts?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
       </div>
 
       {/* Selection bar */}
@@ -192,6 +207,7 @@ export function S4ValidationView({
           {isValidating ? 'Queuing…' : 'Validate with ZeroBounce'}
         </button>
       </SelectionBar>
+      </div>{/* ── /sticky controls ── */}
 
       {/* Table */}
       {isLoading && (

@@ -4,6 +4,7 @@ import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { SortableHeader } from '../../ui/SortableHeader'
+import { Pager } from '../../ui/Pager'
 
 interface S1ScrapingViewProps {
   companies: CompanyList | null
@@ -19,6 +20,8 @@ interface S1ScrapingViewProps {
   isResettingStuck: boolean
   isDrainingQueue: boolean
   actionState: Record<string, string>
+  offset: number
+  pageSize: number
   onScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
@@ -31,6 +34,9 @@ interface S1ScrapingViewProps {
   onOpenDiagnostics: (company: CompanyListItem) => void
   onResetStuck: () => void
   onDrainQueue: () => void
+  onPagePrev: () => void
+  onPageNext: () => void
+  onPageSizeChange: (size: number) => void
   sortBy: string
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void
@@ -69,6 +75,8 @@ export function S1ScrapingView({
   isResettingStuck,
   isDrainingQueue,
   actionState,
+  offset,
+  pageSize,
   onScrapeSubFilterChange,
   onToggleLetter,
   onClearLetters,
@@ -81,6 +89,9 @@ export function S1ScrapingView({
   onOpenDiagnostics,
   onResetStuck,
   onDrainQueue,
+  onPagePrev,
+  onPageNext,
+  onPageSizeChange,
   sortBy,
   sortDir,
   onSort,
@@ -123,7 +134,7 @@ export function S1ScrapingView({
 
   return (
     <div className="space-y-3">
-      {/* Pipeline progress banner */}
+      {/* Pipeline progress banner – scrolls away */}
       {scrape && (hasActivity || completed > 0) && (
         <div className="rounded-2xl border border-(--oc-border) bg-white p-4">
           <div className="mb-2 flex items-center justify-between">
@@ -142,37 +153,23 @@ export function S1ScrapingView({
               {completed.toLocaleString()} / {total.toLocaleString()}
             </span>
           </div>
-          {/* Progress track */}
           <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
                 width: `${Math.min(pctDone, 100)}%`,
-                background: hasActivity
-                  ? 'linear-gradient(90deg, var(--s1), #3b82f6)'
-                  : '#16a34a',
+                background: hasActivity ? 'linear-gradient(90deg, var(--s1), #3b82f6)' : '#16a34a',
               }}
             />
           </div>
-          {/* Stat row */}
           <div className="mt-2.5 flex gap-5 text-[11px]">
-            {running > 0 && (
-              <span className="font-bold text-amber-600">{running.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>
-            )}
-            {queued > 0 && (
-              <span className="font-bold text-(--oc-muted)">{queued.toLocaleString()} <span className="font-normal">queued</span></span>
-            )}
+            {running > 0 && <span className="font-bold text-amber-600">{running.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
+            {queued > 0 && <span className="font-bold text-(--oc-muted)">{queued.toLocaleString()} <span className="font-normal">queued</span></span>}
             <span className="font-bold text-emerald-700">{completed.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-            {failed > 0 && (
-              <span className="font-bold text-rose-600">{failed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>
-            )}
+            {failed > 0 && <span className="font-bold text-rose-600">{failed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
             {scrape.stuck_count > 0 && (
-              <button
-                type="button"
-                onClick={onResetStuck}
-                disabled={isResettingStuck}
-                className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50"
-              >
+              <button type="button" onClick={onResetStuck} disabled={isResettingStuck}
+                className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">
                 {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
               </button>
             )}
@@ -180,79 +177,63 @@ export function S1ScrapingView({
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}>
-        <div className="flex-1">
-          <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
-          <p className="text-xs" style={{ color: 'var(--s1-text)', opacity: 0.7 }}>
-            Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
-          </p>
+      {/* ── Sticky controls ─────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
+        {/* Header */}
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}>
+          <div className="flex-1">
+            <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
+            <p className="text-xs" style={{ color: 'var(--s1-text)', opacity: 0.7 }}>
+              Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+            </p>
+          </div>
+          <div className="relative">
+            <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search domains…"
+              className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white"
+              style={{ width: 180 }} />
+          </div>
         </div>
-        {/* Search */}
-        <div className="relative">
-          <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search domains…"
-            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white"
-            style={{ width: 180 }}
-          />
-        </div>
-      </div>
 
-      {/* Letter strip */}
-      <LetterStrip
-        multiSelect
-        activeLetters={activeLetters}
-        counts={letterCounts}
-        onToggle={onToggleLetter}
-        onClear={onClearLetters}
-      />
+        {/* Letter strip */}
+        <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} />
 
-      {/* Sub-filter chips */}
-      <div className="flex flex-wrap gap-1.5">
-        {SUB_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => onScrapeSubFilterChange(f.value)}
-            className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
-              scrapeSubFilter === f.value
-                ? 'text-white'
-                : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'
-            }`}
-            style={scrapeSubFilter === f.value ? { backgroundColor: 'var(--s1)' } : {}}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+        {/* Sub-filter chips + Pager */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {SUB_FILTERS.map((f) => (
+                <button key={f.value} type="button" onClick={() => onScrapeSubFilterChange(f.value)}
+                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${scrapeSubFilter === f.value ? 'text-white' : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'}`}
+                  style={scrapeSubFilter === f.value ? { backgroundColor: 'var(--s1)' } : {}}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+          </div>
 
-      {/* Selection bar */}
-      <SelectionBar
-        stageColor="--s1"
-        stageBg="--s1-bg"
-        selectedCount={selectedIds.length}
-        totalMatching={effectiveTotalMatching}
-        activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 && !isClientFiltered ? onSelectAllMatching : null}
-        isSelectingAll={isSelectingAll}
-        onClear={onClearSelection}
-      >
-        <button
-          type="button"
-          onClick={onScrapeSelected}
-          disabled={isScraping || selectedIds.length === 0}
-          className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
-          style={{ backgroundColor: 'var(--s1)' }}
+        {/* Selection bar */}
+        <SelectionBar
+          stageColor="--s1"
+          stageBg="--s1-bg"
+          selectedCount={selectedIds.length}
+          totalMatching={effectiveTotalMatching}
+          activeLetters={activeLetters}
+          onSelectAllMatching={selectedIds.length > 0 && !isClientFiltered ? onSelectAllMatching : null}
+          isSelectingAll={isSelectingAll}
+          onClear={onClearSelection}
         >
-          {isScraping ? 'Queuing…' : 'Scrape Selected'}
-        </button>
-      </SelectionBar>
+          <button type="button" onClick={onScrapeSelected} disabled={isScraping || selectedIds.length === 0}
+            className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
+            style={{ backgroundColor: 'var(--s1)' }}>
+            {isScraping ? 'Queuing…' : 'Scrape Selected'}
+          </button>
+        </SelectionBar>
+      </div>
+      {/* ── / Sticky controls ─────────────────────────────────────────────── */}
 
       {/* Table */}
       <div className="oc-panel overflow-hidden">

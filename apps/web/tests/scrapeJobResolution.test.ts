@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { resolveScrapeJobRead } from '../src/lib/scrapeJobResolution.ts'
+import {
+  canRenderScrapeJobPanel,
+  resolveScrapeJobRead,
+} from '../src/lib/scrapeJobResolution.ts'
 import type { ScrapeJobRead } from '../src/lib/types.ts'
 
 const FULL_JOB: ScrapeJobRead = {
@@ -38,6 +41,11 @@ test('returns the original scrape job when it already has panel fields', async (
 
   assert.equal(fetchCalls, 0)
   assert.equal(resolved, FULL_JOB)
+})
+
+test('reports whether a scrape job can be rendered in a drawer without hydration', () => {
+  assert.equal(canRenderScrapeJobPanel(FULL_JOB), true)
+  assert.equal(canRenderScrapeJobPanel({ id: 'job-1' } as ScrapeJobRead), false)
 })
 
 test('fetches the full scrape job when only a partial shell is available', async () => {

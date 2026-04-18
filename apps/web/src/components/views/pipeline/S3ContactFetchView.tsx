@@ -5,6 +5,7 @@ import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
+import { Pager } from '../../ui/Pager'
 
 interface S3ContactFetchViewProps {
   companies: CompanyList | null
@@ -27,6 +28,11 @@ interface S3ContactFetchViewProps {
   onFetchOne: (company: CompanyListItem, source: 'snov' | 'apollo') => void
   onFetchSelected: (source: 'snov' | 'apollo' | 'both') => void
   onOpenTitleRules: () => void
+  offset: number
+  pageSize: number
+  onPagePrev: () => void
+  onPageNext: () => void
+  onPageSizeChange: (size: number) => void
   sortBy: string
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void
@@ -67,6 +73,11 @@ export function S3ContactFetchView({
   onFetchOne,
   onFetchSelected,
   onOpenTitleRules,
+  offset,
+  pageSize,
+  onPagePrev,
+  onPageNext,
+  onPageSizeChange,
   sortBy,
   sortDir,
   onSort,
@@ -91,6 +102,7 @@ export function S3ContactFetchView({
 
   return (
     <div className="space-y-3">
+      <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
       {/* Header */}
       <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
         <div className="flex-1">
@@ -151,23 +163,26 @@ export function S3ContactFetchView({
         onClear={onClearLetters}
       />
 
-      {/* Decision filter pills */}
-      <div className="flex flex-wrap gap-1.5">
-        {DECISION_FILTERS.map(({ value, label }) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => onDecisionFilterChange(value)}
-            className="rounded-full border px-3 py-1 text-xs font-medium transition"
-            style={
-              decisionFilter === value
-                ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
-                : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
-            }
-          >
-            {label}
-          </button>
-        ))}
+      {/* Decision filter pills + pager */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {DECISION_FILTERS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onDecisionFilterChange(value)}
+              className="rounded-full border px-3 py-1 text-xs font-medium transition"
+              style={
+                decisionFilter === value
+                  ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
+                  : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
       </div>
 
       <SelectionBar
@@ -193,6 +208,7 @@ export function S3ContactFetchView({
           </button>
         ))}
       </SelectionBar>
+      </div>{/* ── /sticky controls ── */}
 
       <div className="oc-panel overflow-hidden">
         <table className="w-full text-sm">

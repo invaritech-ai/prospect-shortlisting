@@ -1,10 +1,13 @@
 import { useRef, useState } from 'react'
-import type { CompanyList, CompanyListItem, DecisionFilter, PromptRead, RunRead, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, DecisionFilter, ManualLabel, PromptRead, RunRead, StatsResponse } from '../../../lib/types'
+import { getDecisionDisplay } from '../../../lib/decisionPresentation'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
+import { Pager } from '../../ui/Pager'
+import { QuickLabelPicker } from '../../ui/QuickLabelPicker'
 
 interface S2AIDecisionViewProps {
   companies: CompanyList | null
@@ -20,7 +23,10 @@ interface S2AIDecisionViewProps {
   selectedPrompt: PromptRead | null
   recentRuns: RunRead[]
   analysisActionState: Record<string, string>
+  manualLabelActionState: Record<string, string>
   stats: StatsResponse | null
+  offset: number
+  pageSize: number
   onDecisionFilterChange: (filter: DecisionFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
@@ -30,9 +36,13 @@ interface S2AIDecisionViewProps {
   onClearSelection: () => void
   onAnalyzeSelected: () => void
   onClassifyOne: (company: CompanyListItem) => void
+  onSetManualLabel: (company: CompanyListItem, label: ManualLabel | null) => void
   onReviewCompany: (company: CompanyListItem) => void
   onViewMarkdown: (company: CompanyListItem) => void
   onOpenPromptLibrary: () => void
+  onPagePrev: () => void
+  onPageNext: () => void
+  onPageSizeChange: (size: number) => void
   sortBy: string
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void
@@ -60,7 +70,10 @@ export function S2AIDecisionView({
   selectedPrompt,
   recentRuns,
   analysisActionState,
+  manualLabelActionState,
   stats,
+  offset,
+  pageSize,
   onDecisionFilterChange,
   onToggleLetter,
   onClearLetters,
@@ -70,9 +83,13 @@ export function S2AIDecisionView({
   onClearSelection,
   onAnalyzeSelected,
   onClassifyOne,
+  onSetManualLabel,
   onReviewCompany,
   onViewMarkdown,
   onOpenPromptLibrary,
+  onPagePrev,
+  onPageNext,
+  onPageSizeChange,
   sortBy,
   sortDir,
   onSort,
@@ -109,7 +126,7 @@ export function S2AIDecisionView({
 
   return (
     <div className="space-y-3">
-      {/* Analysis pipeline progress */}
+      {/* Analysis pipeline progress – scrolls away */}
       {analysis && (aHasActivity || aCompleted > 0) && (
         <div className="rounded-2xl border border-(--oc-border) bg-white p-4">
           <div className="mb-2 flex items-center justify-between">
@@ -144,63 +161,45 @@ export function S2AIDecisionView({
         </div>
       )}
 
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s2)', backgroundColor: 'var(--s2-bg)' }}>
-        <div className="flex-1">
-          <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
-          <p className="text-xs" style={{ color: 'var(--s2-text)', opacity: 0.7 }}>
-            Qualify prospects with AI classification · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
-          </p>
-        </div>
-        {/* Search */}
-        <div className="relative">
-          <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search domains…"
-            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white"
-            style={{ width: 180 }}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={onOpenPromptLibrary}
-          className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap"
-        >
-          {selectedPrompt ? `Prompt: ${selectedPrompt.name}` : 'Select prompt…'}
-        </button>
-      </div>
-
-      <LetterStrip
-        multiSelect
-        activeLetters={activeLetters}
-        counts={letterCounts}
-        onToggle={onToggleLetter}
-        onClear={onClearLetters}
-      />
-
-      <div className="flex flex-wrap gap-1.5">
-        {DECISION_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => onDecisionFilterChange(f.value)}
-            className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
-              decisionFilter === f.value
-                ? 'text-white'
-                : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s2) hover:text-(--s2-text)'
-            }`}
-            style={decisionFilter === f.value ? { backgroundColor: 'var(--s2)' } : {}}
-          >
-            {f.label}
+      {/* ── Sticky controls ─────────────────────────────────────────────── */}
+      <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s2)', backgroundColor: 'var(--s2-bg)' }}>
+          <div className="flex-1">
+            <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
+            <p className="text-xs" style={{ color: 'var(--s2-text)', opacity: 0.7 }}>
+              Qualify prospects with AI classification · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+            </p>
+          </div>
+          <div className="relative">
+            <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search domains…"
+              className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white"
+              style={{ width: 180 }} />
+          </div>
+          <button type="button" onClick={onOpenPromptLibrary}
+            className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap">
+            {selectedPrompt ? `Prompt: ${selectedPrompt.name}` : 'Select prompt…'}
           </button>
-        ))}
-      </div>
+        </div>
 
-      <SelectionBar
+        <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} />
+
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-1.5">
+            {DECISION_FILTERS.map((f) => (
+              <button key={f.value} type="button" onClick={() => onDecisionFilterChange(f.value)}
+                className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${decisionFilter === f.value ? 'text-white' : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s2) hover:text-(--s2-text)'}`}
+                style={decisionFilter === f.value ? { backgroundColor: 'var(--s2)' } : {}}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+        </div>
+
+        <SelectionBar
         stageColor="--s2"
         stageBg="--s2-bg"
         selectedCount={selectedIds.length}
@@ -246,6 +245,7 @@ export function S2AIDecisionView({
           )}
         </div>
       </SelectionBar>
+      </div>{/* ── /sticky controls ── */}
 
       <div className="oc-panel overflow-hidden">
         <table className="w-full text-sm">
@@ -297,7 +297,11 @@ export function S2AIDecisionView({
                 </td>
               </tr>
             )}
-            {visibleCompanies.map((c) => (
+            {visibleCompanies.map((c) => {
+              const decisionDisplay = getDecisionDisplay(c)
+              const isSavingManualLabel = !!manualLabelActionState[c.id]
+
+              return (
               <tr
                 key={c.id}
                 className="border-b border-(--oc-border) last:border-0 transition"
@@ -323,14 +327,24 @@ export function S2AIDecisionView({
                   </a>
                 </td>
                 <td className="p-3">
-                  {(c.feedback_manual_label ?? c.latest_decision) ? (
-                    <Badge className={decisionBgClass(c.feedback_manual_label ?? c.latest_decision)}>
-                      {c.feedback_manual_label ?? c.latest_decision}
-                    </Badge>
-                  ) : <span className="text-xs text-(--oc-muted)">—</span>}
+                  <div className="flex items-center gap-2">
+                    {decisionDisplay.badgeLabel ? (
+                      <Badge className={decisionBgClass(decisionDisplay.badgeValue)}>
+                        {decisionDisplay.badgeLabel}
+                      </Badge>
+                    ) : <span className="text-xs text-(--oc-muted)">—</span>}
+                    <QuickLabelPicker
+                      current={c.feedback_manual_label}
+                      disabled={isSavingManualLabel}
+                      onSelect={(label) => onSetManualLabel(c, label)}
+                    />
+                    {isSavingManualLabel && (
+                      <span className="text-[11px] text-(--oc-muted)">{manualLabelActionState[c.id]}</span>
+                    )}
+                  </div>
                 </td>
                 <td className="p-3 text-xs text-(--oc-muted)">
-                  {c.latest_confidence != null ? `${Math.round(c.latest_confidence * 100)}%` : '—'}
+                  {decisionDisplay.confidenceLabel}
                 </td>
                 <td className="p-3">
                   <div className="flex gap-1.5">
@@ -361,7 +375,8 @@ export function S2AIDecisionView({
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
