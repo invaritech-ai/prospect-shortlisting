@@ -1,9 +1,10 @@
-import { useCallback, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type {
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
   CompanyListItem,
   ManualLabel,
+  ProspectContactRead,
   RunRead,
   ScrapeJobRead,
   ScrapePageContentRead,
@@ -11,6 +12,7 @@ import type {
 import {
   getScrapeJob,
   getAnalysisJobDetail,
+  listCompanyContacts,
   listRunJobs,
   listScrapeJobPageContents,
   upsertCompanyFeedback,
@@ -38,6 +40,13 @@ export interface UsePanelsResult {
   diagnosticsError: string
   openScrapeDiagnostics: (job: ScrapeJobRead) => Promise<void>
   closeScrapeDiagnostics: () => void
+  // Company contacts preview
+  companyContactsCompany: CompanyListItem | null
+  companyContacts: ProspectContactRead[]
+  isCompanyContactsLoading: boolean
+  companyContactsError: string
+  openCompanyContacts: (company: CompanyListItem) => Promise<void>
+  closeCompanyContacts: () => void
   // Company review
   reviewedCompany: CompanyListItem | null
   companyReviewDetail: AnalysisJobDetailRead | null
@@ -81,6 +90,11 @@ export function usePanels(
   const [diagnosticsPages, setDiagnosticsPages] = useState<ScrapePageContentRead[]>([])
   const [isDiagnosticsLoading, setIsDiagnosticsLoading] = useState(false)
   const [diagnosticsError, setDiagnosticsError] = useState('')
+  const [companyContactsCompany, setCompanyContactsCompany] = useState<CompanyListItem | null>(null)
+  const [companyContacts, setCompanyContacts] = useState<ProspectContactRead[]>([])
+  const [isCompanyContactsLoading, setIsCompanyContactsLoading] = useState(false)
+  const [companyContactsError, setCompanyContactsError] = useState('')
+  const companyContactsRequestRef = useRef(0)
 
   // ── Company review ────────────────────────────────────────────────────────
   const [reviewedCompany, setReviewedCompany] = useState<CompanyListItem | null>(null)
@@ -171,6 +185,34 @@ export function usePanels(
     setDiagnosticsJob(null); setDiagnosticsPages([]); setDiagnosticsError('')
   }, [])
 
+  // ── Company contacts preview handlers ────────────────────────────────────
+  const openCompanyContacts = useCallback(async (company: CompanyListItem) => {
+    const requestId = companyContactsRequestRef.current + 1
+    companyContactsRequestRef.current = requestId
+    setCompanyContactsCompany(company)
+    setCompanyContacts([])
+    setCompanyContactsError('')
+    setIsCompanyContactsLoading(true)
+    try {
+      const response = await listCompanyContacts(company.id, company.contact_count > 0 ? { limit: company.contact_count } : {})
+      if (companyContactsRequestRef.current !== requestId) return
+      setCompanyContacts(response.items)
+    } catch (err) {
+      if (companyContactsRequestRef.current !== requestId) return
+      setCompanyContactsError(parseApiError(err))
+    } finally {
+      if (companyContactsRequestRef.current === requestId) setIsCompanyContactsLoading(false)
+    }
+  }, [])
+
+  const closeCompanyContacts = useCallback(() => {
+    companyContactsRequestRef.current += 1
+    setCompanyContactsCompany(null)
+    setCompanyContacts([])
+    setCompanyContactsError('')
+    setIsCompanyContactsLoading(false)
+  }, [])
+
   // ── Company review handlers ───────────────────────────────────────────────
   const openCompanyReview = useCallback(async (company: CompanyListItem) => {
     setReviewedCompany(company)
@@ -244,6 +286,8 @@ export function usePanels(
     openMarkdownDrawer, openMarkdownFromDiagnostics, closeMarkdownDrawer, setActiveMarkdownPageKind, copyMarkdown,
     diagnosticsJob, diagnosticsPages, isDiagnosticsLoading, diagnosticsError,
     openScrapeDiagnostics, closeScrapeDiagnostics,
+    companyContactsCompany, companyContacts, isCompanyContactsLoading, companyContactsError,
+    openCompanyContacts, closeCompanyContacts,
     reviewedCompany, companyReviewDetail, isCompanyReviewLoading, companyReviewError,
     isFeedbackSaving, openCompanyReview, closeCompanyReview, saveFeedback, setManualLabelOnReviewed,
     inspectedRun, runJobs, isRunJobsLoading, runJobsError,

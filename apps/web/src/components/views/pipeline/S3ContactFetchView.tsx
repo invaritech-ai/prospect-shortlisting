@@ -27,6 +27,7 @@ interface S3ContactFetchViewProps {
   onClearSelection: () => void
   onFetchOne: (company: CompanyListItem, source: 'snov' | 'apollo' | 'both') => void
   onFetchSelected: (source: 'snov' | 'apollo' | 'both') => void
+  onViewContacts: (company: CompanyListItem) => void
   onOpenTitleRules: () => void
   offset: number
   pageSize: number
@@ -73,6 +74,7 @@ export function S3ContactFetchView({
   onClearSelection,
   onFetchOne,
   onFetchSelected,
+  onViewContacts,
   onOpenTitleRules,
   offset,
   pageSize,
@@ -227,7 +229,7 @@ export function S3ContactFetchView({
               <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Contacts" field="contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <th className="p-3 text-left font-semibold">Fetch</th>
+              <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -292,7 +294,15 @@ export function S3ContactFetchView({
                 </td>
                 <td className="p-3 text-xs font-mono">{c.contact_count ?? 0}</td>
                 <td className="p-3">
-                  <div className="flex gap-1">
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onViewContacts(c)}
+                      disabled={(c.contact_count ?? 0) === 0}
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text) disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      View
+                    </button>
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'both')}

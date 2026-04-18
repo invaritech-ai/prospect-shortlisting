@@ -49,6 +49,7 @@ import { PromptLibraryPanel } from './components/panels/PromptLibraryPanel'
 import { TitleRulesPanel } from './components/panels/TitleRulesPanel'
 import { AnalysisDetailPanel } from './components/panels/AnalysisDetailPanel'
 import { CompanyReviewPanel } from './components/panels/CompanyReviewPanel'
+import { CompanyContactsPreviewPanel } from './components/panels/CompanyContactsPreviewPanel'
 import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPanel'
 
 // UI
@@ -474,6 +475,7 @@ function App() {
               else { void onFetchContacts(c); void onFetchContactsApollo(c) }
             }}
             onFetchSelected={pipeline.onPipelineFetchContacts}
+            onViewContacts={(company) => void panels.openCompanyContacts(company)}
             onOpenTitleRules={() => setIsTitleRulesOpen(true)}
             offset={pipeline.pipelineOffset}
             pageSize={pipeline.pipelinePageSize}
@@ -588,6 +590,14 @@ function App() {
         isSaving={panels.isFeedbackSaving}
         onClose={panels.closeCompanyReview}
         onSave={(thumbs, comment) => void panels.saveFeedback(thumbs, comment)}
+      />
+
+      <CompanyContactsPreviewPanel
+        company={panels.companyContactsCompany}
+        contacts={panels.companyContacts}
+        isLoading={panels.isCompanyContactsLoading}
+        error={panels.companyContactsError}
+        onClose={panels.closeCompanyContacts}
       />
 
       <ConfirmDialog
