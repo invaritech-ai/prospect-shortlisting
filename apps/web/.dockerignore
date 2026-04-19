@@ -1,0 +1,23 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+*.log
+coverage
+.vscode
+.idea
+.DS_Store
+
+# Keep the Dockerfile and nginx.conf out of the build context copy step so
+# edits don't invalidate the `npm ci` layer unnecessarily when code changes.
+# (They're still COPY'd explicitly where needed.)
+Dockerfile
+.dockerignore
+
+# Dev/test artifacts that don't belong in the production image.
+mocks
+tests
+eslint.config.js
+nixpacks.toml

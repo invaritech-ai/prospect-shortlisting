@@ -1,10 +1,20 @@
+# ─── DEPRECATED — DO NOT DEPLOY WITH NIXPACKS ──────────────────────────────
+# Production now builds from apps/web/Dockerfile. The nixpacks staticfile
+# provider generates a hardcoded nginx.conf with no SPA fallback and no
+# cache-control hooks, which caused stale index.html to pin missing asset
+# hashes at the edge (prod incident 2026-04-19). Do not point Coolify back
+# at this file.
+#
+# This stub is kept only so older Coolify configurations that still scan for
+# nixpacks.toml do not spuriously pass detection and silently install a Node
+# server. Deleting the file is also safe.
+# ────────────────────────────────────────────────────────────────────────────
+
 [variables]
-# Ensure Coolify/Nixpacks selects a Node version compatible with Vite 8 beta.
 NIXPACKS_NODE_VERSION = "22.12.1"
 NODE_VERSION = "22.12.1"
 
 [phases.setup]
-# Use Node 22.x (nixpacks will pull the latest 22 release in the pinned nixpkgs).
 nixPkgs = ["nodejs_22"]
 
 [phases.install]
@@ -12,6 +22,3 @@ cmds = ["npm ci"]
 
 [phases.build]
 cmds = ["npm run build"]
-
-[staticAssets]
-directory = "dist"
