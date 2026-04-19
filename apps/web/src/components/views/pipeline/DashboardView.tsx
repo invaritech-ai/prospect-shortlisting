@@ -94,6 +94,12 @@ export function DashboardView({
     const dropped = e.dataTransfer.files[0]
     if (dropped) onSetFile(dropped)
   }
+  const hasQueueActivity = !!stats && (
+    stats.scrape.running > 0 || stats.scrape.queued > 0 || stats.scrape.stuck_count > 0
+    || stats.analysis.running > 0 || stats.analysis.queued > 0 || stats.analysis.stuck_count > 0
+    || (stats.contact_fetch?.running ?? 0) > 0 || (stats.contact_fetch?.queued ?? 0) > 0 || (stats.contact_fetch?.stuck_count ?? 0) > 0
+    || (stats.validation?.running ?? 0) > 0 || (stats.validation?.queued ?? 0) > 0 || (stats.validation?.stuck_count ?? 0) > 0
+  )
 
   return (
     <div className="space-y-6">
@@ -106,7 +112,9 @@ export function DashboardView({
           {cards.map((card) => {
             const isLive =
               (card.view === 's1-scraping' && (stats?.scrape?.running ?? 0) > 0) ||
-              (card.view === 's2-ai' && (stats?.analysis?.running ?? 0) > 0)
+              (card.view === 's2-ai' && (stats?.analysis?.running ?? 0) > 0) ||
+              (card.view === 's3-contacts' && (stats?.contact_fetch?.running ?? 0) > 0) ||
+              (card.view === 's4-validation' && (stats?.validation?.running ?? 0) > 0)
             return (
               <button
                 key={card.view}
@@ -143,27 +151,49 @@ export function DashboardView({
       </section>
 
       {/* Stats row */}
-      {stats && (stats.scrape.running > 0 || stats.analysis.running > 0) && (
+      {hasQueueActivity && stats && (
         <div className="flex flex-wrap gap-3">
-          {stats.scrape.running > 0 && (
+          {(stats.scrape.running > 0 || stats.scrape.queued > 0 || stats.scrape.stuck_count > 0) && (
             <div className="flex items-center gap-2 rounded-xl border border-(--s1) bg-(--s1-bg) px-3 py-2">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s1)' }} />
                 <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s1)' }} />
               </span>
               <span className="text-xs font-medium" style={{ color: 'var(--s1-text)' }}>
-                {stats.scrape.running} scraping
+                {stats.scrape.running} running · {stats.scrape.queued} queued · {stats.scrape.stuck_count} stuck
               </span>
             </div>
           )}
-          {stats.analysis.running > 0 && (
+          {(stats.analysis.running > 0 || stats.analysis.queued > 0 || stats.analysis.stuck_count > 0) && (
             <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s2)', backgroundColor: 'var(--s2-bg)' }}>
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s2)' }} />
                 <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s2)' }} />
               </span>
               <span className="text-xs font-medium" style={{ color: 'var(--s2-text)' }}>
-                {stats.analysis.running} analyzing
+                {stats.analysis.running} running · {stats.analysis.queued} queued · {stats.analysis.stuck_count} stuck
+              </span>
+            </div>
+          )}
+          {stats.contact_fetch && (stats.contact_fetch.running > 0 || stats.contact_fetch.queued > 0 || stats.contact_fetch.stuck_count > 0) && (
+            <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s3)' }} />
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s3)' }} />
+              </span>
+              <span className="text-xs font-medium" style={{ color: 'var(--s3-text)' }}>
+                {stats.contact_fetch.running} running · {stats.contact_fetch.queued} queued · {stats.contact_fetch.stuck_count} stuck
+              </span>
+            </div>
+          )}
+          {stats.validation && (stats.validation.running > 0 || stats.validation.queued > 0 || stats.validation.stuck_count > 0) && (
+            <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s4)' }} />
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s4)' }} />
+              </span>
+              <span className="text-xs font-medium" style={{ color: 'var(--s4-text)' }}>
+                {stats.validation.running} running · {stats.validation.queued} queued · {stats.validation.stuck_count} stuck
               </span>
             </div>
           )}

@@ -83,7 +83,7 @@ class TestScrapeWebsiteTask:
         exit after CAS fails (first call already set lock_token)."""
         call_count = 0
 
-        async def fake_run_scrape(*, engine, job_id):
+        async def fake_run_scrape(*, engine, job_id, scrape_rules=None):  # noqa: ARG001
             nonlocal call_count
             call_count += 1
             # Simulate the CAS: first call claims the job.

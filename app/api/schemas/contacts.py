@@ -6,8 +6,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.api.schemas.base import UTCReadModel
 
-class ProspectContactRead(BaseModel):
+
+class ProspectContactRead(UTCReadModel):
     id: UUID
     company_id: UUID
     contact_fetch_job_id: UUID
@@ -33,6 +35,7 @@ class ContactListResponse(BaseModel):
     limit: int
     offset: int
     items: list[ProspectContactRead]
+    letter_counts: dict[str, int] | None = None
 
 
 class ContactFetchResult(BaseModel):
@@ -40,9 +43,11 @@ class ContactFetchResult(BaseModel):
     queued_count: int
     already_fetching_count: int
     queued_job_ids: list[UUID]
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False
 
 
-class TitleMatchRuleRead(BaseModel):
+class TitleMatchRuleRead(UTCReadModel):
     id: UUID
     rule_type: str
     match_type: str
@@ -96,16 +101,19 @@ class TitleRuleStatsResponse(BaseModel):
     total_matched: int
 
 
-class ContactCompanySummary(BaseModel):
+class ContactCompanySummary(UTCReadModel):
     company_id: UUID
     domain: str
     total_count: int
     title_matched_count: int
+    unmatched_count: int = 0
+    matched_no_email_count: int = 0
     email_count: int
     fetched_count: int
     verified_count: int
     campaign_ready_count: int
     eligible_verify_count: int
+    last_contact_attempted_at: datetime | None = None
 
 
 class ContactCompanyListResponse(BaseModel):
@@ -137,3 +145,8 @@ class ContactVerifyResult(BaseModel):
     job_id: UUID
     selected_count: int
     message: str
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False
+
+
+MatchGapFilter = Literal["all", "contacts_no_match", "matched_no_email", "ready_candidates"]

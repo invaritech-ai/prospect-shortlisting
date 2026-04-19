@@ -16,7 +16,7 @@ const NAV_ITEMS = [
 
 export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: BottomNavProps) {
   const [moreOpen, setMoreOpen] = useState(false)
-  const moreActive = activeView === 's3-contacts' || activeView === 's4-validation'
+  const moreActive = activeView === 'campaigns' || activeView === 's3-contacts' || activeView === 's4-validation'
 
   return (
     <>
@@ -26,6 +26,22 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
 
       {moreOpen && (
         <div className="fixed bottom-[calc(var(--oc-bottom-nav-h)+10px)] right-3 z-[var(--z-drawer)] w-60 rounded-2xl border border-(--oc-border) bg-(--oc-surface-strong) p-2 shadow-[0_10px_30px_rgba(7,21,31,0.2)] md:hidden">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('campaigns')
+              setMoreOpen(false)
+            }}
+            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+              activeView === 'campaigns'
+                ? 'font-bold'
+                : 'text-(--oc-muted) hover:bg-(--oc-surface)'
+            }`}
+            style={activeView === 'campaigns' ? { backgroundColor: 'var(--oc-accent-soft)', color: 'var(--oc-accent-ink)' } : {}}
+          >
+            <IconBuilding size={16} />
+            Campaigns
+          </button>
           <button
             type="button"
             onClick={() => {

@@ -7,6 +7,7 @@ export type UploadValidationError = {
 
 export type UploadRead = {
   id: string
+  campaign_id: string | null
   filename: string
   checksum: string
   row_count: number
@@ -27,6 +28,34 @@ export type UploadList = {
   limit: number
   offset: number
   items: UploadRead[]
+}
+
+export type CampaignRead = {
+  id: string
+  name: string
+  description: string | null
+  upload_count: number
+  company_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type CampaignList = {
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+  items: CampaignRead[]
+}
+
+export type CampaignCreate = {
+  name: string
+  description?: string | null
+}
+
+export type CampaignUpdate = {
+  name?: string
+  description?: string | null
 }
 
 export type CompanyRead = {
@@ -93,8 +122,8 @@ export type CompanyList = {
 
 export type DecisionFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap' | 'labeled'
 export type ScrapeFilter = 'all' | 'done' | 'failed' | 'none'
-export type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed'
-export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match'
+export type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed' | 'permanent' | 'soft'
+export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match' | 'stale_30d'
 
 export type CompanyIdsResult = {
   ids: string[]
@@ -113,6 +142,8 @@ export type CompanyScrapeResult = {
   queued_count: number
   queued_job_ids: string[]
   failed_company_ids: string[]
+  idempotency_key?: string | null
+  idempotency_replayed?: boolean
 }
 
 export type UploadCompanyList = {
@@ -146,6 +177,9 @@ export type ScrapeJobRead = {
   updated_at: string
   started_at: string | null
   finished_at: string | null
+  selected_page_kinds?: ScrapePageKind[] | null
+  effective_page_plan_count?: number | null
+  effective_page_plan_json?: Array<Record<string, string>> | null
 }
 
 export type ScrapeJobCreate = {
@@ -154,6 +188,26 @@ export type ScrapeJobCreate = {
   include_sitemap?: boolean
   general_model?: string
   classify_model?: string
+  scrape_rules?: ScrapeRules
+}
+
+export type ScrapePageKind =
+  | 'home'
+  | 'about'
+  | 'products'
+  | 'contact'
+  | 'team'
+  | 'leadership'
+  | 'services'
+  | 'pricing'
+
+export type ScrapeRules = {
+  page_kinds?: ScrapePageKind[]
+  fallback_enabled?: boolean
+  fallback_limit?: number
+  fallback_priority?: ScrapePageKind[]
+  js_fallback?: boolean | null
+  include_sitemap?: boolean | null
 }
 
 export type ScrapePageContentRead = {
@@ -172,6 +226,8 @@ export type JobEnqueueResult = {
   job_id: string
   celery_task_id: string
   message: string
+  idempotency_key?: string | null
+  idempotency_replayed?: boolean
 }
 
 export type PromptRead = {
@@ -259,7 +315,43 @@ export type PipelineStageStats = {
 export type StatsResponse = {
   scrape: PipelineStageStats
   analysis: PipelineStageStats
+  contact_fetch?: PipelineStageStats
+  validation?: PipelineStageStats
+  costs?: {
+    currency: string
+    window_days: number
+    totals: StageCostTotals
+  } | null
   as_of: string
+}
+
+export type StageCostTotals = {
+  scrape: number | null
+  analysis: number | null
+  contact_fetch: number | null
+  validation: number | null
+  overall: number | null
+}
+
+export type CostLineItem = {
+  company_id: string
+  domain: string
+  scrape: number | null
+  analysis: number | null
+  contact_fetch: number | null
+  validation: number | null
+  overall: number | null
+}
+
+export type CostStatsResponse = {
+  currency: string
+  window_days: number
+  totals: StageCostTotals
+  total: number
+  has_more: boolean
+  limit: number
+  offset: number
+  items: CostLineItem[]
 }
 
 export type DrainQueueResult = {
@@ -355,6 +447,7 @@ export type ContactListResponse = {
   limit: number
   offset: number
   items: ProspectContactRead[]
+  letter_counts?: Record<string, number>
 }
 
 export type ContactFetchResult = {
@@ -362,6 +455,8 @@ export type ContactFetchResult = {
   queued_count: number
   already_fetching_count: number
   queued_job_ids: string[]
+  idempotency_key?: string | null
+  idempotency_replayed?: boolean
 }
 
 export type ContactCompanySummary = {
@@ -369,11 +464,14 @@ export type ContactCompanySummary = {
   domain: string
   total_count: number
   title_matched_count: number
+  unmatched_count?: number
+  matched_no_email_count?: number
   email_count: number
   fetched_count: number
   verified_count: number
   campaign_ready_count: number
   eligible_verify_count: number
+  last_contact_attempted_at?: string | null
 }
 
 export type ContactCompanyListResponse = {
@@ -405,7 +503,11 @@ export type ContactVerifyResult = {
   job_id: string
   selected_count: number
   message: string
+  idempotency_key?: string | null
+  idempotency_replayed?: boolean
 }
+
+export type MatchGapFilter = 'all' | 'contacts_no_match' | 'matched_no_email' | 'ready_candidates'
 
 export type TitleMatchRuleRead = {
   id: string

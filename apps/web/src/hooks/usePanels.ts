@@ -3,6 +3,8 @@ import type {
   AnalysisJobDetailRead,
   AnalysisRunJobRead,
   CompanyListItem,
+  ContactCompanySummary,
+  MatchGapFilter,
   ManualLabel,
   ProspectContactRead,
   RunRead,
@@ -12,6 +14,7 @@ import type {
 import {
   getScrapeJob,
   getAnalysisJobDetail,
+  listContactCompanies,
   listCompanyContacts,
   listRunJobs,
   listScrapeJobPageContents,
@@ -43,9 +46,12 @@ export interface UsePanelsResult {
   // Company contacts preview
   companyContactsCompany: CompanyListItem | null
   companyContacts: ProspectContactRead[]
+  companyContactSummary: ContactCompanySummary | null
+  companyContactGapFilter: MatchGapFilter
   isCompanyContactsLoading: boolean
   companyContactsError: string
   openCompanyContacts: (company: CompanyListItem) => Promise<void>
+  setCompanyContactGapFilter: (filter: MatchGapFilter) => void
   closeCompanyContacts: () => void
   // Company review
   reviewedCompany: CompanyListItem | null
@@ -92,6 +98,8 @@ export function usePanels(
   const [diagnosticsError, setDiagnosticsError] = useState('')
   const [companyContactsCompany, setCompanyContactsCompany] = useState<CompanyListItem | null>(null)
   const [companyContacts, setCompanyContacts] = useState<ProspectContactRead[]>([])
+  const [companyContactSummary, setCompanyContactSummary] = useState<ContactCompanySummary | null>(null)
+  const [companyContactGapFilter, setCompanyContactGapFilter] = useState<MatchGapFilter>('all')
   const [isCompanyContactsLoading, setIsCompanyContactsLoading] = useState(false)
   const [companyContactsError, setCompanyContactsError] = useState('')
   const companyContactsRequestRef = useRef(0)
@@ -191,12 +199,20 @@ export function usePanels(
     companyContactsRequestRef.current = requestId
     setCompanyContactsCompany(company)
     setCompanyContacts([])
+    setCompanyContactSummary(null)
+    setCompanyContactGapFilter('all')
     setCompanyContactsError('')
     setIsCompanyContactsLoading(true)
     try {
-      const response = await listCompanyContacts(company.id, company.contact_count > 0 ? { limit: company.contact_count } : {})
+      const [response, summaryResponse] = await Promise.all([
+        listCompanyContacts(company.id, company.contact_count > 0 ? { limit: company.contact_count } : {}),
+        listContactCompanies({ search: company.domain, limit: 200, offset: 0, matchGapFilter: 'all' }),
+      ])
       if (companyContactsRequestRef.current !== requestId) return
       setCompanyContacts(response.items)
+      setCompanyContactSummary(
+        summaryResponse.items.find((item) => item.company_id === company.id || item.domain === company.domain) ?? null,
+      )
     } catch (err) {
       if (companyContactsRequestRef.current !== requestId) return
       setCompanyContactsError(parseApiError(err))
@@ -209,6 +225,8 @@ export function usePanels(
     companyContactsRequestRef.current += 1
     setCompanyContactsCompany(null)
     setCompanyContacts([])
+    setCompanyContactSummary(null)
+    setCompanyContactGapFilter('all')
     setCompanyContactsError('')
     setIsCompanyContactsLoading(false)
   }, [])
@@ -287,7 +305,7 @@ export function usePanels(
     diagnosticsJob, diagnosticsPages, isDiagnosticsLoading, diagnosticsError,
     openScrapeDiagnostics, closeScrapeDiagnostics,
     companyContactsCompany, companyContacts, isCompanyContactsLoading, companyContactsError,
-    openCompanyContacts, closeCompanyContacts,
+    companyContactSummary, companyContactGapFilter, openCompanyContacts, setCompanyContactGapFilter, closeCompanyContacts,
     reviewedCompany, companyReviewDetail, isCompanyReviewLoading, companyReviewError,
     isFeedbackSaving, openCompanyReview, closeCompanyReview, saveFeedback, setManualLabelOnReviewed,
     inspectedRun, runJobs, isRunJobsLoading, runJobsError,

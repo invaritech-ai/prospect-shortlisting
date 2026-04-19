@@ -1,11 +1,53 @@
-import { useState } from 'react'
-import type { CompanyList, CompanyListItem, ContactCountsResponse, DecisionFilter } from '../../../lib/types'
+import { useEffect, useRef, useState } from 'react'
+import type {
+  CompanyList,
+  CompanyListItem,
+  ContactCompanyListResponse,
+  ContactCompanySummary,
+  ContactCountsResponse,
+  DecisionFilter,
+} from '../../../lib/types'
+import { listContactCompanies } from '../../../lib/api'
+import { parseApiError } from '../../../lib/utils'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
+
+type AuditMode = 'off' | 'no_matches' | 'matched'
+
+const AUDIT_PAGE_SIZE = 50
+
+/** Build the minimal `CompanyListItem` shape the contacts drawer needs (id/domain/contact_count). */
+function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
+  return {
+    id: summary.company_id,
+    upload_id: '',
+    upload_filename: '',
+    raw_url: `https://${summary.domain}`,
+    normalized_url: `https://${summary.domain}`,
+    domain: summary.domain,
+    pipeline_stage: 'contact_ready',
+    created_at: '',
+    latest_decision: null,
+    latest_confidence: null,
+    latest_scrape_job_id: null,
+    latest_scrape_status: null,
+    latest_scrape_terminal: null,
+    latest_analysis_run_id: null,
+    latest_analysis_job_id: null,
+    latest_analysis_status: null,
+    latest_analysis_terminal: null,
+    feedback_thumbs: null,
+    feedback_comment: null,
+    feedback_manual_label: null,
+    latest_scrape_error_code: null,
+    contact_count: summary.total_count,
+    contact_fetch_status: null,
+  }
+}
 
 interface S3ContactFetchViewProps {
   companies: CompanyList | null
@@ -88,6 +130,56 @@ export function S3ContactFetchView({
   const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
 
+  // ── Title-match audit: list companies with contacts fetched but 0/>0 title matches ──
+  const [auditMode, setAuditMode] = useState<AuditMode>('off')
+  const [auditOffset, setAuditOffset] = useState(0)
+  const [auditData, setAuditData] = useState<ContactCompanyListResponse | null>(null)
+  const [isAuditLoading, setIsAuditLoading] = useState(false)
+  const [auditError, setAuditError] = useState('')
+  const auditRequestRef = useRef(0)
+
+  useEffect(() => {
+    setAuditOffset(0)
+  }, [auditMode, search])
+
+  useEffect(() => {
+    if (auditMode === 'off') {
+      setAuditData(null)
+      setAuditError('')
+      return
+    }
+    const reqId = auditRequestRef.current + 1
+    auditRequestRef.current = reqId
+    setIsAuditLoading(true)
+    setAuditError('')
+    const gapOptions = auditMode === 'no_matches'
+      ? { matchGapFilter: 'contacts_no_match' as const }
+      : { titleMatch: true }
+    const trimmed = search.trim()
+    listContactCompanies({
+      ...gapOptions,
+      limit: AUDIT_PAGE_SIZE,
+      offset: auditOffset,
+      ...(trimmed ? { search: trimmed } : {}),
+    })
+      .then((response) => {
+        if (auditRequestRef.current !== reqId) return
+        setAuditData(response)
+      })
+      .catch((err) => {
+        if (auditRequestRef.current !== reqId) return
+        setAuditError(parseApiError(err))
+      })
+      .finally(() => {
+        if (auditRequestRef.current === reqId) setIsAuditLoading(false)
+      })
+  }, [auditMode, auditOffset, search])
+
+  const isAuditActive = auditMode !== 'off'
+  const auditItems = auditData?.items ?? []
+  const auditTotal = auditData?.total ?? null
+  const auditHasMore = auditData?.has_more ?? false
+
   const visibleCompanies = (companies?.items ?? []).filter((c) => {
     if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
     const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
@@ -158,61 +250,234 @@ export function S3ContactFetchView({
         </div>
       )}
 
-      <LetterStrip
-        multiSelect
-        activeLetters={activeLetters}
-        counts={letterCounts}
-        onToggle={onToggleLetter}
-        onClear={onClearLetters}
-      />
+      {!isAuditActive && (
+        <LetterStrip
+          multiSelect
+          activeLetters={activeLetters}
+          counts={letterCounts}
+          onToggle={onToggleLetter}
+          onClear={onClearLetters}
+        />
+      )}
 
-      {/* Decision filter pills + pager */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1.5">
-          {DECISION_FILTERS.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => onDecisionFilterChange(value)}
-              className="rounded-full border px-3 py-1 text-xs font-medium transition"
-              style={
-                decisionFilter === value
-                  ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
-                  : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
-      </div>
-
-      <SelectionBar
-        stageColor="--s3"
-        stageBg="--s3-bg"
-        selectedCount={selectedIds.length}
-        totalMatching={effectiveTotalMatching}
-        activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 && !isSearchFiltered ? onSelectAllMatching : null}
-        isSelectingAll={isSelectingAll}
-        onClear={onClearSelection}
-      >
-        {FETCH_BUTTONS.map(({ source, label, bg }) => (
+      {/* Title-match audit chips — lets ops verify whether title rules catch the intended contacts */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-(--oc-muted)">Title-match audit</span>
+        {([
+          { value: 'off', label: 'Off' },
+          { value: 'no_matches', label: 'Fetched · 0 matches' },
+          { value: 'matched', label: 'Fetched · has matches' },
+        ] as const).map(({ value, label }) => (
           <button
-            key={source}
+            key={value}
             type="button"
-            onClick={() => onFetchSelected(source)}
-            disabled={isFetching || selectedIds.length === 0}
-            className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
-            style={{ backgroundColor: bg }}
+            onClick={() => setAuditMode(value)}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition"
+            style={
+              auditMode === value
+                ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
+                : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+            }
           >
-            {isFetching ? '…' : label}
+            {label}
           </button>
         ))}
-      </SelectionBar>
+        {isAuditActive && (
+          <span className="ml-1 text-[11px] text-(--oc-muted)">
+            {auditMode === 'no_matches'
+              ? 'Companies whose fetched contacts contain zero title matches — audit the match criteria.'
+              : 'Companies with at least one title-matched contact.'}
+          </span>
+        )}
+      </div>
+
+      {!isAuditActive && (
+        <>
+          {/* Decision filter pills + pager */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {DECISION_FILTERS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onDecisionFilterChange(value)}
+                  className="rounded-full border px-3 py-1 text-xs font-medium transition"
+                  style={
+                    decisionFilter === value
+                      ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
+                      : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+          </div>
+
+          <SelectionBar
+            stageColor="--s3"
+            stageBg="--s3-bg"
+            selectedCount={selectedIds.length}
+            totalMatching={effectiveTotalMatching}
+            activeLetters={activeLetters}
+            onSelectAllMatching={selectedIds.length > 0 && !isSearchFiltered ? onSelectAllMatching : null}
+            isSelectingAll={isSelectingAll}
+            onClear={onClearSelection}
+          >
+            {FETCH_BUTTONS.map(({ source, label, bg }) => (
+              <button
+                key={source}
+                type="button"
+                onClick={() => onFetchSelected(source)}
+                disabled={isFetching || selectedIds.length === 0}
+                className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
+                style={{ backgroundColor: bg }}
+              >
+                {isFetching ? '…' : label}
+              </button>
+            ))}
+          </SelectionBar>
+        </>
+      )}
+
+      {isAuditActive && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-(--oc-muted)">
+            {auditTotal != null
+              ? `${auditTotal.toLocaleString()} compan${auditTotal === 1 ? 'y' : 'ies'} match this audit filter.`
+              : '—'}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenTitleRules}
+              className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
+            >
+              Edit title rules
+            </button>
+            <button
+              type="button"
+              disabled={auditOffset === 0}
+              onClick={() => setAuditOffset(Math.max(0, auditOffset - AUDIT_PAGE_SIZE))}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-(--oc-border) bg-(--oc-surface-strong) text-xs transition hover:bg-(--oc-surface) disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Previous page"
+            >
+              ‹
+            </button>
+            <span className="min-w-[90px] text-center text-[11px] font-medium text-(--oc-muted)">
+              {auditTotal != null
+                ? `${(auditOffset + 1).toLocaleString()}–${Math.min(auditOffset + AUDIT_PAGE_SIZE, auditTotal).toLocaleString()} of ${auditTotal.toLocaleString()}`
+                : `${(auditOffset + 1).toLocaleString()}–${(auditOffset + AUDIT_PAGE_SIZE).toLocaleString()}`}
+            </span>
+            <button
+              type="button"
+              disabled={!auditHasMore}
+              onClick={() => setAuditOffset(auditOffset + AUDIT_PAGE_SIZE)}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-(--oc-border) bg-(--oc-surface-strong) text-xs transition hover:bg-(--oc-surface) disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Next page"
+            >
+              ›
+            </button>
+          </div>
+        </div>
+      )}
       </div>{/* ── /sticky controls ── */}
 
+      {isAuditActive ? (
+        <div className="oc-panel overflow-hidden">
+          {auditError && (
+            <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{auditError}</div>
+          )}
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-(--oc-border) text-xs text-(--oc-muted)">
+                <th className="p-3 text-left font-semibold">Domain</th>
+                <th className="p-3 text-right font-semibold">Contacts</th>
+                <th className="p-3 text-right font-semibold">Title matched</th>
+                <th className="p-3 text-right font-semibold">With email</th>
+                <th className="p-3 text-right font-semibold">Last fetched</th>
+                <th className="p-3 text-left font-semibold">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isAuditLoading && Array.from({ length: 6 }).map((_, i) => (
+                <tr key={i} className="border-b border-(--oc-border)">
+                  <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton ml-auto h-4 w-8 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton ml-auto h-4 w-8 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton ml-auto h-4 w-8 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton ml-auto h-4 w-20 rounded" /></td>
+                  <td className="p-3"><div className="oc-skeleton h-6 w-16 rounded-lg" /></td>
+                </tr>
+              ))}
+              {!isAuditLoading && auditItems.length === 0 && !auditError && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-10 text-center">
+                    <p className="text-sm font-semibold text-(--oc-text)">
+                      {auditMode === 'no_matches'
+                        ? 'No companies with fetched contacts and zero title matches.'
+                        : 'No companies have title-matched contacts yet.'}
+                    </p>
+                    <p className="mt-1 text-xs text-(--oc-muted)">
+                      {auditMode === 'no_matches'
+                        ? 'Either the match criteria are catching everything or contacts have not been fetched.'
+                        : 'Try fetching contacts for more companies or broadening your title rules.'}
+                    </p>
+                  </td>
+                </tr>
+              )}
+              {!isAuditLoading && auditItems.map((summary) => {
+                const matchRate = summary.total_count > 0
+                  ? Math.round((summary.title_matched_count / summary.total_count) * 100)
+                  : 0
+                return (
+                  <tr key={summary.company_id} className="border-b border-(--oc-border) last:border-0">
+                    <td className="p-3">
+                      <a
+                        href={`https://${summary.domain}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-[12px] font-medium hover:underline"
+                        style={{ color: 'var(--s3)' }}
+                      >
+                        {summary.domain}
+                      </a>
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs">{summary.total_count.toLocaleString()}</td>
+                    <td className="p-3 text-right">
+                      <span
+                        className="font-mono text-xs font-semibold"
+                        style={{ color: summary.title_matched_count === 0 ? '#b91c1c' : '#15803d' }}
+                      >
+                        {summary.title_matched_count.toLocaleString()}
+                        {summary.total_count > 0 && (
+                          <span className="ml-1 text-[10px] font-normal text-(--oc-muted)">({matchRate}%)</span>
+                        )}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs">{summary.email_count.toLocaleString()}</td>
+                    <td className="p-3 text-right text-[11px] text-(--oc-muted)">
+                      {summary.last_contact_attempted_at
+                        ? new Date(summary.last_contact_attempted_at).toLocaleDateString()
+                        : '—'}
+                    </td>
+                    <td className="p-3">
+                      <button
+                        type="button"
+                        onClick={() => onViewContacts(summaryToCompanyStub(summary))}
+                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
+                      >
+                        View contacts
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
       <div className="oc-panel overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -332,6 +597,7 @@ export function S3ContactFetchView({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 }

@@ -17,6 +17,7 @@ _LINK_CACHE_TTL = 86400  # 24 hours
 _classify_llm = LLMClient(purpose="classify_links", max_retries=2, default_timeout=60)
 
 _PAGE_KIND_KEYS = ("about", "products", "contact", "team", "leadership", "services", "pricing")
+_PAGE_KIND_WITH_HOME = ("home",) + _PAGE_KIND_KEYS
 
 
 def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -> dict[str, str]:
@@ -170,3 +171,49 @@ async def discover_focus_targets(
         result[kind] = canonical_kind
 
     return result
+
+
+def apply_page_selection_rules(
+    *,
+    targets: dict[str, str],
+    rules: dict | None,
+) -> dict[str, str]:
+    """Apply optional page-kind allowlist and fallback rules to discovered targets."""
+    if not rules:
+        return targets
+
+    requested_kinds = [str(k).strip().lower() for k in (rules.get("page_kinds") or []) if str(k).strip()]
+    requested_kinds = [k for k in requested_kinds if k in _PAGE_KIND_WITH_HOME]
+    if not requested_kinds:
+        return targets
+
+    filtered: dict[str, str] = {kind: targets.get(kind, "") for kind in requested_kinds}
+    if "home" not in filtered:
+        filtered["home"] = targets.get("home", "")
+
+    if not bool(rules.get("fallback_enabled", True)):
+        return filtered
+
+    fallback_limit = int(rules.get("fallback_limit", 1) or 0)
+    if fallback_limit <= 0:
+        return filtered
+
+    priority_raw = rules.get("fallback_priority") or []
+    priority = [str(k).strip().lower() for k in priority_raw if str(k).strip()]
+    priority = [k for k in priority if k in _PAGE_KIND_WITH_HOME]
+    if not priority:
+        priority = list(_PAGE_KIND_WITH_HOME)
+
+    added = 0
+    for kind in priority:
+        if kind in filtered:
+            continue
+        value = targets.get(kind, "")
+        if not value:
+            continue
+        filtered[kind] = value
+        added += 1
+        if added >= fallback_limit:
+            break
+
+    return filtered

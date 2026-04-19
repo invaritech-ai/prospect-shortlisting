@@ -1,0 +1,60 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import {
+  getResumeStageForCompany,
+  scrapeSubToFilter,
+  verifFilterToParams,
+} from '../src/lib/pipelineMappings.ts'
+
+test('resume stage favors earliest failed stage', () => {
+  assert.equal(
+    getResumeStageForCompany({
+      latest_scrape_status: 'site_unavailable',
+      latest_analysis_status: 'failed',
+      contact_fetch_status: 'failed',
+    }),
+    'S1',
+  )
+  assert.equal(
+    getResumeStageForCompany({
+      latest_scrape_status: 'completed',
+      latest_analysis_status: 'dead',
+      contact_fetch_status: 'failed',
+    }),
+    'S2',
+  )
+  assert.equal(
+    getResumeStageForCompany({
+      latest_scrape_status: 'completed',
+      latest_analysis_status: 'succeeded',
+      contact_fetch_status: 'failed',
+    }),
+    'S3',
+  )
+  assert.equal(
+    getResumeStageForCompany({
+      latest_scrape_status: 'completed',
+      latest_analysis_status: 'succeeded',
+      contact_fetch_status: 'succeeded',
+    }),
+    null,
+  )
+})
+
+test('scrape sub-filter mapping stays explicit', () => {
+  assert.equal(scrapeSubToFilter('pending'), 'none')
+  assert.equal(scrapeSubToFilter('done'), 'done')
+  assert.equal(scrapeSubToFilter('failed'), 'failed')
+  assert.equal(scrapeSubToFilter('all'), 'all')
+  assert.equal(scrapeSubToFilter('active'), 'all')
+  assert.equal(scrapeSubToFilter('permanent'), 'all')
+  assert.equal(scrapeSubToFilter('soft'), 'all')
+})
+
+test('verification filters map stale_30d to server parameter', () => {
+  assert.deepEqual(verifFilterToParams('all'), {})
+  assert.deepEqual(verifFilterToParams('valid'), { verificationStatus: 'valid' })
+  assert.deepEqual(verifFilterToParams('campaign_ready'), { stageFilter: 'campaign_ready' })
+  assert.deepEqual(verifFilterToParams('stale_30d'), { staleDays: 30 })
+})

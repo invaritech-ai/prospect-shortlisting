@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
     max_retries=2,
     queue="scrape",
 )
-def scrape_website(self, job_id: str) -> None:  # type: ignore[misc]
+def scrape_website(self, job_id: str, scrape_rules: dict | None = None) -> None:  # type: ignore[misc]
     """Celery task: run the full scrape pipeline for a single ScrapeJob."""
     import time
     log_event(logger, "scrape_celery_task_received",
@@ -39,7 +39,7 @@ def scrape_website(self, job_id: str) -> None:  # type: ignore[misc]
     service = ScrapeService()
     t_start = time.monotonic()
     try:
-        asyncio.run(service.run_scrape(engine=engine, job_id=job_id))
+        asyncio.run(service.run_scrape(engine=engine, job_id=job_id, scrape_rules=scrape_rules))
         elapsed = time.monotonic() - t_start
         log_event(logger, "scrape_celery_task_done", job_id=job_id, elapsed_sec=round(elapsed, 1))
     except SoftTimeLimitExceeded:
