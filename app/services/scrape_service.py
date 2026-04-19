@@ -257,12 +257,24 @@ class ScrapeService:
 
         # ── Phase 4: discover target URLs (sitemap + LLM) ───────────────────
         log_event(logger, "scrape_discover_start", job_id=str(job_id), domain=domain)
+        classifier_prompt_text = (
+            str(scrape_rules.get("classifier_prompt_text", "")).strip()
+            if scrape_rules and scrape_rules.get("classifier_prompt_text") is not None
+            else ""
+        )
+        requested_page_kinds = (
+            [str(k).strip().lower() for k in (scrape_rules.get("page_kinds") or []) if str(k).strip()]
+            if scrape_rules
+            else []
+        )
         targets = await discover_focus_targets(
             start_url=normalized_url,
             domain=domain,
             include_sitemap=include_sitemap,
             use_js_fallback=js_fallback,
             classify_model=classify_model,
+            classifier_prompt_text=classifier_prompt_text or None,
+            requested_page_kinds=requested_page_kinds or None,
         )
         selected_targets = apply_page_selection_rules(targets=targets, rules=scrape_rules)
         log_event(logger, "scrape_discover_done", job_id=str(job_id), domain=domain,

@@ -176,15 +176,25 @@ class Prompt(SQLModel, table=True):
     name: str = Field(max_length=255, index=True)
     enabled: bool = Field(default=True, index=True)
     prompt_text: str
-    scrape_pages_intent_text: str | None = Field(
-        default=None,
-        sa_column=Column(Text, nullable=True),
-    )
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ScrapePrompt(SQLModel, table=True):
+    __tablename__ = "scrape_prompts"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    name: str = Field(max_length=255, index=True)
+    enabled: bool = Field(default=True, index=True)
+    is_system_default: bool = Field(default=False, index=True)
+    is_active: bool = Field(default=False, index=True)
+    intent_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    compiled_prompt_text: str = Field(sa_column=Column(Text, nullable=False))
     scrape_rules_structured: dict[str, Any] | None = Field(
         default=None,
         sa_column=Column(JSON, nullable=True),
     )
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class Run(SQLModel, table=True):

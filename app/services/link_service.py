@@ -18,9 +18,35 @@ _classify_llm = LLMClient(purpose="classify_links", max_retries=2, default_timeo
 
 _PAGE_KIND_KEYS = ("about", "products", "contact", "team", "leadership", "services", "pricing")
 _PAGE_KIND_WITH_HOME = ("home",) + _PAGE_KIND_KEYS
+_PAGE_KIND_DESCRIPTIONS: dict[str, str] = {
+    "about": "company overview/about-us/who-we-are page (best source for canonical company name, founded year, HQ)",
+    "products": "products/services/solutions/catalog/linecard page",
+    "contact": "contact/get-in-touch page (phone, email, address)",
+    "team": "general team/people/staff page",
+    "leadership": "executive team/leadership/management/board/C-suite page",
+    "services": "services/capabilities/what-we-do page",
+    "pricing": "pricing/plans/packages page",
+}
 
 
-def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -> dict[str, str]:
+def _build_default_classifier_prompt(page_kinds: list[str]) -> str:
+    lines = ["Find the best URL for each of these page types:"]
+    for kind in page_kinds:
+        description = _PAGE_KIND_DESCRIPTIONS.get(kind)
+        if description:
+            lines.append(f"- {kind}: {description}")
+    lines.append("Ignore auth, legal, policy, cart, search, testimonial pages.")
+    return "\n".join(lines)
+
+
+def classify_links_with_llm(
+    *,
+    domain: str,
+    candidates: list[str],
+    model: str,
+    classifier_prompt_text: str | None = None,
+    requested_page_kinds: list[str] | None = None,
+) -> dict[str, str]:
     """Ask an LLM to pick the best URL for each page kind from *candidates*.
 
     Returns a dict with keys matching _PAGE_KIND_KEYS.
@@ -31,6 +57,14 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
         return {}
 
     links_block = "\n".join(f"- {url}" for url in candidates[:200])
+    requested = [
+        kind
+        for kind in (requested_page_kinds or list(_PAGE_KIND_KEYS))
+        if kind in _PAGE_KIND_KEYS
+    ]
+    if not requested:
+        requested = list(_PAGE_KIND_KEYS)
+    classifier_prompt = (classifier_prompt_text or "").strip() or _build_default_classifier_prompt(requested)
 
     # Check Redis cache — key is based on domain + sorted candidate fingerprint
     redis = get_redis()
@@ -38,7 +72,15 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
     if redis:
         try:
             fingerprint = hashlib.sha256(
-                (domain + "\n" + "\n".join(sorted(candidates[:200]))).encode()
+                (
+                    domain
+                    + "\n"
+                    + ",".join(requested)
+                    + "\n"
+                    + classifier_prompt
+                    + "\n"
+                    + "\n".join(sorted(candidates[:200]))
+                ).encode()
             ).hexdigest()[:16]
             cache_key = f"link_classify:{fingerprint}"
             cached = redis.get(cache_key)
@@ -60,17 +102,10 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
                 "role": "user",
                 "content": (
                     f"Domain: {domain}\n"
-                    "Find the best URL for each of these page types:\n"
-                    "- about: company overview/about-us/who-we-are page (best source for canonical company name, founded year, HQ)\n"
-                    "- products: products/services/solutions/catalog/linecard page\n"
-                    "- contact: contact/get-in-touch page (phone, email, address)\n"
-                    "- team: general team/people/staff page\n"
-                    "- leadership: executive team/leadership/management/board/C-suite page\n"
-                    "- services: services/capabilities/what-we-do page\n"
-                    "- pricing: pricing/plans/packages page\n"
-                    "Ignore auth, legal, policy, cart, search, testimonial pages.\n\n"
+                    f"{classifier_prompt}\n\n"
                     f"Links:\n{links_block}\n\n"
-                    'Return JSON: {"about":"","products":"","contact":"","team":"","leadership":"","services":"","pricing":""}'
+                    "Return JSON with these keys only: "
+                    + json.dumps({k: "" for k in requested})
                 ),
             },
         ],
@@ -80,7 +115,9 @@ def classify_links_with_llm(*, domain: str, candidates: list[str], model: str) -
         return {}
     try:
         parsed = json.loads(content) if content else {}
-        result = {k: str(parsed.get(k, "") or "").strip() for k in _PAGE_KIND_KEYS}
+        result = {k: "" for k in _PAGE_KIND_KEYS}
+        for key in requested:
+            result[key] = str(parsed.get(key, "") or "").strip()
     except Exception:  # noqa: BLE001
         return {}
 
@@ -125,6 +162,8 @@ async def discover_focus_targets(
     include_sitemap: bool,
     use_js_fallback: bool,
     classify_model: str,
+    classifier_prompt_text: str | None = None,
+    requested_page_kinds: list[str] | None = None,
 ) -> dict[str, str]:
     """Return a mapping of page_kind → URL for pages worth scraping.
 
@@ -159,7 +198,12 @@ async def discover_focus_targets(
     # Run it in a thread so it doesn't freeze the asyncio event loop and
     # prevent Playwright's internal timers from firing.
     kind_urls = await asyncio.to_thread(
-        classify_links_with_llm, domain=domain, candidates=deduped, model=classify_model
+        classify_links_with_llm,
+        domain=domain,
+        candidates=deduped,
+        model=classify_model,
+        classifier_prompt_text=classifier_prompt_text,
+        requested_page_kinds=requested_page_kinds,
     )
 
     result: dict[str, str] = {"home": home}

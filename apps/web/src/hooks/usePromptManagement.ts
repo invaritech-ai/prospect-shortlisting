@@ -12,7 +12,6 @@ export interface UsePromptManagementResult {
   editingPromptId: string | null
   promptName: string
   promptText: string
-  promptScrapeIntentText: string
   promptEnabled: boolean
   isPromptsLoading: boolean
   isPromptSaving: boolean
@@ -21,7 +20,6 @@ export interface UsePromptManagementResult {
   promptSheetOpen: boolean
   setPromptName: (v: string) => void
   setPromptText: (v: string) => void
-  setPromptScrapeIntentText: (v: string) => void
   setPromptEnabled: (v: boolean) => void
   setSelectedPromptId: (v: string) => void
   loadPrompts: (preferredId?: string, preserveEditor?: boolean) => Promise<void>
@@ -48,7 +46,6 @@ export function usePromptManagement(
   const [editingPromptIdState, setEditingPromptIdState] = useState<string | null>(null)
   const [promptName, setPromptName] = useState('')
   const [promptText, setPromptText] = useState('')
-  const [promptScrapeIntentText, setPromptScrapeIntentText] = useState('')
   const [promptEnabled, setPromptEnabled] = useState(true)
   const [isPromptsLoading, setIsPromptsLoading] = useState(false)
   const [isPromptSaving, setIsPromptSaving] = useState(false)
@@ -96,13 +93,11 @@ export function usePromptManagement(
             setEditingPromptId(forEditor.id)
             setPromptName(forEditor.name)
             setPromptText(forEditor.prompt_text)
-            setPromptScrapeIntentText(forEditor.scrape_pages_intent_text ?? '')
             setPromptEnabled(forEditor.enabled)
           } else {
             setEditingPromptId(null)
             setPromptName('')
             setPromptText('')
-            setPromptScrapeIntentText('')
             setPromptEnabled(true)
           }
         }
@@ -121,7 +116,6 @@ export function usePromptManagement(
       setEditingPromptId(prompt.id)
       setPromptName(prompt.name)
       setPromptText(prompt.prompt_text)
-      setPromptScrapeIntentText(prompt.scrape_pages_intent_text ?? '')
       setPromptEnabled(prompt.enabled)
     },
     [setSelectedPromptId, setEditingPromptId],
@@ -131,7 +125,6 @@ export function usePromptManagement(
     setEditingPromptId(null)
     setPromptName('')
     setPromptText('')
-    setPromptScrapeIntentText('')
     setPromptEnabled(true)
     setPromptError('')
   }, [setEditingPromptId])
@@ -147,7 +140,6 @@ export function usePromptManagement(
         name: promptName.trim(),
         prompt_text: promptText.trim(),
         enabled: promptEnabled,
-        scrape_pages_intent_text: promptScrapeIntentText.trim() || null,
       })
       await loadPrompts(created.id)
       setNotice(`Prompt "${created.name}" created.`)
@@ -157,7 +149,7 @@ export function usePromptManagement(
     } finally {
       setIsPromptSaving(false)
     }
-  }, [promptName, promptText, promptEnabled, promptScrapeIntentText, loadPrompts, setError, setNotice])
+  }, [promptName, promptText, promptEnabled, loadPrompts, setError, setNotice])
 
   const onUpdateCurrentPrompt = useCallback(async () => {
     if (!editingPromptIdState) {
@@ -174,7 +166,6 @@ export function usePromptManagement(
         name: promptName.trim(),
         prompt_text: promptText.trim(),
         enabled: promptEnabled,
-        scrape_pages_intent_text: promptScrapeIntentText.trim() || null,
       })
       await loadPrompts(updated.id)
       setNotice(`Prompt "${updated.name}" updated.`)
@@ -184,7 +175,7 @@ export function usePromptManagement(
     } finally {
       setIsPromptSaving(false)
     }
-  }, [editingPromptIdState, promptName, promptText, promptEnabled, promptScrapeIntentText, loadPrompts, setError, setNotice])
+  }, [editingPromptIdState, promptName, promptText, promptEnabled, loadPrompts, setError, setNotice])
 
   const onTogglePromptEnabled = useCallback(
     async (prompt: PromptRead) => {
@@ -218,7 +209,6 @@ export function usePromptManagement(
           setEditingPromptIdState(null)
           setPromptName('')
           setPromptText('')
-          setPromptScrapeIntentText('')
           setPromptEnabled(true)
         }
         await loadPrompts()
@@ -241,7 +231,6 @@ export function usePromptManagement(
         const created = await createPrompt({
           name: `Copy of ${prompt.name}`,
           prompt_text: prompt.prompt_text,
-          scrape_pages_intent_text: prompt.scrape_pages_intent_text ?? null,
           enabled: false,
         })
         await loadPrompts(created.id)
@@ -275,7 +264,6 @@ export function usePromptManagement(
     editingPromptId: editingPromptIdState,
     promptName,
     promptText,
-    promptScrapeIntentText,
     promptEnabled,
     isPromptsLoading,
     isPromptSaving,
@@ -284,7 +272,6 @@ export function usePromptManagement(
     promptSheetOpen,
     setPromptName,
     setPromptText,
-    setPromptScrapeIntentText,
     setPromptEnabled,
     setSelectedPromptId,
     loadPrompts,

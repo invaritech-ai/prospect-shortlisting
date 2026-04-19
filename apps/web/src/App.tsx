@@ -37,6 +37,7 @@ import { parseApiError } from './lib/utils'
 // Hooks
 import { usePanels } from './hooks/usePanels'
 import { usePromptManagement } from './hooks/usePromptManagement'
+import { useScrapePromptManagement } from './hooks/useScrapePromptManagement'
 import { usePipelineViews } from './hooks/usePipelineViews'
 
 // Layout
@@ -54,6 +55,7 @@ import { CampaignsView } from './components/views/campaigns/CampaignsView'
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
 import { PromptLibraryPanel } from './components/panels/PromptLibraryPanel'
+import { ScrapePromptLibraryPanel } from './components/panels/ScrapePromptLibraryPanel'
 import { TitleRulesPanel } from './components/panels/TitleRulesPanel'
 import { AnalysisDetailPanel } from './components/panels/AnalysisDetailPanel'
 import { CompanyReviewPanel } from './components/panels/CompanyReviewPanel'
@@ -116,8 +118,15 @@ function App() {
 
   // ── Custom hooks ──────────────────────────────────────────────────────────
   const promptMgmt = usePromptManagement(setError, setNotice)
+  const scrapePromptMgmt = useScrapePromptManagement(setError, setNotice)
 
-  const pipeline = usePipelineViews(activeView, promptMgmt.selectedPrompt, setError, setNotice)
+  const pipeline = usePipelineViews(
+    activeView,
+    promptMgmt.selectedPrompt,
+    scrapePromptMgmt.activeScrapePrompt,
+    setError,
+    setNotice,
+  )
 
   const panels = usePanels(setError, setNotice, pipeline.refreshPipelineView)
 
@@ -189,6 +198,7 @@ function App() {
 
   useEffect(() => {
     void promptMgmt.loadPrompts()
+    void scrapePromptMgmt.loadScrapePrompts()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -302,7 +312,7 @@ function App() {
     try {
       await createScrapeJob({
         website_url: company.normalized_url,
-        scrape_rules: promptMgmt.selectedPrompt?.scrape_rules_structured ?? undefined,
+        scrape_rules: scrapePromptMgmt.activeScrapePrompt?.scrape_rules_structured ?? undefined,
       })
       setActionState((c) => ({ ...c, [company.id]: 'Queued' }))
       pipeline.refreshPipelineView()
@@ -392,7 +402,9 @@ function App() {
   const runScrapeAll = async () => {
     setError(''); setNotice(''); setNoticeAction(null)
     try {
-      const result = await scrapeAllCompanies({ scrapeRules: promptMgmt.selectedPrompt?.scrape_rules_structured ?? undefined })
+      const result = await scrapeAllCompanies({
+        scrapeRules: scrapePromptMgmt.activeScrapePrompt?.scrape_rules_structured ?? undefined,
+      })
       void loadCompanyCounts()
       pipeline.refreshPipelineView()
       void loadRecentActivity()
@@ -427,7 +439,7 @@ function App() {
         setActiveView={setActiveView}
         activeCampaignName={activeCampaignName}
         stats={stats}
-        onOpenPromptLibrary={promptMgmt.openPromptSheet}
+        onOpenPromptLibrary={activeView === 's1-scraping' ? scrapePromptMgmt.openScrapePromptSheet : promptMgmt.openPromptSheet}
       >
         {activeView === 'dashboard' && (
           <DashboardView
@@ -490,7 +502,7 @@ function App() {
             letterCounts={pipeline.pipelineLetterCounts}
             activeLetters={pipeline.pipelineActiveLetters}
             scrapeSubFilter={pipeline.pipelineScrapeSubFilter}
-            selectedPrompt={promptMgmt.selectedPrompt}
+            selectedScrapePrompt={scrapePromptMgmt.activeScrapePrompt}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
             isLoading={pipeline.isPipelineLoading}
@@ -509,7 +521,7 @@ function App() {
             onClearSelection={pipeline.onPipelineClearSelection}
             onScrapeSelected={pipeline.onPipelineScrapeSelected}
             onScrapeOne={(c) => void onScrape(c)}
-            onOpenPromptLibrary={promptMgmt.openPromptSheet}
+            onOpenPromptLibrary={scrapePromptMgmt.openScrapePromptSheet}
             onOpenDiagnostics={(c) => {
               if (c.latest_scrape_job_id) {
                 void panels.openScrapeDiagnostics({ id: c.latest_scrape_job_id } as ScrapeJobRead)
@@ -674,7 +686,6 @@ function App() {
         editingPromptId={promptMgmt.editingPromptId}
         promptName={promptMgmt.promptName}
         promptText={promptMgmt.promptText}
-        promptScrapeIntentText={promptMgmt.promptScrapeIntentText}
         promptEnabled={promptMgmt.promptEnabled}
         isPromptsLoading={promptMgmt.isPromptsLoading}
         isPromptSaving={promptMgmt.isPromptSaving}
@@ -689,9 +700,40 @@ function App() {
         onUpdateCurrent={() => void promptMgmt.onUpdateCurrentPrompt()}
         onSetPromptName={promptMgmt.setPromptName}
         onSetPromptText={promptMgmt.setPromptText}
-        onSetPromptScrapeIntentText={promptMgmt.setPromptScrapeIntentText}
         onSetPromptEnabled={promptMgmt.setPromptEnabled}
         onRefresh={() => void promptMgmt.loadPrompts(promptMgmt.selectedPromptId, promptMgmt.editingPromptId !== null)}
+      />
+
+      <ScrapePromptLibraryPanel
+        isOpen={scrapePromptMgmt.scrapePromptSheetOpen}
+        onClose={scrapePromptMgmt.closeScrapePromptSheet}
+        prompts={scrapePromptMgmt.scrapePrompts}
+        selectedPromptId={scrapePromptMgmt.selectedScrapePromptId}
+        activePromptId={scrapePromptMgmt.activeScrapePromptId}
+        editingPromptId={scrapePromptMgmt.editingScrapePromptId}
+        promptName={scrapePromptMgmt.scrapePromptName}
+        promptIntentText={scrapePromptMgmt.scrapePromptIntentText}
+        promptEnabled={scrapePromptMgmt.scrapePromptEnabled}
+        isPromptsLoading={scrapePromptMgmt.isScrapePromptsLoading}
+        isPromptSaving={scrapePromptMgmt.isScrapePromptSaving}
+        isPromptDeleting={scrapePromptMgmt.isScrapePromptDeleting}
+        promptError={scrapePromptMgmt.scrapePromptError}
+        onSelectPrompt={scrapePromptMgmt.onSelectScrapePrompt}
+        onNewPrompt={scrapePromptMgmt.onNewScrapePrompt}
+        onTogglePromptEnabled={(p) => void scrapePromptMgmt.onToggleScrapePromptEnabled(p)}
+        onDeletePrompt={(p) => void scrapePromptMgmt.onDeleteScrapePrompt(p)}
+        onActivatePrompt={(p) => void scrapePromptMgmt.onActivateScrapePrompt(p)}
+        onSaveAsNew={() => void scrapePromptMgmt.onSaveScrapePromptAsNew()}
+        onUpdateCurrent={() => void scrapePromptMgmt.onUpdateCurrentScrapePrompt()}
+        onSetPromptName={scrapePromptMgmt.setScrapePromptName}
+        onSetPromptIntentText={scrapePromptMgmt.setScrapePromptIntentText}
+        onSetPromptEnabled={scrapePromptMgmt.setScrapePromptEnabled}
+        onRefresh={() =>
+          void scrapePromptMgmt.loadScrapePrompts(
+            scrapePromptMgmt.selectedScrapePromptId,
+            scrapePromptMgmt.editingScrapePromptId !== null,
+          )
+        }
       />
 
       <AnalysisDetailPanel

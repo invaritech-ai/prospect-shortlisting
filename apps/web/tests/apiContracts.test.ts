@@ -2,14 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  createPrompt,
+  activateScrapePrompt,
+  createScrapePrompt,
   listCompanies,
   listCompanyIds,
   listContactCompanies,
   listContacts,
+  listScrapePrompts,
   scrapeAllCompanies,
   scrapeSelectedCompanies,
-  updatePrompt,
+  updateScrapePrompt,
 } from '../src/lib/api.ts'
 
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
@@ -49,12 +51,13 @@ test('scrapeSelectedCompanies sends idempotency header and scrape_rules body', a
 
   await scrapeSelectedCompanies(['c1'], {
     idempotencyKey: '0123456789abcdef',
-    scrapeRules: { page_kinds: ['home', 'contact'] },
+    scrapeRules: { page_kinds: ['home', 'contact'], classifier_prompt_text: 'Find the best URL for each of these page types:\n- home\n- contact' },
     uploadId: 'u-1',
   })
 
   assert.equal(sentHeaders?.get('X-Idempotency-Key'), '0123456789abcdef')
   assert.match(sentBody, /"page_kinds":\["home","contact"\]/)
+  assert.match(sentBody, /"classifier_prompt_text":"Find the best URL for each of these page types:\\n- home\\n- contact"/)
   assert.match(sentBody, /"upload_id":"u-1"/)
 })
 
@@ -120,48 +123,90 @@ test('listCompanyIds serializes multi-letter filters', async () => {
   assert.match(requested, /letters=w%2Cx/)
 })
 
-test('createPrompt serializes scrape_pages_intent_text', async () => {
+test('createScrapePrompt serializes intent_text', async () => {
   let sentBody = ''
   mockFetch((_url, init) => {
     sentBody = String(init?.body ?? '')
     return {
-      id: 'p1',
-      name: 'Prompt',
+      id: 'sp1',
+      name: 'Scrape Prompt',
       enabled: true,
-      prompt_text: 'Rubric',
-      scrape_pages_intent_text: 'Find pricing and contact pages',
+      is_system_default: false,
+      is_active: false,
+      intent_text: 'Find pricing and contact pages',
+      compiled_prompt_text: 'Find the best URL for each of these page types:\\n- pricing\\n- contact',
       scrape_rules_structured: { page_kinds: ['pricing', 'contact'] },
       created_at: '2026-01-01T00:00:00Z',
-      run_count: 0,
+      updated_at: '2026-01-01T00:00:00Z',
     }
   })
 
-  await createPrompt({
-    name: 'Prompt',
-    prompt_text: 'Rubric',
-    scrape_pages_intent_text: 'Find pricing and contact pages',
+  await createScrapePrompt({
+    name: 'Scrape Prompt',
+    intent_text: 'Find pricing and contact pages',
+    enabled: true,
   })
 
-  assert.match(sentBody, /"scrape_pages_intent_text":"Find pricing and contact pages"/)
+  assert.match(sentBody, /"intent_text":"Find pricing and contact pages"/)
 })
 
-test('updatePrompt serializes scrape_pages_intent_text', async () => {
+test('updateScrapePrompt serializes intent_text', async () => {
   let sentBody = ''
   mockFetch((_url, init) => {
     sentBody = String(init?.body ?? '')
     return {
-      id: 'p1',
-      name: 'Prompt',
+      id: 'sp1',
+      name: 'Scrape Prompt',
       enabled: true,
-      prompt_text: 'Rubric',
-      scrape_pages_intent_text: 'Find team and leadership pages',
+      is_system_default: false,
+      is_active: false,
+      intent_text: 'Find team and leadership pages',
+      compiled_prompt_text: 'Find the best URL for each of these page types:\\n- team\\n- leadership',
       scrape_rules_structured: { page_kinds: ['team', 'leadership'] },
       created_at: '2026-01-01T00:00:00Z',
-      run_count: 0,
+      updated_at: '2026-01-01T00:00:00Z',
     }
   })
 
-  await updatePrompt('p1', { scrape_pages_intent_text: 'Find team and leadership pages' })
+  await updateScrapePrompt('sp1', { intent_text: 'Find team and leadership pages' })
 
-  assert.match(sentBody, /"scrape_pages_intent_text":"Find team and leadership pages"/)
+  assert.match(sentBody, /"intent_text":"Find team and leadership pages"/)
+})
+
+test('listScrapePrompts serializes enabled_only', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return []
+  })
+
+  await listScrapePrompts(true)
+
+  assert.match(requested, /enabled_only=true/)
+})
+
+test('activateScrapePrompt posts to activate endpoint', async () => {
+  let requested = ''
+  let method = ''
+  mockFetch((url, init) => {
+    requested = url
+    method = String(init?.method ?? '')
+    return {
+      id: 'sp1',
+      name: 'Default S1 Scrape Prompt',
+      enabled: true,
+      is_system_default: true,
+      is_active: true,
+      intent_text: null,
+      compiled_prompt_text: 'Find the best URL for each of these page types:',
+      scrape_rules_structured: { page_kinds: ['about'] },
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    }
+  })
+
+  await activateScrapePrompt('sp1')
+
+  assert.match(requested, /\/v1\/scrape-prompts\/sp1\/activate$/)
+  assert.equal(method, 'POST')
 })

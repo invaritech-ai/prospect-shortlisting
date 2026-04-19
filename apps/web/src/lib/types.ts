@@ -203,6 +203,7 @@ export type ScrapePageKind =
 
 export type ScrapeRules = {
   page_kinds?: ScrapePageKind[]
+  classifier_prompt_text?: string | null
   fallback_enabled?: boolean
   fallback_limit?: number
   fallback_priority?: ScrapePageKind[]
@@ -235,8 +236,6 @@ export type PromptRead = {
   name: string
   enabled: boolean
   prompt_text: string
-  scrape_pages_intent_text?: string | null
-  scrape_rules_structured?: ScrapeRules | null
   created_at: string
   run_count: number
 }
@@ -245,14 +244,38 @@ export type PromptCreate = {
   name: string
   prompt_text: string
   enabled?: boolean
-  scrape_pages_intent_text?: string | null
 }
 
 export type PromptUpdate = {
   name?: string
   prompt_text?: string
   enabled?: boolean
-  scrape_pages_intent_text?: string | null
+}
+
+export type ScrapePromptRead = {
+  id: string
+  name: string
+  enabled: boolean
+  is_system_default: boolean
+  is_active: boolean
+  intent_text: string | null
+  compiled_prompt_text: string
+  scrape_rules_structured: ScrapeRules | null
+  created_at: string
+  updated_at: string
+}
+
+export type ScrapePromptCreate = {
+  name: string
+  intent_text?: string | null
+  enabled?: boolean
+  set_active?: boolean
+}
+
+export type ScrapePromptUpdate = {
+  name?: string
+  intent_text?: string | null
+  enabled?: boolean
 }
 
 export type RunRead = {

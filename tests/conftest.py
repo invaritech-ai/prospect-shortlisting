@@ -23,6 +23,7 @@ from app.models import (  # noqa: F401
     ProspectContact,
     Run,
     ScrapeJob,
+    ScrapePrompt,
     ScrapePage,
     TitleMatchRule,
     Upload,

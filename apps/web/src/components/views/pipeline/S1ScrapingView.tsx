@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, PromptRead, ScrapeRules, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, ScrapePromptRead, ScrapeRules, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -11,7 +11,7 @@ interface S1ScrapingViewProps {
   letterCounts: Record<string, number>
   activeLetters: Set<string>
   scrapeSubFilter: ScrapeSubFilter
-  selectedPrompt: PromptRead | null
+  selectedScrapePrompt: ScrapePromptRead | null
   selectedIds: string[]
   totalMatching: number | null
   isLoading: boolean
@@ -82,7 +82,7 @@ export function S1ScrapingView({
   letterCounts,
   activeLetters,
   scrapeSubFilter,
-  selectedPrompt,
+  selectedScrapePrompt,
   selectedIds,
   totalMatching,
   isLoading,
@@ -241,16 +241,16 @@ export function S1ScrapingView({
               onClick={onOpenPromptLibrary}
               className="text-[11px] text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text)"
             >
-              {selectedPrompt ? `Edit prompt: ${selectedPrompt.name}` : 'Open Prompt Library'}
+              {selectedScrapePrompt ? 'Edit scraping prompts' : 'Open scraping prompts'}
             </button>
           </div>
 
-          {selectedPrompt ? (
+          {selectedScrapePrompt ? (
             <div className="space-y-2">
               <div className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-3 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-(--oc-muted)">Intent (plain English)</p>
                 <p className="mt-1 text-xs text-(--oc-text)">
-                  {selectedPrompt.scrape_pages_intent_text?.trim() || 'No pages intent configured. Default scrape behavior will be used.'}
+                  {selectedScrapePrompt.intent_text?.trim() || 'No pages intent configured. Default scrape behavior will be used.'}
                 </p>
               </div>
               <div className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-3 py-2">
@@ -259,7 +259,7 @@ export function S1ScrapingView({
                 </p>
                 <textarea
                   readOnly
-                  value={formatScrapeRulesPreview(selectedPrompt.scrape_rules_structured)}
+                  value={formatScrapeRulesPreview(selectedScrapePrompt.scrape_rules_structured)}
                   rows={7}
                   className="w-full resize-none rounded-md border border-(--oc-border) bg-white px-2 py-1.5 font-mono text-[11px] leading-5 text-(--oc-muted) outline-none"
                 />
@@ -267,7 +267,7 @@ export function S1ScrapingView({
             </div>
           ) : (
             <p className="text-xs text-(--oc-muted)">
-              No prompt selected. Open Prompt Library and select an enabled prompt to define pages intent.
+              No scrape prompt selected. Open scraping prompts and select an enabled prompt to define pages intent.
             </p>
           )}
         </div>

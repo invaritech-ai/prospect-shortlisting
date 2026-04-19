@@ -23,6 +23,7 @@ ScrapePageKind = Literal[
 
 class ScrapeRules(BaseModel):
     page_kinds: list[ScrapePageKind] = Field(default_factory=list)
+    classifier_prompt_text: str | None = None
     fallback_enabled: bool = True
     fallback_limit: int = Field(default=1, ge=0, le=3)
     fallback_priority: list[ScrapePageKind] = Field(default_factory=list)

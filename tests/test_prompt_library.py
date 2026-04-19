@@ -74,50 +74,28 @@ def test_run_count_reflects_actual_runs(sqlite_session: Session) -> None:
     assert found.run_count == 1
 
 
-def test_create_prompt_persists_scrape_intent_and_structured_rules(
-    sqlite_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "app.api.routes.prompts.format_scrape_intent_to_rules",
-        lambda intent: (
-            {"page_kinds": ["pricing", "products"], "fallback_enabled": True, "fallback_limit": 1},
-            "",
-        ),
-    )
+def test_create_prompt_persists_core_fields_only(sqlite_session: Session) -> None:
     created = create_prompt(
         PromptCreate(
-            name="Intent Prompt",
+            name="S2 Prompt",
             prompt_text="Rubric",
-            scrape_pages_intent_text="Look for product catalog and pricing pages.",
             enabled=True,
         ),
         session=sqlite_session,
     )
-    assert created.scrape_pages_intent_text == "Look for product catalog and pricing pages."
-    assert created.scrape_rules_structured is not None
-    assert created.scrape_rules_structured.page_kinds == ["pricing", "products"]
+    assert created.name == "S2 Prompt"
+    assert created.prompt_text == "Rubric"
+    assert created.enabled is True
 
 
-def test_update_prompt_recomputes_rules_from_updated_intent(
-    sqlite_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_update_prompt_updates_core_fields_only(sqlite_session: Session) -> None:
     prompt = _prompt(sqlite_session, name="Editable")
     sqlite_session.commit()
-    calls: list[str | None] = []
-
-    def _fake_formatter(intent: str | None) -> tuple[dict, str]:
-        calls.append(intent)
-        return ({"page_kinds": ["contact"], "fallback_enabled": True, "fallback_limit": 1}, "")
-
-    monkeypatch.setattr("app.api.routes.prompts.format_scrape_intent_to_rules", _fake_formatter)
     updated = update_prompt(
         prompt.id,
-        PromptUpdate(scrape_pages_intent_text="Find contact and support pages"),
+        PromptUpdate(name="Updated", prompt_text="Updated rubric", enabled=False),
         session=sqlite_session,
     )
-    assert calls == ["Find contact and support pages"]
-    assert updated.scrape_pages_intent_text == "Find contact and support pages"
-    assert updated.scrape_rules_structured is not None
-    assert updated.scrape_rules_structured.page_kinds == ["contact"]
+    assert updated.name == "Updated"
+    assert updated.prompt_text == "Updated rubric"
+    assert updated.enabled is False

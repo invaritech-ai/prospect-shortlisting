@@ -28,6 +28,9 @@ import type {
   PromptCreate,
   PromptRead,
   PromptUpdate,
+  ScrapePromptCreate,
+  ScrapePromptRead,
+  ScrapePromptUpdate,
   ResetStuckResult,
   RunCreateRequest,
   RunCreateResult,
@@ -252,6 +255,36 @@ export async function updatePrompt(promptId: string, payload: PromptUpdate): Pro
 
 export async function deletePrompt(promptId: string): Promise<void> {
   await request<void>(`/v1/prompts/${promptId}`, { method: 'DELETE' })
+}
+
+export async function listScrapePrompts(enabledOnly = false): Promise<ScrapePromptRead[]> {
+  return request<ScrapePromptRead[]>(`/v1/scrape-prompts?enabled_only=${enabledOnly ? 'true' : 'false'}`)
+}
+
+export async function createScrapePrompt(payload: ScrapePromptCreate): Promise<ScrapePromptRead> {
+  return request<ScrapePromptRead>('/v1/scrape-prompts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateScrapePrompt(promptId: string, payload: ScrapePromptUpdate): Promise<ScrapePromptRead> {
+  return request<ScrapePromptRead>(`/v1/scrape-prompts/${promptId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteScrapePrompt(promptId: string): Promise<void> {
+  await request<void>(`/v1/scrape-prompts/${promptId}`, { method: 'DELETE' })
+}
+
+export async function activateScrapePrompt(promptId: string): Promise<ScrapePromptRead> {
+  return request<ScrapePromptRead>(`/v1/scrape-prompts/${promptId}/activate`, {
+    method: 'POST',
+  })
 }
 
 export async function createRuns(payload: RunCreateRequest): Promise<RunCreateResult> {

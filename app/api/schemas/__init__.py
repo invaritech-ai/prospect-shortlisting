@@ -10,6 +10,7 @@ from app.api.schemas.scrape import (
 )
 from app.api.schemas.analysis import AnalysisJobDetailRead, AnalysisRunJobRead
 from app.api.schemas.prompt import PromptCreate, PromptRead, PromptUpdate
+from app.api.schemas.scrape_prompt import ScrapePromptCreate, ScrapePromptRead, ScrapePromptUpdate
 from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.api.schemas.upload import (
     CompanyList,
@@ -37,6 +38,9 @@ __all__ = [
     "PromptCreate",
     "PromptRead",
     "PromptUpdate",
+    "ScrapePromptCreate",
+    "ScrapePromptRead",
+    "ScrapePromptUpdate",
     "AnalysisRunJobRead",
     "AnalysisJobDetailRead",
     "RunCreateRequest",

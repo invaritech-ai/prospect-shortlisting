@@ -8,6 +8,7 @@ import type {
   DecisionFilter,
   ManualLabel,
   PromptRead,
+  ScrapePromptRead,
   S4VerifFilter,
   ScrapeFilter,
   ScrapeSubFilter,
@@ -119,6 +120,7 @@ export interface UsePipelineViewsResult {
 export function usePipelineViews(
   activeView: ActiveView,
   selectedPrompt: PromptRead | null,
+  selectedScrapePrompt: ScrapePromptRead | null,
   setError: (e: string) => void,
   setNotice: (n: string) => void,
 ): UsePipelineViewsResult {
@@ -436,7 +438,9 @@ export function usePipelineViews(
     setNotice('')
     setIsPipelineScraping(true)
     try {
-      const result = await scrapeSelectedCompanies(pipelineSelectedIds, { scrapeRules: selectedPrompt?.scrape_rules_structured ?? undefined })
+      const result = await scrapeSelectedCompanies(pipelineSelectedIds, {
+        scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
+      })
       setNotice(`Queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'}.`)
       setPipelineSelectedIds([])
     } catch (err) {
@@ -444,7 +448,7 @@ export function usePipelineViews(
     } finally {
       setIsPipelineScraping(false)
     }
-  }, [pipelineSelectedIds, selectedPrompt, setError, setNotice])
+  }, [pipelineSelectedIds, selectedScrapePrompt, setError, setNotice])
 
   const onPipelineScrapeSelected = useCallback(() => {
     void scrapeSelectedAsync()
@@ -674,7 +678,9 @@ export function usePipelineViews(
     setNotice('')
     setIsFullPipelineScraping(true)
     try {
-      const result = await scrapeSelectedCompanies(fullPipelineSelectedIds, { scrapeRules: selectedPrompt?.scrape_rules_structured ?? undefined })
+      const result = await scrapeSelectedCompanies(fullPipelineSelectedIds, {
+        scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
+      })
       setNotice(
         `Pipeline: queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'} (S1).`,
       )
@@ -684,7 +690,7 @@ export function usePipelineViews(
     } finally {
       setIsFullPipelineScraping(false)
     }
-  }, [fullPipelineSelectedIds, selectedPrompt, setError, setNotice])
+  }, [fullPipelineSelectedIds, selectedScrapePrompt, setError, setNotice])
 
   const onFullPipelineScrapeSelected = useCallback(() => {
     void fullPipelineScrapeAsync()
@@ -756,7 +762,9 @@ export function usePipelineViews(
     try {
       if (resumeStage === 'S1') {
         setAction('Resuming S1…')
-        const result = await scrapeSelectedCompanies([company.id], { scrapeRules: selectedPrompt?.scrape_rules_structured ?? undefined })
+        const result = await scrapeSelectedCompanies([company.id], {
+          scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
+        })
         setNotice(`Resumed S1 for ${company.domain}. Queued ${result.queued_count} scrape job(s).`)
         return
       }
@@ -790,7 +798,7 @@ export function usePipelineViews(
         return next
       })
     }
-  }, [selectedPrompt, setError, setNotice])
+  }, [selectedPrompt, selectedScrapePrompt, setError, setNotice])
 
   const onFullPipelineResumeCompany = useCallback((company: CompanyListItem) => {
     void fullPipelineResumeCompanyAsync(company)
