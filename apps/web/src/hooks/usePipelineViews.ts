@@ -24,6 +24,8 @@ import {
   upsertCompanyFeedback,
   verifyContacts,
 } from '../lib/api'
+import { matchesFullPipelineFilters } from '../lib/fullPipelineFilters'
+import type { FullPipelineStatusFilter } from '../lib/fullPipelineFilters'
 import { getDefaultPipelineScrapeSubFilter } from '../lib/pipelineDefaults'
 import { getResumeStageForCompany, scrapeSubToFilter, verifFilterToParams } from '../lib/pipelineMappings'
 import { getPipelineCompanyQuery } from '../lib/pipelineQuery'
@@ -43,6 +45,7 @@ export interface UsePipelineViewsResult {
   fullPipelinePageSize: number
   isFullPipelineLoading: boolean
   isFullPipelineScraping: boolean
+  isFullPipelineSelectingAllMatching: boolean
   onFullPipelineLetterChange: (l: string | null) => void
   onFullPipelineToggleRow: (id: string) => void
   onFullPipelineToggleAll: (ids: string[]) => void
@@ -52,6 +55,7 @@ export interface UsePipelineViewsResult {
   onFullPipelinePagePrev: () => void
   onFullPipelinePageNext: () => void
   onFullPipelinePageSizeChange: (size: number) => void
+  onFullPipelineSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
   // S1–S3 company list
   pipelineCompanies: CompanyList | null
   pipelineLetterCounts: Record<string, number>
@@ -149,6 +153,7 @@ export function usePipelineViews(
   const [fullPipelineOffset, setFullPipelineOffset] = useState(0)
   const [fullPipelinePageSize, setFullPipelinePageSize] = useState(DEFAULT_PAGE_SIZE)
   const [isFullPipelineLoading, setIsFullPipelineLoading] = useState(false)
+  const [isFullPipelineSelectingAllMatching, setIsFullPipelineSelectingAllMatching] = useState(false)
   const [isFullPipelineScraping, setIsFullPipelineScraping] = useState(false)
 
   // S4 state
@@ -679,7 +684,9 @@ export function usePipelineViews(
     setIsFullPipelineScraping(true)
     try {
       const result = await scrapeSelectedCompanies(fullPipelineSelectedIds, { scrapeRules: pipelineScrapeRules ?? undefined })
-      setNotice(`Queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'}.`)
+      setNotice(
+        `Pipeline: queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'} (S1).`,
+      )
       setFullPipelineSelectedIds([])
     } catch (err) {
       setError(parseApiError(err))
@@ -691,6 +698,63 @@ export function usePipelineViews(
   const onFullPipelineScrapeSelected = useCallback(() => {
     void fullPipelineScrapeAsync()
   }, [fullPipelineScrapeAsync])
+
+  const FULL_PIPELINE_SELECT_BATCH = 500
+
+  const fullPipelineSelectAllMatchingAsync = useCallback(
+    async (statusFilter: FullPipelineStatusFilter, search: string) => {
+      setError('')
+      setNotice('')
+      setIsFullPipelineSelectingAllMatching(true)
+      try {
+        const letter = fullPipelineActiveLetter
+        const q = search.trim()
+        let ids: string[] = []
+
+        if (statusFilter === 'all' && !q) {
+          const result = await listCompanyIds('all', 'all', 'all', letter)
+          ids = result.ids.map((id) => String(id))
+        } else {
+          let offset = 0
+          for (;;) {
+            const page = await listCompanies(
+              FULL_PIPELINE_SELECT_BATCH,
+              offset,
+              'all',
+              false,
+              'all',
+              'all',
+              letter,
+            )
+            for (const c of page.items) {
+              if (matchesFullPipelineFilters(c, statusFilter, search)) ids.push(c.id)
+            }
+            if (!page.has_more) break
+            offset += FULL_PIPELINE_SELECT_BATCH
+          }
+        }
+
+        setFullPipelineSelectedIds(ids)
+        setNotice(
+          ids.length > 0
+            ? `Selected ${ids.length.toLocaleString()} compan${ids.length === 1 ? 'y' : 'ies'} matching filters.`
+            : 'No companies match these filters for the current list scope.',
+        )
+      } catch (err) {
+        setError(parseApiError(err))
+      } finally {
+        setIsFullPipelineSelectingAllMatching(false)
+      }
+    },
+    [fullPipelineActiveLetter, setError, setNotice],
+  )
+
+  const onFullPipelineSelectAllMatching = useCallback(
+    (statusFilter: FullPipelineStatusFilter, search: string) => {
+      void fullPipelineSelectAllMatchingAsync(statusFilter, search)
+    },
+    [fullPipelineSelectAllMatchingAsync],
+  )
 
   const fullPipelineResumeCompanyAsync = useCallback(async (company: CompanyListItem) => {
     const setAction = (label: string) => setFullPipelineResumeState((prev) => ({ ...prev, [company.id]: label }))
@@ -843,6 +907,7 @@ export function usePipelineViews(
     fullPipelinePageSize,
     isFullPipelineLoading,
     isFullPipelineScraping,
+    isFullPipelineSelectingAllMatching,
     onFullPipelineLetterChange,
     onFullPipelineToggleRow,
     onFullPipelineToggleAll,
@@ -852,6 +917,7 @@ export function usePipelineViews(
     onFullPipelinePagePrev,
     onFullPipelinePageNext,
     onFullPipelinePageSizeChange,
+    onFullPipelineSelectAllMatching,
     pipelineCompanies,
     pipelineLetterCounts,
     pipelineActiveLetters,

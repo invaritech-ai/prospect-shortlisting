@@ -419,7 +419,7 @@ function App() {
 
   return (
     <>
-      <AppShell
+      <AppShell className="min-h-0 flex-1"
         activeView={activeView}
         setActiveView={setActiveView}
         activeCampaignName={activeCampaignName}
@@ -467,6 +467,8 @@ function App() {
             offset={pipeline.fullPipelineOffset}
             pageSize={pipeline.fullPipelinePageSize}
             isScraping={pipeline.isFullPipelineScraping}
+            isSelectingAllMatching={pipeline.isFullPipelineSelectingAllMatching}
+            onSelectAllMatching={pipeline.onFullPipelineSelectAllMatching}
             onLetterChange={pipeline.onFullPipelineLetterChange}
             onToggleRow={pipeline.onFullPipelineToggleRow}
             onToggleAll={pipeline.onFullPipelineToggleAll}

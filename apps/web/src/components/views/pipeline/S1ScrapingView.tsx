@@ -198,51 +198,53 @@ export function S1ScrapingView({
 
   return (
     <div className="space-y-3">
-      {/* Pipeline progress banner – scrolls away */}
-      {scrape && (hasActivity || completed > 0) && (
-        <div className="rounded-2xl border border-(--oc-border) bg-white p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
-                Scraping Pipeline
-              </span>
-              {hasActivity && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                  Active
+      {/* ── Sticky controls (includes live scrape progress) ───────────────── */}
+      <div
+        className="sticky top-0 z-10 space-y-2 border-b border-transparent pb-2"
+        style={{ backgroundColor: 'var(--oc-bg)' }}
+      >
+        {scrape && (hasActivity || completed > 0) && (
+          <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
+                  Scraping Pipeline
                 </span>
+                {hasActivity && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                    Active
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] text-(--oc-muted)">
+                {completed.toLocaleString()} / {total.toLocaleString()}
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(pctDone, 100)}%`,
+                  background: hasActivity ? 'linear-gradient(90deg, var(--s1), #3b82f6)' : '#16a34a',
+                }}
+              />
+            </div>
+            <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+              {running > 0 && <span className="font-bold text-amber-600">{running.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
+              {queued > 0 && <span className="font-bold text-(--oc-muted)">{queued.toLocaleString()} <span className="font-normal">queued</span></span>}
+              <span className="font-bold text-emerald-700">{completed.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
+              {failed > 0 && <span className="font-bold text-rose-600">{failed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
+              {scrape.stuck_count > 0 && (
+                <button type="button" onClick={onResetStuck} disabled={isResettingStuck}
+                  className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">
+                  {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
+                </button>
               )}
             </div>
-            <span className="text-[11px] text-(--oc-muted)">
-              {completed.toLocaleString()} / {total.toLocaleString()}
-            </span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${Math.min(pctDone, 100)}%`,
-                background: hasActivity ? 'linear-gradient(90deg, var(--s1), #3b82f6)' : '#16a34a',
-              }}
-            />
-          </div>
-          <div className="mt-2.5 flex gap-5 text-[11px]">
-            {running > 0 && <span className="font-bold text-amber-600">{running.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
-            {queued > 0 && <span className="font-bold text-(--oc-muted)">{queued.toLocaleString()} <span className="font-normal">queued</span></span>}
-            <span className="font-bold text-emerald-700">{completed.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-            {failed > 0 && <span className="font-bold text-rose-600">{failed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
-            {scrape.stuck_count > 0 && (
-              <button type="button" onClick={onResetStuck} disabled={isResettingStuck}
-                className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">
-                {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Sticky controls ─────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
         {/* Header */}
         <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}>
           <div className="flex-1">
