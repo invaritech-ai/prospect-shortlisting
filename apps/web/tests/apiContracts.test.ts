@@ -2,12 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  createPrompt,
   listCompanies,
   listCompanyIds,
   listContactCompanies,
   listContacts,
   scrapeAllCompanies,
   scrapeSelectedCompanies,
+  updatePrompt,
 } from '../src/lib/api.ts'
 
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
@@ -116,4 +118,50 @@ test('listCompanyIds serializes multi-letter filters', async () => {
   await listCompanyIds('all', 'all', 'all', null, undefined, ['w', 'x'])
 
   assert.match(requested, /letters=w%2Cx/)
+})
+
+test('createPrompt serializes scrape_pages_intent_text', async () => {
+  let sentBody = ''
+  mockFetch((_url, init) => {
+    sentBody = String(init?.body ?? '')
+    return {
+      id: 'p1',
+      name: 'Prompt',
+      enabled: true,
+      prompt_text: 'Rubric',
+      scrape_pages_intent_text: 'Find pricing and contact pages',
+      scrape_rules_structured: { page_kinds: ['pricing', 'contact'] },
+      created_at: '2026-01-01T00:00:00Z',
+      run_count: 0,
+    }
+  })
+
+  await createPrompt({
+    name: 'Prompt',
+    prompt_text: 'Rubric',
+    scrape_pages_intent_text: 'Find pricing and contact pages',
+  })
+
+  assert.match(sentBody, /"scrape_pages_intent_text":"Find pricing and contact pages"/)
+})
+
+test('updatePrompt serializes scrape_pages_intent_text', async () => {
+  let sentBody = ''
+  mockFetch((_url, init) => {
+    sentBody = String(init?.body ?? '')
+    return {
+      id: 'p1',
+      name: 'Prompt',
+      enabled: true,
+      prompt_text: 'Rubric',
+      scrape_pages_intent_text: 'Find team and leadership pages',
+      scrape_rules_structured: { page_kinds: ['team', 'leadership'] },
+      created_at: '2026-01-01T00:00:00Z',
+      run_count: 0,
+    }
+  })
+
+  await updatePrompt('p1', { scrape_pages_intent_text: 'Find team and leadership pages' })
+
+  assert.match(sentBody, /"scrape_pages_intent_text":"Find team and leadership pages"/)
 })

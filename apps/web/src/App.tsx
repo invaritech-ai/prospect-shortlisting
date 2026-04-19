@@ -300,7 +300,10 @@ function App() {
     setError(''); setNotice('')
     setActionState((c) => ({ ...c, [company.id]: 'Creating…' }))
     try {
-      await createScrapeJob({ website_url: company.normalized_url })
+      await createScrapeJob({
+        website_url: company.normalized_url,
+        scrape_rules: promptMgmt.selectedPrompt?.scrape_rules_structured ?? undefined,
+      })
       setActionState((c) => ({ ...c, [company.id]: 'Queued' }))
       pipeline.refreshPipelineView()
       void loadRecentActivity()
@@ -389,7 +392,7 @@ function App() {
   const runScrapeAll = async () => {
     setError(''); setNotice(''); setNoticeAction(null)
     try {
-      const result = await scrapeAllCompanies({ scrapeRules: pipeline.pipelineScrapeRules ?? undefined })
+      const result = await scrapeAllCompanies({ scrapeRules: promptMgmt.selectedPrompt?.scrape_rules_structured ?? undefined })
       void loadCompanyCounts()
       pipeline.refreshPipelineView()
       void loadRecentActivity()
@@ -487,7 +490,7 @@ function App() {
             letterCounts={pipeline.pipelineLetterCounts}
             activeLetters={pipeline.pipelineActiveLetters}
             scrapeSubFilter={pipeline.pipelineScrapeSubFilter}
-            scrapeRules={pipeline.pipelineScrapeRules}
+            selectedPrompt={promptMgmt.selectedPrompt}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
             isLoading={pipeline.isPipelineLoading}
@@ -498,7 +501,6 @@ function App() {
             isDrainingQueue={isDrainingQueue}
             actionState={actionState}
             onScrapeSubFilterChange={pipeline.onPipelineScrapeSubFilterChange}
-            onScrapeRulesChange={pipeline.onPipelineScrapeRulesChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -507,6 +509,7 @@ function App() {
             onClearSelection={pipeline.onPipelineClearSelection}
             onScrapeSelected={pipeline.onPipelineScrapeSelected}
             onScrapeOne={(c) => void onScrape(c)}
+            onOpenPromptLibrary={promptMgmt.openPromptSheet}
             onOpenDiagnostics={(c) => {
               if (c.latest_scrape_job_id) {
                 void panels.openScrapeDiagnostics({ id: c.latest_scrape_job_id } as ScrapeJobRead)
@@ -671,6 +674,7 @@ function App() {
         editingPromptId={promptMgmt.editingPromptId}
         promptName={promptMgmt.promptName}
         promptText={promptMgmt.promptText}
+        promptScrapeIntentText={promptMgmt.promptScrapeIntentText}
         promptEnabled={promptMgmt.promptEnabled}
         isPromptsLoading={promptMgmt.isPromptsLoading}
         isPromptSaving={promptMgmt.isPromptSaving}
@@ -685,6 +689,7 @@ function App() {
         onUpdateCurrent={() => void promptMgmt.onUpdateCurrentPrompt()}
         onSetPromptName={promptMgmt.setPromptName}
         onSetPromptText={promptMgmt.setPromptText}
+        onSetPromptScrapeIntentText={promptMgmt.setPromptScrapeIntentText}
         onSetPromptEnabled={promptMgmt.setPromptEnabled}
         onRefresh={() => void promptMgmt.loadPrompts(promptMgmt.selectedPromptId, promptMgmt.editingPromptId !== null)}
       />

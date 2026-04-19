@@ -235,6 +235,8 @@ export type PromptRead = {
   name: string
   enabled: boolean
   prompt_text: string
+  scrape_pages_intent_text?: string | null
+  scrape_rules_structured?: ScrapeRules | null
   created_at: string
   run_count: number
 }
@@ -243,12 +245,14 @@ export type PromptCreate = {
   name: string
   prompt_text: string
   enabled?: boolean
+  scrape_pages_intent_text?: string | null
 }
 
 export type PromptUpdate = {
   name?: string
   prompt_text?: string
   enabled?: boolean
+  scrape_pages_intent_text?: string | null
 }
 
 export type RunRead = {

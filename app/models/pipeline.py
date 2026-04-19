@@ -176,6 +176,14 @@ class Prompt(SQLModel, table=True):
     name: str = Field(max_length=255, index=True)
     enabled: bool = Field(default=True, index=True)
     prompt_text: str
+    scrape_pages_intent_text: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    scrape_rules_structured: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

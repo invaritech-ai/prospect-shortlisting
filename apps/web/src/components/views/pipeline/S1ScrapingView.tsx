@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, ScrapePageKind, ScrapeRules, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, PromptRead, ScrapeRules, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -11,7 +11,7 @@ interface S1ScrapingViewProps {
   letterCounts: Record<string, number>
   activeLetters: Set<string>
   scrapeSubFilter: ScrapeSubFilter
-  scrapeRules: ScrapeRules | null
+  selectedPrompt: PromptRead | null
   selectedIds: string[]
   totalMatching: number | null
   isLoading: boolean
@@ -24,7 +24,6 @@ interface S1ScrapingViewProps {
   offset: number
   pageSize: number
   onScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
-  onScrapeRulesChange: (rules: ScrapeRules | null) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -33,6 +32,7 @@ interface S1ScrapingViewProps {
   onClearSelection: () => void
   onScrapeSelected: () => void
   onScrapeOne: (company: CompanyListItem) => void
+  onOpenPromptLibrary: () => void
   onOpenDiagnostics: (company: CompanyListItem) => void
   onResetStuck: () => void
   onDrainQueue: () => void
@@ -54,37 +54,9 @@ const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
   { value: 'soft', label: 'Soft' },
 ]
 
-const PAGE_KIND_OPTIONS: Array<{ value: ScrapePageKind; label: string }> = [
-  { value: 'home', label: 'Home' },
-  { value: 'about', label: 'About' },
-  { value: 'products', label: 'Products' },
-  { value: 'contact', label: 'Contact' },
-  { value: 'team', label: 'Team' },
-  { value: 'leadership', label: 'Leadership' },
-  { value: 'services', label: 'Services' },
-  { value: 'pricing', label: 'Pricing' },
-]
-
-function normalizeScrapeRules(rules: ScrapeRules): ScrapeRules | null {
-  const pageKinds = [...new Set(rules.page_kinds ?? [])]
-  const fallbackEnabled = rules.fallback_enabled ?? true
-  const fallbackLimit = Math.max(0, Math.min(3, Number(rules.fallback_limit ?? 1)))
-  const fallbackPriority = [...new Set((rules.fallback_priority ?? []).filter((k) => k !== 'home'))]
-  const hasOverrides = pageKinds.length > 0
-    || rules.js_fallback != null
-    || rules.include_sitemap != null
-    || fallbackEnabled !== true
-    || fallbackLimit !== 1
-    || fallbackPriority.length > 0
-  if (!hasOverrides) return null
-  return {
-    page_kinds: pageKinds,
-    fallback_enabled: fallbackEnabled,
-    fallback_limit: fallbackLimit,
-    fallback_priority: fallbackPriority,
-    js_fallback: rules.js_fallback ?? null,
-    include_sitemap: rules.include_sitemap ?? null,
-  }
+function formatScrapeRulesPreview(rules: ScrapeRules | null | undefined): string {
+  if (!rules) return 'No derived scrape rules yet. Configure pages intent in Prompt Library.'
+  return JSON.stringify(rules, null, 2)
 }
 
 function scrapeBadgeClass(status: string): string {
@@ -110,7 +82,7 @@ export function S1ScrapingView({
   letterCounts,
   activeLetters,
   scrapeSubFilter,
-  scrapeRules,
+  selectedPrompt,
   selectedIds,
   totalMatching,
   isLoading,
@@ -123,7 +95,6 @@ export function S1ScrapingView({
   offset,
   pageSize,
   onScrapeSubFilterChange,
-  onScrapeRulesChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -132,6 +103,7 @@ export function S1ScrapingView({
   onClearSelection,
   onScrapeSelected,
   onScrapeOne,
+  onOpenPromptLibrary,
   onOpenDiagnostics,
   onResetStuck,
   onDrainQueue,
@@ -144,12 +116,6 @@ export function S1ScrapingView({
 }: S1ScrapingViewProps) {
   const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
-  const effectiveRules: ScrapeRules = scrapeRules ?? {
-    page_kinds: [],
-    fallback_enabled: true,
-    fallback_limit: 1,
-    fallback_priority: [],
-  }
 
   // 'active' is the only filter that can't be done server-side (no API equivalent),
   // so we client-filter on the loaded page. All other filters are applied server-side.
@@ -272,63 +238,38 @@ export function S1ScrapingView({
             <p className="text-[11px] font-bold uppercase tracking-wide text-(--oc-muted)">Pages of interest</p>
             <button
               type="button"
-              onClick={() => onScrapeRulesChange(null)}
+              onClick={onOpenPromptLibrary}
               className="text-[11px] text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text)"
             >
-              Reset defaults
+              {selectedPrompt ? `Edit prompt: ${selectedPrompt.name}` : 'Open Prompt Library'}
             </button>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {PAGE_KIND_OPTIONS.map((option) => {
-              const selected = (effectiveRules.page_kinds ?? []).includes(option.value)
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    const nextKinds = selected
-                      ? (effectiveRules.page_kinds ?? []).filter((k) => k !== option.value)
-                      : [...(effectiveRules.page_kinds ?? []), option.value]
-                    onScrapeRulesChange(normalizeScrapeRules({ ...effectiveRules, page_kinds: nextKinds }))
-                  }}
-                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
-                    selected
-                      ? 'bg-(--s1) text-white'
-                      : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              )
-            })}
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-(--oc-muted)">
-            <label className="inline-flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={effectiveRules.fallback_enabled ?? true}
-                onChange={(e) =>
-                  onScrapeRulesChange(normalizeScrapeRules({ ...effectiveRules, fallback_enabled: e.target.checked }))
-                }
-              />
-              Fallback
-            </label>
-            <label className="inline-flex items-center gap-1.5">
-              Limit
-              <select
-                value={String(effectiveRules.fallback_limit ?? 1)}
-                onChange={(e) =>
-                  onScrapeRulesChange(normalizeScrapeRules({ ...effectiveRules, fallback_limit: Number(e.target.value) }))
-                }
-                className="rounded border border-(--oc-border) bg-white px-1.5 py-0.5 text-[11px] text-(--oc-text)"
-              >
-                <option value="0">0</option>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-              </select>
-            </label>
-          </div>
+
+          {selectedPrompt ? (
+            <div className="space-y-2">
+              <div className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-3 py-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-(--oc-muted)">Intent (plain English)</p>
+                <p className="mt-1 text-xs text-(--oc-text)">
+                  {selectedPrompt.scrape_pages_intent_text?.trim() || 'No pages intent configured. Default scrape behavior will be used.'}
+                </p>
+              </div>
+              <div className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-3 py-2">
+                <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-(--oc-muted)">
+                  Derived scrape rules (read-only)
+                </p>
+                <textarea
+                  readOnly
+                  value={formatScrapeRulesPreview(selectedPrompt.scrape_rules_structured)}
+                  rows={7}
+                  className="w-full resize-none rounded-md border border-(--oc-border) bg-white px-2 py-1.5 font-mono text-[11px] leading-5 text-(--oc-muted) outline-none"
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-(--oc-muted)">
+              No prompt selected. Open Prompt Library and select an enabled prompt to define pages intent.
+            </p>
+          )}
         </div>
 
         {/* Sub-filter chips + Pager */}

@@ -1,20 +1,29 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
+from app.core.logging import log_event
 from app.api.schemas.prompt import PromptCreate, PromptRead, PromptUpdate
 from app.db.session import get_session
 from app.models import Prompt, Run
+from app.services.scrape_intent_formatter import format_scrape_intent_to_rules
 
 router = APIRouter(prefix="/v1", tags=["prompts"])
+logger = logging.getLogger(__name__)
 
 
 def _as_prompt_read(prompt: Prompt, run_count: int = 0) -> PromptRead:
     return PromptRead.model_validate({**prompt.model_dump(), "run_count": run_count})
+
+
+def _normalize_intent(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text or None
 
 
 @router.get("/prompts", response_model=list[PromptRead])
@@ -42,14 +51,25 @@ def list_prompts(
 
 @router.post("/prompts", response_model=PromptRead, status_code=status.HTTP_201_CREATED)
 def create_prompt(payload: PromptCreate, session: Session = Depends(get_session)) -> PromptRead:
+    normalized_intent = _normalize_intent(payload.scrape_pages_intent_text)
+    scrape_rules_structured, formatter_error = format_scrape_intent_to_rules(normalized_intent)
     prompt = Prompt(
         name=payload.name.strip(),
         prompt_text=payload.prompt_text.strip(),
         enabled=payload.enabled,
+        scrape_pages_intent_text=normalized_intent,
+        scrape_rules_structured=scrape_rules_structured,
     )
     session.add(prompt)
     session.commit()
     session.refresh(prompt)
+    if formatter_error:
+        log_event(
+            logger,
+            "prompt_scrape_rules_fallback_used",
+            prompt_id=str(prompt.id),
+            formatter_error=formatter_error,
+        )
     return _as_prompt_read(prompt)
 
 
@@ -66,6 +86,18 @@ def update_prompt(prompt_id: UUID, payload: PromptUpdate, session: Session = Dep
         prompt.prompt_text = str(updates["prompt_text"]).strip()
     if "enabled" in updates:
         prompt.enabled = bool(updates["enabled"])
+    if "scrape_pages_intent_text" in updates:
+        normalized_intent = _normalize_intent(updates["scrape_pages_intent_text"])
+        prompt.scrape_pages_intent_text = normalized_intent
+        scrape_rules_structured, formatter_error = format_scrape_intent_to_rules(normalized_intent)
+        prompt.scrape_rules_structured = scrape_rules_structured
+        if formatter_error:
+            log_event(
+                logger,
+                "prompt_scrape_rules_fallback_used",
+                prompt_id=str(prompt.id),
+                formatter_error=formatter_error,
+            )
 
     session.add(prompt)
     session.commit()

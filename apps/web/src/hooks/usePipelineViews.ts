@@ -8,7 +8,6 @@ import type {
   DecisionFilter,
   ManualLabel,
   PromptRead,
-  ScrapeRules,
   S4VerifFilter,
   ScrapeFilter,
   ScrapeSubFilter,
@@ -68,14 +67,12 @@ export interface UsePipelineViewsResult {
   isPipelineSelectingAll: boolean
   pipelineDecisionFilter: DecisionFilter
   pipelineScrapeSubFilter: ScrapeSubFilter
-  pipelineScrapeRules: ScrapeRules | null
   pipelineOffset: number
   pipelinePageSize: number
   pipelineSortBy: string
   pipelineSortDir: 'asc' | 'desc'
   onPipelineDecisionFilterChange: (filter: DecisionFilter) => void
   onPipelineScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
-  onPipelineScrapeRulesChange: (rules: ScrapeRules | null) => void
   onPipelinePagePrev: () => void
   onPipelinePageNext: () => void
   onPipelinePageSizeChange: (size: number) => void
@@ -138,7 +135,6 @@ export function usePipelineViews(
   const [pipelineDecisionFilter, setPipelineDecisionFilter] = useState<DecisionFilter>('all')
   const [pipelineManualLabelActionState, setPipelineManualLabelActionState] = useState<Record<string, string>>({})
   const [pipelineScrapeSubFilter, setPipelineScrapeSubFilter] = useState<ScrapeSubFilter>(() => getDefaultPipelineScrapeSubFilter(activeView))
-  const [pipelineScrapeRules, setPipelineScrapeRules] = useState<ScrapeRules | null>(null)
   const [pipelineOffset, setPipelineOffset] = useState(0)
   const [pipelinePageSize, setPipelinePageSize] = useState(DEFAULT_PAGE_SIZE)
   const [pipelineSortBy, setPipelineSortBy] = useState('domain')
@@ -283,7 +279,6 @@ export function usePipelineViews(
       setPipelineDecisionFilter(defaultDecisionFilter)
       setPipelineManualLabelActionState({})
       setPipelineScrapeSubFilter(defaultScrapeSubFilter)
-      setPipelineScrapeRules(null)
       setPipelineOffset(0)
       setPipelinePageSize(DEFAULT_PAGE_SIZE)
       setPipelineSortBy('domain')
@@ -390,10 +385,6 @@ export function usePipelineViews(
     [activeView, pipelineDecisionFilter, loadPipelineView, pipelineSortBy, pipelineSortDir, pipelinePageSize, pipelineActiveLetters],
   )
 
-  const onPipelineScrapeRulesChange = useCallback((rules: ScrapeRules | null) => {
-    setPipelineScrapeRules(rules)
-  }, [])
-
   const onPipelinePagePrev = useCallback(() => {
     const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
     if (query === null) return
@@ -445,7 +436,7 @@ export function usePipelineViews(
     setNotice('')
     setIsPipelineScraping(true)
     try {
-      const result = await scrapeSelectedCompanies(pipelineSelectedIds, { scrapeRules: pipelineScrapeRules ?? undefined })
+      const result = await scrapeSelectedCompanies(pipelineSelectedIds, { scrapeRules: selectedPrompt?.scrape_rules_structured ?? undefined })
       setNotice(`Queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'}.`)
       setPipelineSelectedIds([])
     } catch (err) {
@@ -453,7 +444,7 @@ export function usePipelineViews(
     } finally {
       setIsPipelineScraping(false)
     }
-  }, [pipelineSelectedIds, pipelineScrapeRules, setError, setNotice])
+  }, [pipelineSelectedIds, selectedPrompt, setError, setNotice])
 
   const onPipelineScrapeSelected = useCallback(() => {
     void scrapeSelectedAsync()
@@ -683,7 +674,7 @@ export function usePipelineViews(
     setNotice('')
     setIsFullPipelineScraping(true)
     try {
-      const result = await scrapeSelectedCompanies(fullPipelineSelectedIds, { scrapeRules: pipelineScrapeRules ?? undefined })
+      const result = await scrapeSelectedCompanies(fullPipelineSelectedIds, { scrapeRules: selectedPrompt?.scrape_rules_structured ?? undefined })
       setNotice(
         `Pipeline: queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'} (S1).`,
       )
@@ -693,7 +684,7 @@ export function usePipelineViews(
     } finally {
       setIsFullPipelineScraping(false)
     }
-  }, [fullPipelineSelectedIds, pipelineScrapeRules, setError, setNotice])
+  }, [fullPipelineSelectedIds, selectedPrompt, setError, setNotice])
 
   const onFullPipelineScrapeSelected = useCallback(() => {
     void fullPipelineScrapeAsync()
@@ -765,7 +756,7 @@ export function usePipelineViews(
     try {
       if (resumeStage === 'S1') {
         setAction('Resuming S1…')
-        const result = await scrapeSelectedCompanies([company.id], { scrapeRules: pipelineScrapeRules ?? undefined })
+        const result = await scrapeSelectedCompanies([company.id], { scrapeRules: selectedPrompt?.scrape_rules_structured ?? undefined })
         setNotice(`Resumed S1 for ${company.domain}. Queued ${result.queued_count} scrape job(s).`)
         return
       }
@@ -799,7 +790,7 @@ export function usePipelineViews(
         return next
       })
     }
-  }, [pipelineScrapeRules, selectedPrompt, setError, setNotice])
+  }, [selectedPrompt, setError, setNotice])
 
   const onFullPipelineResumeCompany = useCallback((company: CompanyListItem) => {
     void fullPipelineResumeCompanyAsync(company)
@@ -929,14 +920,12 @@ export function usePipelineViews(
     isPipelineSelectingAll,
     pipelineDecisionFilter,
     pipelineScrapeSubFilter,
-    pipelineScrapeRules,
     pipelineOffset,
     pipelinePageSize,
     pipelineSortBy,
     pipelineSortDir,
     onPipelineDecisionFilterChange,
     onPipelineScrapeSubFilterChange,
-    onPipelineScrapeRulesChange,
     onPipelinePagePrev,
     onPipelinePageNext,
     onPipelinePageSizeChange,

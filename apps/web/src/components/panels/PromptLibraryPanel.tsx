@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { PromptRead } from '../../lib/types'
+import type { PromptRead, ScrapeRules } from '../../lib/types'
 import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import { Badge } from '../ui/Badge'
@@ -15,6 +15,7 @@ interface PromptLibraryPanelProps {
   editingPromptId: string | null
   promptName: string
   promptText: string
+  promptScrapeIntentText: string
   promptEnabled: boolean
   isPromptsLoading: boolean
   isPromptSaving: boolean
@@ -29,8 +30,14 @@ interface PromptLibraryPanelProps {
   onUpdateCurrent: () => void
   onSetPromptName: (v: string) => void
   onSetPromptText: (v: string) => void
+  onSetPromptScrapeIntentText: (v: string) => void
   onSetPromptEnabled: (v: boolean) => void
   onRefresh: () => void
+}
+
+function formatScrapeRulesPreview(rules: ScrapeRules | null | undefined): string {
+  if (!rules) return 'No structured scrape rules generated yet.'
+  return JSON.stringify(rules, null, 2)
 }
 
 function PromptListItem({
@@ -131,6 +138,7 @@ export function PromptLibraryPanel({
   editingPromptId,
   promptName,
   promptText,
+  promptScrapeIntentText,
   promptEnabled,
   isPromptsLoading,
   isPromptSaving,
@@ -145,6 +153,7 @@ export function PromptLibraryPanel({
   onUpdateCurrent,
   onSetPromptName,
   onSetPromptText,
+  onSetPromptScrapeIntentText,
   onSetPromptEnabled,
   onRefresh,
 }: PromptLibraryPanelProps) {
@@ -155,6 +164,7 @@ export function PromptLibraryPanel({
   )
 
   const selectedPrompt = prompts.find((p) => p.id === selectedPromptId) ?? null
+  const editingPrompt = prompts.find((p) => p.id === editingPromptId) ?? null
   const headerMeta = selectedPrompt ? (
     <div className="flex flex-wrap items-center gap-2">
       <Badge variant={selectedPrompt.enabled ? 'success' : 'fail'}>
@@ -253,6 +263,36 @@ export function PromptLibraryPanel({
                 rows={16}
                 className="min-h-[280px] w-full rounded-2xl border border-[var(--oc-border)] bg-white px-4 py-3 font-mono text-xs leading-6 text-[var(--oc-text)] outline-none transition focus:border-[var(--oc-accent)] focus:ring-2 focus:ring-[var(--oc-accent)]/10 md:min-h-[360px]"
                 placeholder="Paste or write the rubric prompt here."
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
+                S1 pages intent (plain English)
+              </span>
+              <textarea
+                value={promptScrapeIntentText}
+                onChange={(e) => onSetPromptScrapeIntentText(e.target.value)}
+                rows={5}
+                className="w-full rounded-2xl border border-[var(--oc-border)] bg-white px-4 py-3 text-sm leading-6 text-[var(--oc-text)] outline-none transition focus:border-[var(--oc-accent)] focus:ring-2 focus:ring-[var(--oc-accent)]/10"
+                placeholder="Example: Find pricing, product catalog, line card, capabilities/services, and contact pages. Prefer official company pages over blog posts."
+              />
+              <p className="mt-1 text-xs text-[var(--oc-muted)]">
+                Saved prompts are converted to structured scrape rules automatically when you click
+                &nbsp;<span className="font-semibold">Save as new</span> or
+                &nbsp;<span className="font-semibold">Update current</span>.
+              </p>
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
+                Derived S1 scrape rules (read-only)
+              </span>
+              <textarea
+                value={formatScrapeRulesPreview(editingPrompt?.scrape_rules_structured)}
+                readOnly
+                rows={8}
+                className="w-full rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] px-4 py-3 font-mono text-xs leading-6 text-[var(--oc-muted)] outline-none"
               />
             </label>
 
