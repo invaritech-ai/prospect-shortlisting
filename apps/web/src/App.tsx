@@ -1,24 +1,30 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  ApiError,
   assignUploadsToCampaign,
+  configureApiSession,
   createCampaign,
   createRuns,
   createScrapeJob,
   deleteCampaign,
+  fetchContactsSelected,
   drainQueue,
   fetchContactsForCompany,
   fetchContactsForCompanyApollo,
+  getCurrentUser,
   getContactsExportUrl,
   getCampaignCosts,
+  getCostStats,
   getCompanyCounts,
   getContactCounts,
   getPipelineRunProgress,
   getStats,
+  loginWithPassword,
   listRuns,
-  listScrapeJobs,
   listCampaigns,
   listUploads,
+  logoutSession,
   resetStuckJobs,
   startPipelineRun,
   uploadFileToCampaign,
@@ -34,8 +40,10 @@ import type {
   StatsResponse,
   PipelineRunProgressRead,
   PipelineCostSummaryRead,
+  CostStatsResponse,
 } from './lib/types'
-import type { ActiveView } from './lib/navigation'
+import { buildRouteSearch, parseRouteState, type ActiveView } from './lib/navigation'
+import type { AuthSession } from './lib/auth'
 import { parseApiError } from './lib/utils'
 
 // Hooks
@@ -55,6 +63,10 @@ import { S2AIDecisionView } from './components/views/pipeline/S2AIDecisionView'
 import { S3ContactFetchView } from './components/views/pipeline/S3ContactFetchView'
 import { S4ValidationView } from './components/views/pipeline/S4ValidationView'
 import { CampaignsView } from './components/views/campaigns/CampaignsView'
+import { OperationsLogView } from './components/views/OperationsLogView'
+import { LoginView } from './components/views/auth/LoginView'
+import { SettingsView } from './components/views/settings/SettingsView'
+import { buildOperationsEvents } from './lib/telemetry'
 
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
@@ -70,12 +82,24 @@ import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPan
 import { Toast, type ToastNoticeAction } from './components/ui/Toast'
 
 const MAX_POLL_FAILURES = 3
+const INITIAL_ROUTE_STATE = typeof window === 'undefined'
+  ? { view: 'dashboard' as ActiveView, campaignId: null as string | null }
+  : parseRouteState(window.location.search)
+const AUTH_REQUIRED = ((import.meta as { env?: Record<string, string | undefined> }).env?.VITE_AUTH_REQUIRED ?? 'false') === 'true'
 
 function App() {
   const pollFailuresRef = useRef(0)
+  const campaignCostsRouteMissingRef = useRef(false)
+  const selectedCampaignIdRef = useRef<string | null>(null)
 
   // ── Navigation ────────────────────────────────────────────────────────────
-  const [activeView, setActiveView] = useState<ActiveView>('dashboard')
+  const [activeView, setActiveView] = useState<ActiveView>(INITIAL_ROUTE_STATE.view)
+
+  // ── Auth/session foundation ───────────────────────────────────────────────
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null)
+  const [isAuthBootstrapping, setIsAuthBootstrapping] = useState(AUTH_REQUIRED)
+  const [isSigningIn, setIsSigningIn] = useState(false)
+  const [authError, setAuthError] = useState('')
 
   // ── Toasts ────────────────────────────────────────────────────────────────
   const [error, setError] = useState('')
@@ -97,16 +121,40 @@ function App() {
   const [recentRuns, setRecentRuns] = useState<RunRead[]>([])
   const [campaigns, setCampaigns] = useState<CampaignRead[]>([])
   const [uploads, setUploads] = useState<UploadRead[]>([])
-  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(INITIAL_ROUTE_STATE.campaignId)
   const [isCampaignLoading, setIsCampaignLoading] = useState(false)
   const [isCampaignSaving, setIsCampaignSaving] = useState(false)
   const [latestPipelineRunId, setLatestPipelineRunId] = useState<string | null>(null)
   const [latestPipelineRunProgress, setLatestPipelineRunProgress] = useState<PipelineRunProgressRead | null>(null)
   const [campaignCostSummary, setCampaignCostSummary] = useState<PipelineCostSummaryRead | null>(null)
+  const [campaignCostBreakdown, setCampaignCostBreakdown] = useState<CostStatsResponse | null>(null)
+  const [operationsPipelineFilter, setOperationsPipelineFilter] = useState<'all' | 'scrape' | 'analysis'>('all')
+  const [operationsStatusFilter, setOperationsStatusFilter] = useState<'all' | 'active' | 'completed' | 'failed'>('all')
+  const [operationsErrorOnly, setOperationsErrorOnly] = useState(false)
+  const [operationsSearchQuery, setOperationsSearchQuery] = useState('')
   const activeCampaignName =
     campaigns.find((c) => c.id === selectedCampaignId)?.name ??
     campaigns[0]?.name ??
     null
+  const operationsEvents = useMemo(() => {
+    const base = buildOperationsEvents(recentScrapeJobs, recentRuns)
+    return base.filter((event) => {
+      if (operationsPipelineFilter !== 'all' && event.kind !== operationsPipelineFilter) return false
+      if (operationsStatusFilter !== 'all' && event.status !== operationsStatusFilter) return false
+      if (operationsErrorOnly && !event.error_code) return false
+      const query = operationsSearchQuery.trim().toLowerCase()
+      if (!query) return true
+      return event.search_blob.includes(query)
+    })
+  }, [operationsErrorOnly, operationsPipelineFilter, operationsSearchQuery, operationsStatusFilter, recentRuns, recentScrapeJobs])
+  const operationsActiveCount = useMemo(
+    () => operationsEvents.filter((event) => event.status === 'active').length,
+    [operationsEvents],
+  )
+  const showScrapeFilter = recentScrapeJobs.length > 0
+  const scrapeTelemetryNote = showScrapeFilter
+    ? ''
+    : 'Scrape timeline entries are temporarily hidden until campaign-scoped scrape telemetry is available.'
 
   // ── Per-row action state ──────────────────────────────────────────────────
   const [actionState, setActionState] = useState<Record<string, string>>({})
@@ -126,51 +174,80 @@ function App() {
 
   const pipeline = usePipelineViews(
     activeView,
+    selectedCampaignId,
     promptMgmt.selectedPrompt,
     scrapePromptMgmt.activeScrapePrompt,
     setError,
     setNotice,
   )
+  const refreshPipelineView = pipeline.refreshPipelineView
 
-  const panels = usePanels(setError, setNotice, pipeline.refreshPipelineView)
+  const panels = usePanels(setError, setNotice, selectedCampaignId, refreshPipelineView)
 
   // ── Load functions ────────────────────────────────────────────────────────
 
   const loadStats = useCallback(async () => {
+    if (!selectedCampaignId) {
+      setStats(null)
+      return
+    }
     if (pollFailuresRef.current >= MAX_POLL_FAILURES) return
+    const campaignId = selectedCampaignId
     try {
-      const data = await getStats()
+      const data = await getStats(campaignId)
+      if (selectedCampaignIdRef.current !== campaignId) return
       setStats(data)
       pollFailuresRef.current = 0
     } catch {
+      if (selectedCampaignIdRef.current !== campaignId) return
       pollFailuresRef.current += 1
     }
-  }, [])
+  }, [selectedCampaignId])
 
   const loadCompanyCounts = useCallback(async () => {
+    if (!selectedCampaignId) {
+      setCompanyCounts(null)
+      return
+    }
     try {
-      const data = await getCompanyCounts()
+      const data = await getCompanyCounts(selectedCampaignId)
       setCompanyCounts(data)
     } catch { /* non-critical */ }
-  }, [])
+  }, [selectedCampaignId])
 
   const loadContactCounts = useCallback(async () => {
+    if (!selectedCampaignId) {
+      setContactCounts(null)
+      return
+    }
     try {
-      const data = await getContactCounts()
+      const data = await getContactCounts(selectedCampaignId)
       setContactCounts(data)
     } catch { /* non-critical */ }
-  }, [])
+  }, [selectedCampaignId])
 
   const loadRecentActivity = useCallback(async () => {
+    if (!selectedCampaignId) {
+      setRecentScrapeJobs([])
+      setRecentRuns([])
+      return
+    }
+    const scopedUploadIds = new Set(
+      uploads.filter((upload) => upload.campaign_id === selectedCampaignId).map((upload) => upload.id),
+    )
+    if (scopedUploadIds.size === 0) {
+      setRecentScrapeJobs([])
+      setRecentRuns([])
+      return
+    }
     try {
-      const [scrapeRows, runRows] = await Promise.all([
-        listScrapeJobs(5, 0, 'all', ''),
-        listRuns(5, 0),
-      ])
-      setRecentScrapeJobs(scrapeRows)
-      setRecentRuns(runRows)
+      const runRows = await listRuns(200, 0)
+      // ScrapeJob rows lack campaign identifiers, so keep operations strictly scoped
+      // by suppressing scrape timeline rows until a campaign-scoped scrape endpoint exists.
+      setRecentScrapeJobs([])
+      setRecentRuns(runRows.filter((run) => scopedUploadIds.has(run.upload_id)).slice(0, 50))
     } catch { /* non-critical */ }
-  }, [])
+  }, [selectedCampaignId, uploads])
 
   const loadCampaignData = useCallback(async () => {
     setIsCampaignLoading(true)
@@ -203,15 +280,74 @@ function App() {
       setCampaignCostSummary(null)
       return
     }
+    if (campaignCostsRouteMissingRef.current) {
+      setCampaignCostSummary(null)
+      return
+    }
     try {
       const summary = await getCampaignCosts(campaignId)
       setCampaignCostSummary(summary)
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        campaignCostsRouteMissingRef.current = true
+      }
+      setCampaignCostSummary(null)
       // non-critical telemetry path
     }
   }, [])
 
+  const loadCampaignCostBreakdown = useCallback(async (campaignId: string | null) => {
+    if (!campaignId) {
+      setCampaignCostBreakdown(null)
+      return
+    }
+    try {
+      const rows = await getCostStats({ campaignId, windowDays: 365, limit: 200, offset: 0 })
+      setCampaignCostBreakdown(rows)
+    } catch {
+      setCampaignCostBreakdown(null)
+    }
+  }, [])
+
   // ── Effects ───────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    configureApiSession({
+      getAccessToken: () => authSession?.accessToken ?? null,
+      onUnauthorized: () => {
+        if (!AUTH_REQUIRED) return
+        setAuthSession(null)
+        setAuthError('Your session expired. Please sign in again.')
+      },
+    })
+  }, [authSession])
+
+  useEffect(() => {
+    if (!AUTH_REQUIRED) {
+      setIsAuthBootstrapping(false)
+      return
+    }
+    let cancelled = false
+    const bootstrap = async () => {
+      try {
+        const me = await getCurrentUser()
+        if (cancelled) return
+        setAuthSession({
+          userEmail: me.email,
+          displayName: me.display_name?.trim() || me.email,
+          accessToken: null,
+        })
+      } catch {
+        if (!cancelled) setAuthSession(null)
+      } finally {
+        if (!cancelled) setIsAuthBootstrapping(false)
+      }
+    }
+    void bootstrap()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     void promptMgmt.loadPrompts()
@@ -220,24 +356,52 @@ function App() {
   }, [])
 
   useEffect(() => {
+    selectedCampaignIdRef.current = selectedCampaignId
+  }, [selectedCampaignId])
+
+  useEffect(() => {
+    void loadCampaignData()
+  }, [loadCampaignData])
+
+  useEffect(() => {
     void loadStats()
     void loadCompanyCounts()
     void loadContactCounts()
     void loadRecentActivity()
-    void loadCampaignData()
     const timer = window.setInterval(() => {
       void loadStats()
       void loadCompanyCounts()
       void loadContactCounts()
+      void loadCampaignCostSummary(selectedCampaignId)
+      void loadCampaignCostBreakdown(selectedCampaignId)
     }, 10000)
     return () => window.clearInterval(timer)
-  }, [loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignData])
+  }, [loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
 
   useEffect(() => {
+    if (!selectedCampaignId) return
+    const livePipelineViews: ActiveView[] = [
+      'full-pipeline',
+      's1-scraping',
+      's2-ai',
+      's3-contacts',
+      's4-validation',
+    ]
+    if (!livePipelineViews.includes(activeView)) return
+    const timer = window.setInterval(() => {
+      refreshPipelineView({ background: true })
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [activeView, refreshPipelineView, selectedCampaignId])
+
+  useEffect(() => {
+    setCampaignCostSummary(null)
+    setCampaignCostBreakdown(null)
     void loadCampaignCostSummary(selectedCampaignId)
+    void loadCampaignCostBreakdown(selectedCampaignId)
     setLatestPipelineRunId(null)
     setLatestPipelineRunProgress(null)
-  }, [loadCampaignCostSummary, selectedCampaignId])
+  }, [loadCampaignCostBreakdown, loadCampaignCostSummary, selectedCampaignId])
 
   useEffect(() => {
     if (!latestPipelineRunId) return
@@ -246,6 +410,10 @@ function App() {
       try {
         const progress = await getPipelineRunProgress(latestPipelineRunId)
         if (!cancelled) setLatestPipelineRunProgress(progress)
+        if (!cancelled) {
+          void loadCampaignCostSummary(progress.campaign_id)
+          void loadCampaignCostBreakdown(progress.campaign_id)
+        }
       } catch {
         // non-critical telemetry path
       }
@@ -258,13 +426,19 @@ function App() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [latestPipelineRunId])
+  }, [latestPipelineRunId, loadCampaignCostSummary, loadCampaignCostBreakdown])
 
   useEffect(() => {
     if (!error) return
     setNotice('')
     setNoticeAction(null)
   }, [error])
+
+  useEffect(() => {
+    if (showScrapeFilter) return
+    if (operationsPipelineFilter !== 'scrape') return
+    setOperationsPipelineFilter('all')
+  }, [operationsPipelineFilter, showScrapeFilter])
 
   useEffect(() => {
     if (!error) return
@@ -288,7 +462,7 @@ function App() {
       await uploadFileToCampaign(file, selectedCampaignId || undefined)
       setFile(null)
       void loadCompanyCounts()
-      pipeline.refreshPipelineView()
+      refreshPipelineView()
       void loadRecentActivity()
       void loadCampaignData()
       setNotice(
@@ -359,7 +533,7 @@ function App() {
         scrape_rules: scrapePromptMgmt.activeScrapePrompt?.scrape_rules_structured ?? undefined,
       })
       setActionState((c) => ({ ...c, [company.id]: 'Queued' }))
-      pipeline.refreshPipelineView()
+      refreshPipelineView()
       void loadRecentActivity()
     } catch (err) {
       setActionState((c) => ({ ...c, [company.id]: 'Failed' }))
@@ -393,9 +567,13 @@ function App() {
   // ── Per-row contact fetch (S3) ────────────────────────────────────────────
 
   const onFetchContacts = async (company: CompanyListItem) => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     setError(''); setNotice('')
     try {
-      const result = await fetchContactsForCompany(company.id)
+      const result = await fetchContactsForCompany(selectedCampaignId, company.id)
       const msg = result.queued_count > 0
         ? `Queued contact fetch for ${company.domain}.`
         : result.already_fetching_count > 0
@@ -406,14 +584,35 @@ function App() {
   }
 
   const onFetchContactsApollo = async (company: CompanyListItem) => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     setError(''); setNotice('')
     try {
-      const result = await fetchContactsForCompanyApollo(company.id)
+      const result = await fetchContactsForCompanyApollo(selectedCampaignId, company.id)
       const msg = result.queued_count > 0
         ? `Queued Apollo fetch for ${company.domain}.`
         : result.already_fetching_count > 0
           ? `Apollo fetch already in progress for ${company.domain}.`
           : `No Apollo contacts queued for ${company.domain}.`
+      setNotice(msg)
+    } catch (err) { setError(parseApiError(err)) }
+  }
+
+  const onFetchContactsBoth = async (company: CompanyListItem) => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
+    setError(''); setNotice('')
+    try {
+      const result = await fetchContactsSelected(selectedCampaignId, [company.id], 'both')
+      const msg = result.queued_count > 0
+        ? `Queued sequential both-provider fetch for ${company.domain} (Snov first, Apollo follow-up).`
+        : result.already_fetching_count > 0
+          ? `Contact fetch already in progress for ${company.domain}; Apollo follow-up will be chained.`
+          : `No contacts queued for ${company.domain}.`
       setNotice(msg)
     } catch (err) { setError(parseApiError(err)) }
   }
@@ -478,12 +677,112 @@ function App() {
       void loadRecentActivity()
       void loadCampaignData()
       void loadCampaignCostSummary(selectedCampaignId)
-      pipeline.refreshPipelineView()
+      refreshPipelineView()
     } catch (err) {
       setError(parseApiError(err))
     } finally {
       setIsStartingCampaignPipeline(false)
     }
+  }
+
+  const syncUrlState = useCallback((state: { view: ActiveView; campaignId: string | null }, mode: 'push' | 'replace') => {
+    if (typeof window === 'undefined') return
+    const search = buildRouteSearch({ view: state.view, campaignId: state.campaignId })
+    const nextUrl = `${window.location.pathname}${search}${window.location.hash}`
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    if (nextUrl === currentUrl) return
+    const method = mode === 'push' ? 'pushState' : 'replaceState'
+    window.history[method]({}, '', nextUrl)
+  }, [])
+
+  const setCampaignFromUser = useCallback((campaignId: string | null) => {
+    setSelectedCampaignId(campaignId)
+    syncUrlState({ view: activeView, campaignId }, 'push')
+  }, [activeView, syncUrlState])
+
+  const requiresCampaignScope = activeView !== 'dashboard' && activeView !== 'campaigns' && activeView !== 'settings'
+
+  const navigateToView = useCallback((view: ActiveView) => {
+    const viewNeedsCampaign = view !== 'dashboard' && view !== 'campaigns' && view !== 'settings'
+    if (viewNeedsCampaign && !selectedCampaignId) {
+      setActiveView('campaigns')
+      syncUrlState({ view: 'campaigns', campaignId: selectedCampaignId }, 'push')
+      setNotice('Select a campaign first, then continue to the pipeline stage.')
+      setNoticeAction({
+        label: 'Open Campaigns',
+        onClick: () => setActiveView('campaigns'),
+      })
+      return
+    }
+    setNoticeAction(null)
+    setActiveView(view)
+    syncUrlState({ view, campaignId: selectedCampaignId }, 'push')
+  }, [selectedCampaignId, syncUrlState])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onPopState = () => {
+      const routeState = parseRouteState(window.location.search)
+      setActiveView(routeState.view)
+      setSelectedCampaignId(routeState.campaignId)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    syncUrlState({ view: activeView, campaignId: selectedCampaignId }, 'replace')
+  }, [activeView, selectedCampaignId, syncUrlState])
+
+  const handleLogin = useCallback(async (email: string, password: string) => {
+    if (!email.trim() || !password.trim()) {
+      setAuthError('Email and password are required.')
+      return
+    }
+    setIsSigningIn(true)
+    setAuthError('')
+    try {
+      const response = await loginWithPassword(email.trim(), password)
+      setAuthSession({
+        userEmail: response.user.email,
+        displayName: response.user.display_name?.trim() || response.user.email,
+        accessToken: response.access_token ?? null,
+      })
+    } catch (err) {
+      setAuthError(parseApiError(err))
+    } finally {
+      setIsSigningIn(false)
+    }
+  }, [])
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await logoutSession()
+    } catch {
+      // Session might already be invalid; still clear local auth state.
+    }
+    setAuthSession(null)
+    setAuthError('')
+    setNotice('Signed out.')
+    setNoticeAction(null)
+  }, [])
+
+  if (AUTH_REQUIRED && isAuthBootstrapping) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-(--oc-bg)">
+        <p className="text-sm text-(--oc-muted)">Checking session…</p>
+      </main>
+    )
+  }
+
+  if (AUTH_REQUIRED && !authSession) {
+    return (
+      <LoginView
+        isSubmitting={isSigningIn}
+        error={authError}
+        onLogin={handleLogin}
+      />
+    )
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -492,11 +791,29 @@ function App() {
     <>
       <AppShell className="min-h-0 flex-1"
         activeView={activeView}
-        setActiveView={setActiveView}
+        setActiveView={navigateToView}
         activeCampaignName={activeCampaignName}
         stats={stats}
         onOpenPromptLibrary={activeView === 's1-scraping' ? scrapePromptMgmt.openScrapePromptSheet : promptMgmt.openPromptSheet}
+        authEnabled={AUTH_REQUIRED}
+        userDisplayName={authSession?.displayName ?? null}
+        onLogout={AUTH_REQUIRED ? handleLogout : undefined}
       >
+        {requiresCampaignScope && !selectedCampaignId ? (
+          <div className="space-y-3 rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-6">
+            <p className="text-sm text-(--oc-muted)">
+              Select a campaign from Campaigns to view scoped pipeline data.
+            </p>
+            <button
+              type="button"
+              className="rounded-xl bg-(--oc-accent) px-3 py-2 text-xs font-bold text-white"
+              onClick={() => navigateToView('campaigns')}
+            >
+              Go to Campaigns
+            </button>
+          </div>
+        ) : null}
+
         {activeView === 'dashboard' && (
           <DashboardView
             companyCounts={companyCounts}
@@ -509,7 +826,42 @@ function App() {
             onSetFile={setFile}
             onSetIsDragActive={setIsDragActive}
             onUpload={onUpload}
-            onNavigate={(view) => setActiveView(view)}
+            hasSelectedCampaign={Boolean(selectedCampaignId)}
+            onNavigate={(view) => navigateToView(view)}
+            onOpenCampaigns={() => navigateToView('campaigns')}
+            onOpenOperations={() => navigateToView('operations')}
+          />
+        )}
+
+        {selectedCampaignId && activeView === 'operations' && (
+          <OperationsLogView
+            activeCampaignName={activeCampaignName}
+            campaignCostSummary={campaignCostSummary}
+            campaignCostBreakdown={campaignCostBreakdown}
+            events={operationsEvents}
+            isLoading={false}
+            error={selectedCampaignId ? '' : 'Select a campaign to view operations.'}
+            pipelineFilter={operationsPipelineFilter}
+            statusFilter={operationsStatusFilter}
+            errorOnly={operationsErrorOnly}
+            searchQuery={operationsSearchQuery}
+            activeCount={operationsActiveCount}
+            showScrapeFilter={showScrapeFilter}
+            scrapeTelemetryNote={scrapeTelemetryNote}
+            onSetPipelineFilter={setOperationsPipelineFilter}
+            onSetStatusFilter={setOperationsStatusFilter}
+            onSetErrorOnly={setOperationsErrorOnly}
+            onSetSearchQuery={setOperationsSearchQuery}
+            onRefresh={() => void loadRecentActivity()}
+            onInspectEvent={(event) => {
+              if (event.scrape_job) {
+                void panels.openScrapeDiagnostics(event.scrape_job)
+                return
+              }
+              if (event.run) {
+                void panels.loadRunJobs(event.run)
+              }
+            }}
           />
         )}
 
@@ -520,19 +872,25 @@ function App() {
             selectedCampaignId={selectedCampaignId}
             isLoading={isCampaignLoading}
             isSaving={isCampaignSaving}
-            onSelectCampaign={setSelectedCampaignId}
+            onSelectCampaign={setCampaignFromUser}
             onCreateCampaign={(name, description) => void onCreateCampaign(name, description)}
             onDeleteCampaign={(campaignId) => void onDeleteCampaign(campaignId)}
             onAssignUploads={(campaignId, uploadIds) => void onAssignUploads(campaignId, uploadIds)}
             onStartCampaignPipeline={() => void onStartCampaignPipeline()}
+            onOpenFullPipeline={() => navigateToView('full-pipeline')}
             isStartingCampaignPipeline={isStartingCampaignPipeline}
             latestRunProgress={latestPipelineRunProgress}
             campaignCostSummary={campaignCostSummary}
           />
         )}
 
-        {activeView === 'full-pipeline' && (
+        {activeView === 'settings' && (
+          <SettingsView />
+        )}
+
+        {selectedCampaignId && activeView === 'full-pipeline' && (
           <FullPipelineView
+            activeCampaignName={activeCampaignName}
             companies={pipeline.fullPipelineCompanies}
             letterCounts={pipeline.fullPipelineLetterCounts}
             activeLetter={pipeline.fullPipelineActiveLetter}
@@ -557,10 +915,11 @@ function App() {
             isStartingCampaignPipeline={isStartingCampaignPipeline}
             latestRunProgress={latestPipelineRunProgress}
             campaignCostSummary={campaignCostSummary}
+            campaignCostBreakdown={campaignCostBreakdown}
           />
         )}
 
-        {activeView === 's1-scraping' && (
+        {selectedCampaignId && activeView === 's1-scraping' && (
           <S1ScrapingView
             companies={pipeline.pipelineCompanies}
             letterCounts={pipeline.pipelineLetterCounts}
@@ -604,7 +963,7 @@ function App() {
           />
         )}
 
-        {activeView === 's2-ai' && (
+        {selectedCampaignId && activeView === 's2-ai' && (
           <S2AIDecisionView
             companies={pipeline.pipelineCompanies}
             letterCounts={pipeline.pipelineLetterCounts}
@@ -649,8 +1008,9 @@ function App() {
           />
         )}
 
-        {activeView === 's3-contacts' && (
+        {selectedCampaignId && activeView === 's3-contacts' && (
           <S3ContactFetchView
+            campaignId={selectedCampaignId}
             companies={pipeline.pipelineCompanies}
             letterCounts={pipeline.pipelineLetterCounts}
             activeLetters={pipeline.pipelineActiveLetters}
@@ -661,6 +1021,7 @@ function App() {
             isFetching={pipeline.isPipelineFetching}
             isSelectingAll={pipeline.isPipelineSelectingAll}
             contactCounts={contactCounts}
+            stats={stats}
             onDecisionFilterChange={pipeline.onPipelineDecisionFilterChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
@@ -671,7 +1032,7 @@ function App() {
             onFetchOne={(c, source) => {
               if (source === 'snov') { void onFetchContacts(c) }
               else if (source === 'apollo') { void onFetchContactsApollo(c) }
-              else { void onFetchContacts(c); void onFetchContactsApollo(c) }
+              else { void onFetchContactsBoth(c) }
             }}
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onViewContacts={(company) => void panels.openCompanyContacts(company)}
@@ -687,7 +1048,7 @@ function App() {
           />
         )}
 
-        {activeView === 's4-validation' && (
+        {selectedCampaignId && activeView === 's4-validation' && (
           <S4ValidationView
             contacts={pipeline.s4Contacts}
             letterCounts={pipeline.s4LetterCounts}
@@ -696,10 +1057,11 @@ function App() {
             selectedContactIds={pipeline.s4SelectedContactIds}
             totalMatching={pipeline.s4Contacts?.total ?? null}
             contactCounts={contactCounts}
+            stats={stats}
             isLoading={pipeline.isS4Loading}
             isValidating={pipeline.isS4Validating}
             isSelectingAll={false}
-            exportUrl={getContactsExportUrl()}
+            exportUrl={selectedCampaignId ? getContactsExportUrl({ campaignId: selectedCampaignId }) : ''}
             onVerifFilterChange={pipeline.onS4VerifFilterChange}
             onToggleLetter={pipeline.onS4ToggleLetter}
             onClearLetters={pipeline.onS4ClearLetters}
@@ -824,6 +1186,7 @@ function App() {
       />
 
       <CompanyContactsPreviewPanel
+        campaignId={selectedCampaignId}
         company={panels.companyContactsCompany}
         contacts={panels.companyContacts}
         summary={panels.companyContactSummary}
@@ -837,6 +1200,7 @@ function App() {
       <Toast error={error} notice={notice} noticeAction={noticeAction} />
 
       <TitleRulesPanel
+        campaignId={selectedCampaignId}
         isOpen={isTitleRulesOpen}
         onClose={() => setIsTitleRulesOpen(false)}
       />

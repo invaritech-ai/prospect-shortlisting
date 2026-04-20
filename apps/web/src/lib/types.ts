@@ -517,6 +517,7 @@ export type ProspectContactRead = {
   title_match: boolean
   linkedin_url: string | null
   email: string | null
+  emails?: string[] | null
   pipeline_stage: ContactStage
   provider_email_status: string | null
   verification_status: string
@@ -578,6 +579,7 @@ export type ContactCountsResponse = {
 }
 
 export type ContactVerifyRequest = {
+  campaign_id: string
   contact_ids?: string[]
   company_ids?: string[]
   title_match?: boolean
@@ -630,6 +632,20 @@ export type TitleRuleStatsResponse = {
   total_matched: number
 }
 
+export type TitleRuleImpactPreview = {
+  campaign_id: string
+  source: 'snov' | 'apollo' | 'both'
+  include_stale: boolean
+  stale_days: number | null
+  stale_days_override?: number | null
+  provider_default_days?: Record<string, number> | null
+  force_refresh: boolean
+  affected_company_count: number
+  affected_contact_count: number
+  stale_contact_count: number
+  affected_company_ids: string[]
+}
+
 export type TitleRuleSeedResult = {
   inserted: number
   message: string
@@ -647,4 +663,44 @@ export type AnalyticsSnapshot = {
   possible_ratio_pct: number | null
   scrape_failure_pct: number | null
   analysis_failure_pct: number | null
+}
+
+export type IntegrationProviderId = 'openrouter' | 'snov' | 'apollo' | 'zerobounce'
+export type CredentialSource = 'db' | 'env' | ''
+
+export type IntegrationFieldStatus = {
+  field: string
+  is_set: boolean
+  source: CredentialSource
+  last4: string | null
+  updated_at: string | null
+}
+
+export type IntegrationProviderStatus = {
+  provider: IntegrationProviderId
+  label: string
+  description: string
+  fields: IntegrationFieldStatus[]
+}
+
+export type IntegrationsStatusResponse = {
+  store_available: boolean
+  providers: IntegrationProviderStatus[]
+}
+
+export type IntegrationFieldUpdate = {
+  field: string
+  value: string
+}
+
+export type IntegrationProviderUpdateRequest = {
+  fields: IntegrationFieldUpdate[]
+}
+
+export type IntegrationTestResponse = {
+  provider: IntegrationProviderId
+  ok: boolean
+  source: CredentialSource
+  error_code: string
+  message: string
 }

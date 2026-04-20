@@ -21,6 +21,7 @@ import {
   listCompanyIds,
   listContacts,
   scrapeSelectedCompanies,
+  startPipelineRun,
   upsertCompanyFeedback,
   verifyContacts,
 } from '../lib/api'
@@ -107,7 +108,7 @@ export interface UsePipelineViewsResult {
   onPipelineFetchContacts: (source: 'snov' | 'apollo' | 'both') => void
   pipelineManualLabelActionState: Record<string, string>
   onPipelineSetManualLabel: (company: CompanyListItem, label: ManualLabel | null) => void
-  refreshPipelineView: () => void
+  refreshPipelineView: (options?: { background?: boolean }) => void
   // S4 handlers
   onS4ToggleLetter: (l: string) => void
   onS4ClearLetters: () => void
@@ -119,6 +120,7 @@ export interface UsePipelineViewsResult {
 
 export function usePipelineViews(
   activeView: ActiveView,
+  selectedCampaignId: string | null,
   selectedPrompt: PromptRead | null,
   selectedScrapePrompt: ScrapePromptRead | null,
   setError: (e: string) => void,
@@ -167,8 +169,11 @@ export function usePipelineViews(
   const [s4SortBy, setS4SortBy] = useState('domain')
   const [s4SortDir, setS4SortDir] = useState<'asc' | 'desc'>('asc')
   const pipelineRequestRef = useRef(0)
+  const pipelineForegroundRequestRef = useRef(0)
   const s4RequestRef = useRef(0)
+  const s4ForegroundRequestRef = useRef(0)
   const fullPipelineRequestRef = useRef(0)
+  const fullPipelineForegroundRequestRef = useRef(0)
   const skipNextPipelineLetterReloadRef = useRef(false)
   const skipNextS4LetterReloadRef = useRef(false)
 
@@ -184,14 +189,24 @@ export function usePipelineViews(
       pageSize: number,
       offset: number,
       letters: string[] = [],
+      options?: { background?: boolean },
     ) => {
+      if (!selectedCampaignId) {
+        setPipelineCompanies(null)
+        setPipelineLetterCounts({})
+        return
+      }
       const requestId = pipelineRequestRef.current + 1
       pipelineRequestRef.current = requestId
-      setIsPipelineLoading(true)
+      const background = options?.background === true
+      if (!background) {
+        pipelineForegroundRequestRef.current = requestId
+        setIsPipelineLoading(true)
+      }
       try {
         const [companies, letterCountsData] = await Promise.all([
-          listCompanies(pageSize, offset, decisionFilter, true, scrapeFilter, stageFilter, null, sortBy, sortDir, undefined, letters),
-          getLetterCounts(decisionFilter, scrapeFilter, stageFilter),
+          listCompanies(selectedCampaignId, pageSize, offset, decisionFilter, true, scrapeFilter, stageFilter, null, sortBy, sortDir, undefined, letters),
+          getLetterCounts(selectedCampaignId, decisionFilter, scrapeFilter, stageFilter),
         ])
         if (pipelineRequestRef.current !== requestId) return
         setPipelineCompanies(companies)
@@ -200,11 +215,12 @@ export function usePipelineViews(
         if (pipelineRequestRef.current !== requestId) return
         setError(parseApiError(err))
       } finally {
-        if (pipelineRequestRef.current !== requestId) return
-        setIsPipelineLoading(false)
+        if (!background && pipelineForegroundRequestRef.current === requestId) {
+          setIsPipelineLoading(false)
+        }
       }
     },
-    [setError],
+    [selectedCampaignId, setError],
   )
 
   const loadS4View = useCallback(async (
@@ -214,15 +230,26 @@ export function usePipelineViews(
     pageSize: number,
     offset: number,
     letters: string[] = [],
+    options?: { background?: boolean },
   ) => {
+    if (!selectedCampaignId) {
+      setS4Contacts(null)
+      setS4LetterCounts({})
+      return
+    }
     const requestId = s4RequestRef.current + 1
     s4RequestRef.current = requestId
-    setIsS4Loading(true)
+    const background = options?.background === true
+    if (!background) {
+      s4ForegroundRequestRef.current = requestId
+      setIsS4Loading(true)
+    }
     try {
       const filterParams = verifFilterToParams(verifFilter)
       const [data, letterCountsData] = await Promise.all([
-        listContacts({ limit: pageSize, offset, sortBy, sortDir, letters, ...filterParams }),
+        listContacts({ campaignId: selectedCampaignId, limit: pageSize, offset, sortBy, sortDir, letters, ...filterParams }),
         listContacts({
+          campaignId: selectedCampaignId,
           limit: 1,
           offset: 0,
           sortBy: 'domain',
@@ -239,20 +266,30 @@ export function usePipelineViews(
       if (s4RequestRef.current !== requestId) return
       setError(parseApiError(err))
     } finally {
-      if (s4RequestRef.current !== requestId) return
-      setIsS4Loading(false)
+      if (!background && s4ForegroundRequestRef.current === requestId) {
+        setIsS4Loading(false)
+      }
     }
-  }, [setError])
+  }, [selectedCampaignId, setError])
 
   const loadFullPipelineView = useCallback(
-    async (letter: string | null, pageSize: number, offset: number) => {
+    async (letter: string | null, pageSize: number, offset: number, options?: { background?: boolean }) => {
+      if (!selectedCampaignId) {
+        setFullPipelineCompanies(null)
+        setFullPipelineLetterCounts({})
+        return
+      }
       const requestId = fullPipelineRequestRef.current + 1
       fullPipelineRequestRef.current = requestId
-      setIsFullPipelineLoading(true)
+      const background = options?.background === true
+      if (!background) {
+        fullPipelineForegroundRequestRef.current = requestId
+        setIsFullPipelineLoading(true)
+      }
       try {
         const [companies, letterCountsData] = await Promise.all([
-          listCompanies(pageSize, offset, 'all', true, 'all', 'all', letter),
-          getLetterCounts('all', 'all', 'all'),
+          listCompanies(selectedCampaignId, pageSize, offset, 'all', true, 'all', 'all', letter),
+          getLetterCounts(selectedCampaignId, 'all', 'all', 'all'),
         ])
         if (fullPipelineRequestRef.current !== requestId) return
         setFullPipelineCompanies(companies)
@@ -261,11 +298,12 @@ export function usePipelineViews(
         if (fullPipelineRequestRef.current !== requestId) return
         setError(parseApiError(err))
       } finally {
-        if (fullPipelineRequestRef.current !== requestId) return
-        setIsFullPipelineLoading(false)
+        if (!background && fullPipelineForegroundRequestRef.current === requestId) {
+          setIsFullPipelineLoading(false)
+        }
       }
     },
-    [setError],
+    [selectedCampaignId, setError],
   )
 
   // ── Load on view change ────────────────────────────────────────────────────
@@ -333,6 +371,7 @@ export function usePipelineViews(
   }, [])
 
   const selectAllMatchingAsync = useCallback(async () => {
+    if (!selectedCampaignId) return
     const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
     if (query === null) return
     setIsPipelineSelectingAll(true)
@@ -340,6 +379,7 @@ export function usePipelineViews(
       const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
       const letters = [...pipelineActiveLetters]
       const result = await listCompanyIds(
+        selectedCampaignId,
         query.decisionFilter,
         sf,
         query.stageFilter,
@@ -353,7 +393,7 @@ export function usePipelineViews(
     } finally {
       setIsPipelineSelectingAll(false)
     }
-  }, [activeView, pipelineActiveLetters, pipelineDecisionFilter, pipelineScrapeSubFilter, setError])
+  }, [activeView, pipelineActiveLetters, pipelineDecisionFilter, pipelineScrapeSubFilter, selectedCampaignId, setError])
 
   const onPipelineSelectAllMatching = useCallback(() => {
     void selectAllMatchingAsync()
@@ -486,13 +526,19 @@ export function usePipelineViews(
   const fetchContactsAsync = useCallback(
     async (source: 'snov' | 'apollo' | 'both') => {
       if (!pipelineSelectedIds.length) return
+      if (!selectedCampaignId) {
+        setError('Select a campaign first.')
+        return
+      }
       setError('')
       setNotice('')
       setIsPipelineFetching(true)
       try {
-        const result = await fetchContactsSelected(pipelineSelectedIds, source)
+        const result = await fetchContactsSelected(selectedCampaignId, pipelineSelectedIds, source)
         setNotice(
-          `Queued contact fetch for ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'} via ${source}.`,
+          source === 'both'
+            ? `Queued ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'} using sequential both-provider flow (Snov first, Apollo follow-up).`
+            : `Queued contact fetch for ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'} via ${source}.`,
         )
         setPipelineSelectedIds([])
       } catch (err) {
@@ -501,7 +547,7 @@ export function usePipelineViews(
         setIsPipelineFetching(false)
       }
     },
-    [pipelineSelectedIds, setError, setNotice],
+    [pipelineSelectedIds, selectedCampaignId, setError, setNotice],
   )
 
   const onPipelineFetchContacts = useCallback(
@@ -565,15 +611,33 @@ export function usePipelineViews(
     setNotice,
   ])
 
-  const refreshPipelineView = useCallback(() => {
+  const refreshPipelineView = useCallback((options?: { background?: boolean }) => {
     const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
     if (query !== null) {
       const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
-      void loadPipelineView(query.stageFilter, query.decisionFilter, sf, pipelineSortBy, pipelineSortDir, pipelinePageSize, pipelineOffset, [...pipelineActiveLetters])
+      void loadPipelineView(
+        query.stageFilter,
+        query.decisionFilter,
+        sf,
+        pipelineSortBy,
+        pipelineSortDir,
+        pipelinePageSize,
+        pipelineOffset,
+        [...pipelineActiveLetters],
+        options,
+      )
     } else if (activeView === 'full-pipeline') {
-      void loadFullPipelineView(fullPipelineActiveLetter, fullPipelinePageSize, fullPipelineOffset)
+      void loadFullPipelineView(fullPipelineActiveLetter, fullPipelinePageSize, fullPipelineOffset, options)
     } else if (activeView === 's4-validation') {
-      void loadS4View(s4SortBy, s4SortDir, s4VerifFilter, s4PageSize, s4Offset, [...s4ActiveLetters])
+      void loadS4View(
+        s4SortBy,
+        s4SortDir,
+        s4VerifFilter,
+        s4PageSize,
+        s4Offset,
+        [...s4ActiveLetters],
+        options,
+      )
     }
   }, [
     activeView,
@@ -674,15 +738,29 @@ export function usePipelineViews(
 
   const fullPipelineScrapeAsync = useCallback(async () => {
     if (!fullPipelineSelectedIds.length) return
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
+    if (!selectedPrompt?.enabled) {
+      setError('Select an enabled decision prompt before starting pipeline.')
+      return
+    }
     setError('')
     setNotice('')
     setIsFullPipelineScraping(true)
     try {
-      const result = await scrapeSelectedCompanies(fullPipelineSelectedIds, {
-        scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
+      const result = await startPipelineRun({
+        campaign_id: selectedCampaignId,
+        company_ids: fullPipelineSelectedIds,
+        scrape_rules_snapshot: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
+        analysis_prompt_snapshot: {
+          prompt_id: selectedPrompt.id,
+          prompt_text: selectedPrompt.prompt_text,
+        },
       })
       setNotice(
-        `Pipeline: queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'} (S1).`,
+        `Pipeline started for ${result.requested_count} selected compan${result.requested_count === 1 ? 'y' : 'ies'}.`,
       )
       setFullPipelineSelectedIds([])
     } catch (err) {
@@ -690,7 +768,7 @@ export function usePipelineViews(
     } finally {
       setIsFullPipelineScraping(false)
     }
-  }, [fullPipelineSelectedIds, selectedScrapePrompt, setError, setNotice])
+  }, [fullPipelineSelectedIds, selectedCampaignId, selectedPrompt, selectedScrapePrompt, setError, setNotice])
 
   const onFullPipelineScrapeSelected = useCallback(() => {
     void fullPipelineScrapeAsync()
@@ -700,6 +778,7 @@ export function usePipelineViews(
 
   const fullPipelineSelectAllMatchingAsync = useCallback(
     async (statusFilter: FullPipelineStatusFilter, search: string) => {
+      if (!selectedCampaignId) return
       setError('')
       setNotice('')
       setIsFullPipelineSelectingAllMatching(true)
@@ -709,12 +788,13 @@ export function usePipelineViews(
         let ids: string[] = []
 
         if (statusFilter === 'all' && !q) {
-          const result = await listCompanyIds('all', 'all', 'all', letter)
+          const result = await listCompanyIds(selectedCampaignId, 'all', 'all', 'all', letter)
           ids = result.ids.map((id) => String(id))
         } else {
           let offset = 0
           for (;;) {
             const page = await listCompanies(
+              selectedCampaignId,
               FULL_PIPELINE_SELECT_BATCH,
               offset,
               'all',
@@ -743,7 +823,7 @@ export function usePipelineViews(
         setIsFullPipelineSelectingAllMatching(false)
       }
     },
-    [fullPipelineActiveLetter, setError, setNotice],
+    [fullPipelineActiveLetter, selectedCampaignId, setError, setNotice],
   )
 
   const onFullPipelineSelectAllMatching = useCallback(
@@ -783,8 +863,12 @@ export function usePipelineViews(
         return
       }
       if (resumeStage === 'S3') {
+        if (!selectedCampaignId) {
+          setError('Select a campaign first.')
+          return
+        }
         setAction('Resuming S3…')
-        const result = await fetchContactsSelected([company.id], 'both')
+        const result = await fetchContactsSelected(selectedCampaignId, [company.id], 'both')
         setNotice(`Resumed S3 for ${company.domain}. Queued ${result.queued_count} contact fetch job(s).`)
         return
       }
@@ -798,7 +882,7 @@ export function usePipelineViews(
         return next
       })
     }
-  }, [selectedPrompt, selectedScrapePrompt, setError, setNotice])
+  }, [selectedCampaignId, selectedPrompt, selectedScrapePrompt, setError, setNotice])
 
   const onFullPipelineResumeCompany = useCallback((company: CompanyListItem) => {
     void fullPipelineResumeCompanyAsync(company)
@@ -878,11 +962,15 @@ export function usePipelineViews(
 
   const validateSelectedAsync = useCallback(async () => {
     if (!s4SelectedContactIds.length) return
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     setError('')
     setNotice('')
     setIsS4Validating(true)
     try {
-      const result = await verifyContacts({ contact_ids: s4SelectedContactIds })
+      const result = await verifyContacts({ campaign_id: selectedCampaignId, contact_ids: s4SelectedContactIds })
       setNotice(result.message)
       setS4SelectedContactIds([])
     } catch (err) {
@@ -890,7 +978,7 @@ export function usePipelineViews(
     } finally {
       setIsS4Validating(false)
     }
-  }, [s4SelectedContactIds, setError, setNotice])
+  }, [s4SelectedContactIds, selectedCampaignId, setError, setNotice])
 
   const onS4ValidateSelected = useCallback(() => {
     void validateSelectedAsync()

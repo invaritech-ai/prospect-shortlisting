@@ -20,7 +20,7 @@ import random
 import socket
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from scrapling import Selector, StealthyFetcher
@@ -289,6 +289,29 @@ async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
         )
 
 
+async def _recover_https_tls_error(url: str) -> FetchResult | None:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        return None
+
+    fallback_url = urlunparse(parsed._replace(scheme="http"))
+    timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
+
+    results = await stealth_fetch_many(
+        [fallback_url],
+        delay_range=(0, 0),
+        per_page_timeout_sec=timeout_sec,
+    )
+    if not results:
+        return None
+
+    result = results[0]
+    if result.selector is not None:
+        return result
+
+    return None
+
+
 # ── Stealth fetch (single page, kept for backward compat) ────────────────────
 
 async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
@@ -458,8 +481,14 @@ async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str
     if static_result.selector is not None:
         return static_result
 
-    # Static failed — if it's a permanent error (DNS, TLS), don't bother with stealth
-    if static_result.error_code in ("dns_not_resolved", "tls_error"):
+    if static_result.error_code == "tls_error":
+        recovered = await _recover_https_tls_error(url)
+        if recovered is not None:
+            return recovered
+        return static_result
+
+    # Static failed — if it's a permanent error (DNS), don't bother with stealth
+    if static_result.error_code == "dns_not_resolved":
         return static_result
 
     # Tier 2: stealth fetch (browser, ~30-60s)

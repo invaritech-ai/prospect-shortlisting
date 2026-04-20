@@ -114,9 +114,8 @@ def canonical_internal_url(url: str, domain: str) -> str:
     if not parsed.netloc:
         return ""
     host = parsed.netloc.lower()
-    if host.startswith("www."):
-        host = host[4:]
-    if host != domain:
+    compare_host = host[4:] if host.startswith("www.") else host
+    if compare_host != domain:
         return ""
 
     path = parsed.path or "/"
@@ -125,8 +124,7 @@ def canonical_internal_url(url: str, domain: str) -> str:
         return ""
 
     canonical = parsed._replace(
-        # Canonicalize to https to avoid duplicate crawl records for http/https variants.
-        scheme="https",
+        scheme=(parsed.scheme or "https").lower(),
         netloc=host,
         path=path.rstrip("/") or "/",
         params="",

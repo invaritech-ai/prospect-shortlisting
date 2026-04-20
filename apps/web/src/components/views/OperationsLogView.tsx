@@ -1,4 +1,10 @@
-import type { OperationsEvent, OperationsEventKind, OperationsEventStatus } from '../../lib/types'
+import type {
+  CostStatsResponse,
+  OperationsEvent,
+  OperationsEventKind,
+  OperationsEventStatus,
+  PipelineCostSummaryRead,
+} from '../../lib/types'
 import { parseUTC } from '../../lib/api'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -9,6 +15,9 @@ type PipelineFilter = 'all' | OperationsEventKind
 type StatusFilter = 'all' | OperationsEventStatus
 
 interface OperationsLogViewProps {
+  activeCampaignName: string | null
+  campaignCostSummary: PipelineCostSummaryRead | null
+  campaignCostBreakdown: CostStatsResponse | null
   events: OperationsEvent[]
   isLoading: boolean
   error: string
@@ -17,6 +26,8 @@ interface OperationsLogViewProps {
   errorOnly: boolean
   searchQuery: string
   activeCount: number
+  showScrapeFilter: boolean
+  scrapeTelemetryNote?: string
   onSetPipelineFilter: (value: PipelineFilter) => void
   onSetStatusFilter: (value: StatusFilter) => void
   onSetErrorOnly: (value: boolean) => void
@@ -36,12 +47,6 @@ function kindBadge(kind: OperationsEventKind): { variant: 'info' | 'neutral'; la
   return { variant: 'neutral', label: 'Analysis' }
 }
 
-const PIPELINE_FILTERS: Array<{ value: PipelineFilter; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'scrape', label: 'Scrape' },
-  { value: 'analysis', label: 'Analysis' },
-]
-
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'All states' },
   { value: 'active', label: 'Active' },
@@ -50,6 +55,9 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
 ]
 
 export function OperationsLogView({
+  activeCampaignName,
+  campaignCostSummary,
+  campaignCostBreakdown,
   events,
   isLoading,
   error,
@@ -58,6 +66,8 @@ export function OperationsLogView({
   errorOnly,
   searchQuery,
   activeCount,
+  showScrapeFilter,
+  scrapeTelemetryNote,
   onSetPipelineFilter,
   onSetStatusFilter,
   onSetErrorOnly,
@@ -65,6 +75,14 @@ export function OperationsLogView({
   onRefresh,
   onInspectEvent,
 }: OperationsLogViewProps) {
+  const formatUsd = (value: number | string | null | undefined) => `$${Number(value ?? 0).toFixed(4)}`
+
+  const pipelineFilters: Array<{ value: PipelineFilter; label: string }> = [
+    { value: 'all', label: 'All' },
+    ...(showScrapeFilter ? [{ value: 'scrape' as const, label: 'Scrape' }] : []),
+    { value: 'analysis', label: 'Analysis' },
+  ]
+
   return (
     <div className="space-y-3">
       <div className="oc-toolbar space-y-3">
@@ -72,8 +90,11 @@ export function OperationsLogView({
           <div>
             <h2 className="text-base font-bold tracking-tight md:text-lg">Operations Log</h2>
             <p className="text-xs text-[var(--oc-muted)]">
-              Unified scrape and analysis timeline · live from existing endpoints
+              Campaign-scoped analysis timeline and cost observability.
             </p>
+            {scrapeTelemetryNote ? (
+              <p className="mt-1 text-[11px] text-[var(--oc-muted)]">{scrapeTelemetryNote}</p>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             {activeCount > 0 && (
@@ -90,7 +111,7 @@ export function OperationsLogView({
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
-            {PIPELINE_FILTERS.map((item) => (
+            {pipelineFilters.map((item) => (
               <button
                 key={item.value}
                 type="button"
@@ -144,6 +165,62 @@ export function OperationsLogView({
           className="w-full rounded-xl border border-[var(--oc-border)] bg-white px-3 py-2.5 text-sm text-[var(--oc-text)] placeholder:text-[var(--oc-muted)]"
         />
       </div>
+
+      {(campaignCostSummary || campaignCostBreakdown) && (
+        <section className="space-y-2 rounded-2xl border border-[var(--oc-border)] bg-white p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-[var(--oc-muted)]">Campaign cost observability</p>
+              <p className="text-sm font-semibold text-[var(--oc-accent-ink)]">{activeCampaignName ?? 'Selected campaign'}</p>
+            </div>
+            {campaignCostSummary && (
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="rounded-full border border-[var(--oc-border)] bg-[var(--oc-surface)] px-3 py-1 text-[var(--oc-muted)]">
+                  Total spend: {formatUsd(campaignCostSummary.total_cost_usd)}
+                </span>
+                <span className="rounded-full border border-[var(--oc-border)] bg-[var(--oc-surface)] px-3 py-1 text-[var(--oc-muted)]">
+                  LLM events: {campaignCostSummary.event_count.toLocaleString()}
+                </span>
+                <span className="rounded-full border border-[var(--oc-border)] bg-[var(--oc-surface)] px-3 py-1 text-[var(--oc-muted)]">
+                  Tokens: {(campaignCostSummary.input_tokens + campaignCostSummary.output_tokens).toLocaleString()}
+                </span>
+              </div>
+            )}
+          </div>
+          {campaignCostBreakdown && campaignCostBreakdown.items.length > 0 ? (
+            <div className="overflow-x-auto rounded-xl border border-[var(--oc-border)]">
+              <table className="min-w-[760px] w-full text-xs">
+                <thead className="bg-[var(--oc-surface)] text-left text-[var(--oc-muted)]">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Domain</th>
+                    <th className="px-3 py-2 font-semibold">S1</th>
+                    <th className="px-3 py-2 font-semibold">S2</th>
+                    <th className="px-3 py-2 font-semibold">S3</th>
+                    <th className="px-3 py-2 font-semibold">S4</th>
+                    <th className="px-3 py-2 font-semibold">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaignCostBreakdown.items.map((row) => (
+                    <tr key={row.company_id} className="border-t border-[var(--oc-border)]">
+                      <td className="px-3 py-2 font-medium text-[var(--oc-accent-ink)]">{row.domain}</td>
+                      <td className="px-3 py-2 text-[var(--oc-muted)]">{formatUsd(row.scrape)}</td>
+                      <td className="px-3 py-2 text-[var(--oc-muted)]">{formatUsd(row.analysis)}</td>
+                      <td className="px-3 py-2 text-[var(--oc-muted)]">{formatUsd(row.contact_fetch)}</td>
+                      <td className="px-3 py-2 text-[var(--oc-muted)]">{formatUsd(row.validation)}</td>
+                      <td className="px-3 py-2 font-semibold text-[var(--oc-accent-ink)]">{formatUsd(row.overall)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-dashed border-[var(--oc-border)] bg-[var(--oc-surface)] px-3 py-2 text-xs text-[var(--oc-muted)]">
+              No domain-level LLM cost rows yet for this campaign.
+            </p>
+          )}
+        </section>
+      )}
 
       {error && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3">

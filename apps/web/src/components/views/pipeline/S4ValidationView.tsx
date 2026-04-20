@@ -1,9 +1,16 @@
-import type { ContactCountsResponse, ContactListResponse, ProspectContactRead, S4VerifFilter } from '../../../lib/types'
+import type {
+  ContactCountsResponse,
+  ContactListResponse,
+  ProspectContactRead,
+  S4VerifFilter,
+  StatsResponse,
+} from '../../../lib/types'
 import { parseUTC } from '../../../lib/api'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
+import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
 interface S4ValidationViewProps {
   contacts: ContactListResponse | null
@@ -13,6 +20,7 @@ interface S4ValidationViewProps {
   selectedContactIds: string[]
   totalMatching: number | null
   contactCounts: ContactCountsResponse | null
+  stats: StatsResponse | null
   isLoading: boolean
   isValidating: boolean
   isSelectingAll: boolean
@@ -86,6 +94,7 @@ export function S4ValidationView({
   selectedContactIds,
   totalMatching,
   contactCounts,
+  stats,
   isLoading,
   isValidating,
   isSelectingAll,
@@ -119,10 +128,57 @@ export function S4ValidationView({
 
   const displayCount = contacts?.total ?? visibleContacts.length
   const effectiveTotalMatching = totalMatching
+  const validation = stats?.validation
+  const vRunning = validation?.running ?? 0
+  const vQueued = validation?.queued ?? 0
+  const vCompleted = validation?.completed ?? 0
+  const vFailed = validation?.failed ?? 0
+  const vTotal = validation?.total ?? 0
+  const vPct = validation?.pct_done ?? 0
+  const vProcessed = vCompleted + vFailed
+  const vHasActivity = vRunning > 0 || vQueued > 0
 
   return (
     <div className="space-y-3">
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
+      {validation && (vHasActivity || vCompleted > 0 || vFailed > 0) && (
+        <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
+                Validation Queue
+              </span>
+              {vHasActivity && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                  Active
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-(--oc-muted)">
+              {vProcessed.toLocaleString()} / {vTotal.toLocaleString()} processed
+            </span>
+          </div>
+          <p className="mb-2 text-[11px] text-(--oc-muted)">
+            <RelativeTimeLabel timestamp={stats?.as_of} />
+          </p>
+          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(vPct, 100)}%`,
+                background: vHasActivity ? 'linear-gradient(90deg, var(--s4), #a855f7)' : '#16a34a',
+              }}
+            />
+          </div>
+          <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+            {vRunning > 0 && <span className="font-bold text-amber-600">{vRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
+            {vQueued > 0 && <span className="font-bold text-(--oc-muted)">{vQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
+            <span className="font-bold text-emerald-700">{vCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
+            {vFailed > 0 && <span className="font-bold text-rose-600">{vFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
         <div className="flex-1">

@@ -4,13 +4,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import case, literal_column
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
-from app.models import AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, ProspectContact, ScrapeJob
+from app.models import AiUsageEvent, AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, PipelineRun, ProspectContact, ScrapeJob, Upload
 from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState
 
 
@@ -80,7 +80,32 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineStageStats:
+def _validate_campaign_upload_scope(
+    *,
+    session: Session,
+    campaign_id: UUID,
+    upload_id: UUID | None,
+) -> None:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    if upload_id is None:
+        return
+    upload = session.get(Upload, upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="upload_id is not assigned to the selected campaign.")
+
+
+def _campaign_upload_ids_subquery(campaign_id: UUID):
+    return select(Upload.id).where(col(Upload.campaign_id) == campaign_id)
+
+
+def _scrape_stats(
+    session: Session,
+    campaign_id: UUID,
+    upload_id: UUID | None = None,
+) -> PipelineStageStats:
     """Count per unique normalized_url using the latest (most recent) job only.
 
     This prevents inflated totals when scrape-all is run multiple times.
@@ -89,6 +114,7 @@ def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineSt
     """
     now = _utcnow()
     stuck_cutoff = now - timedelta(minutes=SCRAPE_RUNNING_STUCK_MINUTES)
+    campaign_run_ids = select(PipelineRun.id).where(col(PipelineRun.campaign_id) == campaign_id)
 
     # Subquery: pick one row per normalized_url.
     # Priority: non-terminal jobs first (they represent current work), then
@@ -107,10 +133,19 @@ def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineSt
         )
         .label("rn"),
     )
+    latest_stmt = latest_stmt.where(col(ScrapeJob.pipeline_run_id).in_(campaign_run_ids))
     if upload_id:
         latest_stmt = latest_stmt.where(
             col(ScrapeJob.normalized_url).in_(
                 select(Company.normalized_url).where(col(Company.upload_id) == upload_id)
+            )
+        )
+    else:
+        latest_stmt = latest_stmt.where(
+            col(ScrapeJob.normalized_url).in_(
+                select(Company.normalized_url).where(
+                    col(Company.upload_id).in_(_campaign_upload_ids_subquery(campaign_id))
+                )
             )
         )
     latest = (
@@ -163,6 +198,7 @@ def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineSt
             ScrapeJob.updated_at,
         )
         .where(col(ScrapeJob.status) == "completed")
+        .where(col(ScrapeJob.pipeline_run_id).in_(campaign_run_ids))
         .order_by(col(ScrapeJob.updated_at).desc())
         .limit(_SAMPLE_SIZE)
     )
@@ -170,6 +206,14 @@ def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineSt
         recent_stmt = recent_stmt.where(
             col(ScrapeJob.normalized_url).in_(
                 select(Company.normalized_url).where(col(Company.upload_id) == upload_id)
+            )
+        )
+    else:
+        recent_stmt = recent_stmt.where(
+            col(ScrapeJob.normalized_url).in_(
+                select(Company.normalized_url).where(
+                    col(Company.upload_id).in_(_campaign_upload_ids_subquery(campaign_id))
+                )
             )
         )
     recent = list(session.exec(recent_stmt))
@@ -194,11 +238,20 @@ def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineSt
     finished_window_stmt = select(func.count(ScrapeJob.id)).where(
         col(ScrapeJob.terminal_state).is_(True),
         col(ScrapeJob.finished_at) >= throughput_window,
+        col(ScrapeJob.pipeline_run_id).in_(campaign_run_ids),
     )
     if upload_id:
         finished_window_stmt = finished_window_stmt.where(
             col(ScrapeJob.normalized_url).in_(
                 select(Company.normalized_url).where(col(Company.upload_id) == upload_id)
+            )
+        )
+    else:
+        finished_window_stmt = finished_window_stmt.where(
+            col(ScrapeJob.normalized_url).in_(
+                select(Company.normalized_url).where(
+                    col(Company.upload_id).in_(_campaign_upload_ids_subquery(campaign_id))
+                )
             )
         )
     finished_in_window: int = session.exec(finished_window_stmt).one() or 0
@@ -229,7 +282,7 @@ def _scrape_stats(session: Session, upload_id: UUID | None = None) -> PipelineSt
     )
 
 
-def _analysis_stats(session: Session, upload_id: UUID | None = None) -> PipelineStageStats:
+def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
     now = _utcnow()
 
     base = select(
@@ -251,6 +304,8 @@ def _analysis_stats(session: Session, upload_id: UUID | None = None) -> Pipeline
     ).select_from(AnalysisJob)
     if upload_id:
         base = base.where(col(AnalysisJob.upload_id) == upload_id)
+    else:
+        base = base.where(col(AnalysisJob.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
     row = session.exec(base).one()
 
     total = row.total or 0
@@ -268,6 +323,8 @@ def _analysis_stats(session: Session, upload_id: UUID | None = None) -> Pipeline
     )
     if upload_id:
         recent_stmt = recent_stmt.where(col(AnalysisJob.upload_id) == upload_id)
+    else:
+        recent_stmt = recent_stmt.where(col(AnalysisJob.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
     recent = list(session.exec(recent_stmt))
     avg_job_sec = None
     if recent:
@@ -285,6 +342,8 @@ def _analysis_stats(session: Session, upload_id: UUID | None = None) -> Pipeline
     )
     if upload_id:
         finished_stmt = finished_stmt.where(col(AnalysisJob.upload_id) == upload_id)
+    else:
+        finished_stmt = finished_stmt.where(col(AnalysisJob.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
     finished_in_window_analysis: int = session.exec(finished_stmt).one() or 0
 
     eta_seconds = None
@@ -312,7 +371,7 @@ def _analysis_stats(session: Session, upload_id: UUID | None = None) -> Pipeline
     )
 
 
-def _contact_fetch_stats(session: Session, upload_id: UUID | None = None) -> PipelineStageStats:
+def _contact_fetch_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
     base = select(
         func.count().label("total"),
         func.count(case((col(ContactFetchJob.state) == ContactFetchJobState.SUCCEEDED, 1))).label("completed"),
@@ -327,8 +386,11 @@ def _contact_fetch_stats(session: Session, upload_id: UUID | None = None) -> Pip
             1,
         ))).label("stuck_count"),
     ).select_from(ContactFetchJob)
+    base = base.join(Company, col(Company.id) == col(ContactFetchJob.company_id)).where(
+        col(Company.upload_id).in_(_campaign_upload_ids_subquery(campaign_id))
+    )
     if upload_id:
-        base = base.join(Company, col(Company.id) == col(ContactFetchJob.company_id)).where(col(Company.upload_id) == upload_id)
+        base = base.where(col(Company.upload_id) == upload_id)
     row = session.exec(base).one()
     total = row.total or 0
     completed = row.completed or 0
@@ -352,8 +414,33 @@ def _contact_fetch_stats(session: Session, upload_id: UUID | None = None) -> Pip
     )
 
 
-def _validation_stats(session: Session, upload_id: UUID | None = None) -> PipelineStageStats:
+def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
     base_stmt = select(ContactVerifyJob)
+    company_scope = select(Company.id).where(col(Company.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
+    if upload_id is not None:
+        company_scope = company_scope.where(col(Company.upload_id) == upload_id)
+    company_contact_ids = set(
+        str(contact_id)
+        for contact_id in session.exec(
+            select(ProspectContact.id)
+            .join(Company, col(Company.id) == col(ProspectContact.company_id))
+            .where(col(Company.id).in_(company_scope))
+        ).all()
+    )
+    if not company_contact_ids:
+        return PipelineStageStats(
+            total=0,
+            completed=0,
+            failed=0,
+            site_unavailable=0,
+            running=0,
+            queued=0,
+            stuck_count=0,
+            pct_done=0.0,
+            avg_job_sec=None,
+            eta_seconds=None,
+            eta_at=None,
+        )
     if upload_id is not None:
         company_contact_ids = set(
             str(contact_id)
@@ -363,20 +450,6 @@ def _validation_stats(session: Session, upload_id: UUID | None = None) -> Pipeli
                 .where(col(Company.upload_id) == upload_id)
             ).all()
         )
-        if not company_contact_ids:
-            return PipelineStageStats(
-                total=0,
-                completed=0,
-                failed=0,
-                site_unavailable=0,
-                running=0,
-                queued=0,
-                stuck_count=0,
-                pct_done=0.0,
-                avg_job_sec=None,
-                eta_seconds=None,
-                eta_at=None,
-            )
 
         matching_job_ids: list[UUID] = []
         for job in session.exec(base_stmt).all():
@@ -412,6 +485,25 @@ def _validation_stats(session: Session, upload_id: UUID | None = None) -> Pipeli
             ))).label("stuck_count"),
         ).select_from(ContactVerifyJob).where(col(ContactVerifyJob.id).in_(matching_job_ids))
     else:
+        matching_job_ids: list[UUID] = []
+        for job in session.exec(base_stmt).all():
+            contact_ids = job.contact_ids_json or []
+            if any(contact_id in company_contact_ids for contact_id in contact_ids):
+                matching_job_ids.append(job.id)
+        if not matching_job_ids:
+            return PipelineStageStats(
+                total=0,
+                completed=0,
+                failed=0,
+                site_unavailable=0,
+                running=0,
+                queued=0,
+                stuck_count=0,
+                pct_done=0.0,
+                avg_job_sec=None,
+                eta_seconds=None,
+                eta_at=None,
+            )
         stats_stmt = select(
             func.count().label("total"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("completed"),
@@ -425,7 +517,7 @@ def _validation_stats(session: Session, upload_id: UUID | None = None) -> Pipeli
                 & (col(ContactVerifyJob.lock_expires_at) < _utcnow()),
                 1,
             ))).label("stuck_count"),
-        ).select_from(ContactVerifyJob)
+        ).select_from(ContactVerifyJob).where(col(ContactVerifyJob.id).in_(matching_job_ids))
     row = session.exec(stats_stmt).one()
     total = row.total or 0
     completed = row.completed or 0
@@ -459,17 +551,63 @@ def _cost_totals() -> StageCostTotals:
     )
 
 
+def _stage_cost_key(stage: str) -> str | None:
+    if stage == "s1_scrape":
+        return "scrape"
+    if stage == "s2_analysis":
+        return "analysis"
+    if stage == "s3_contacts":
+        return "contact_fetch"
+    if stage == "s4_validation":
+        return "validation"
+    return None
+
+
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     upload_id: UUID | None = Query(default=None),
 ) -> StatsResponse:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
+    window_cutoff = _utcnow() - timedelta(days=30)
+    totals_stmt = (
+        select(
+            AiUsageEvent.stage,
+            func.coalesce(func.sum(AiUsageEvent.billed_cost_usd), 0.0).label("cost"),
+        )
+        .where(
+            col(AiUsageEvent.campaign_id) == campaign_id,
+            col(AiUsageEvent.created_at) >= window_cutoff,
+        )
+        .group_by(AiUsageEvent.stage)
+    )
+    if upload_id is not None:
+        scoped_company_ids = select(Company.id).where(col(Company.upload_id) == upload_id)
+        totals_stmt = totals_stmt.where(col(AiUsageEvent.company_id).in_(scoped_company_ids))
+    totals_map = {"scrape": 0.0, "analysis": 0.0, "contact_fetch": 0.0, "validation": 0.0}
+    for stage, cost in session.exec(totals_stmt).all():
+        stage_key = _stage_cost_key(stage)
+        if stage_key is not None:
+            totals_map[stage_key] += float(cost or 0.0)
     return StatsResponse(
-        scrape=_scrape_stats(session, upload_id=upload_id),
-        analysis=_analysis_stats(session, upload_id=upload_id),
-        contact_fetch=_contact_fetch_stats(session, upload_id=upload_id),
-        validation=_validation_stats(session, upload_id=upload_id),
-        costs={"currency": "USD", "window_days": 30, "totals": _cost_totals().model_dump(mode="json")},
+        scrape=_scrape_stats(session, campaign_id=campaign_id, upload_id=upload_id),
+        analysis=_analysis_stats(session, campaign_id=campaign_id, upload_id=upload_id),
+        contact_fetch=_contact_fetch_stats(session, campaign_id=campaign_id, upload_id=upload_id),
+        validation=_validation_stats(session, campaign_id=campaign_id, upload_id=upload_id),
+        costs={
+            "currency": "USD",
+            "window_days": 30,
+            "totals": StageCostTotals(
+                scrape=totals_map["scrape"],
+                analysis=totals_map["analysis"],
+                contact_fetch=totals_map["contact_fetch"],
+                validation=totals_map["validation"],
+                overall=totals_map["scrape"] + totals_map["analysis"] + totals_map["contact_fetch"] + totals_map["validation"],
+            ).model_dump(mode="json"),
+        },
         as_of=_utcnow(),
     )
 
@@ -477,37 +615,122 @@ def get_stats(
 @router.get("/stats/costs", response_model=CostStatsResponse)
 def get_cost_stats(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     window_days: int = Query(default=30, ge=1, le=365),
     upload_id: UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> CostStatsResponse:
+    if not isinstance(window_days, int):
+        window_days = getattr(window_days, "default", 30)
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
     window_cutoff = _utcnow() - timedelta(days=window_days)
-    statement = select(Company.id, Company.domain).order_by(col(Company.domain).asc())
-    statement = statement.where(col(Company.created_at) >= window_cutoff)
+    companies_stmt = (
+        select(Company.id, Company.domain)
+        .join(AiUsageEvent, col(AiUsageEvent.company_id) == col(Company.id))
+        .where(
+            col(AiUsageEvent.campaign_id) == campaign_id,
+            col(AiUsageEvent.created_at) >= window_cutoff,
+        )
+        .group_by(Company.id, Company.domain)
+        .order_by(col(Company.domain).asc())
+    )
     if upload_id:
-        statement = statement.where(col(Company.upload_id) == upload_id)
+        companies_stmt = companies_stmt.where(col(Company.upload_id) == upload_id)
 
-    rows = list(session.exec(statement.offset(offset).limit(limit + 1)))
+    rows = list(session.exec(companies_stmt.offset(offset).limit(limit + 1)))
     has_more = len(rows) > limit
     page_rows = rows[:limit]
-    total = session.exec(select(func.count()).select_from(statement.subquery())).one()
-    items = [
-        CostLineItem(
-            company_id=str(company_id),
-            domain=domain,
-            scrape=None,
-            analysis=None,
-            contact_fetch=None,
-            validation=None,
-            overall=None,
+    total = session.exec(select(func.count()).select_from(companies_stmt.subquery())).one()
+    page_company_ids = [company_id for company_id, _domain in page_rows]
+
+    page_stage_rows: list[tuple[UUID, str, float]] = []
+    if page_company_ids:
+        page_stage_rows = list(
+            session.exec(
+                select(
+                    AiUsageEvent.company_id,
+                    AiUsageEvent.stage,
+                    func.coalesce(func.sum(AiUsageEvent.billed_cost_usd), 0.0).label("cost"),
+                )
+                .where(
+                    col(AiUsageEvent.campaign_id) == campaign_id,
+                    col(AiUsageEvent.created_at) >= window_cutoff,
+                    col(AiUsageEvent.company_id).in_(page_company_ids),
+                )
+                .group_by(AiUsageEvent.company_id, AiUsageEvent.stage)
+            )
         )
-        for company_id, domain in page_rows
-    ]
+    by_company: dict[UUID, dict[str, float]] = {}
+    for company_id, stage, cost in page_stage_rows:
+        bucket = by_company.setdefault(company_id, {"scrape": 0.0, "analysis": 0.0, "contact_fetch": 0.0, "validation": 0.0})
+        stage_key = _stage_cost_key(stage)
+        if stage_key is not None:
+            bucket[stage_key] += float(cost or 0.0)
+
+    total_stage_rows = list(
+        session.exec(
+            (
+                select(
+                    AiUsageEvent.stage,
+                    func.coalesce(func.sum(AiUsageEvent.billed_cost_usd), 0.0).label("cost"),
+                )
+                .where(
+                    col(AiUsageEvent.campaign_id) == campaign_id,
+                    col(AiUsageEvent.created_at) >= window_cutoff,
+                )
+                .where(
+                    col(AiUsageEvent.company_id).in_(
+                        select(Company.id).where(col(Company.upload_id) == upload_id)
+                    )
+                )
+                .group_by(AiUsageEvent.stage)
+            )
+            if upload_id is not None
+            else select(
+                AiUsageEvent.stage,
+                func.coalesce(func.sum(AiUsageEvent.billed_cost_usd), 0.0).label("cost"),
+            )
+            .where(
+                col(AiUsageEvent.campaign_id) == campaign_id,
+                col(AiUsageEvent.created_at) >= window_cutoff,
+            )
+            .group_by(AiUsageEvent.stage)
+        )
+    )
+    totals = {"scrape": 0.0, "analysis": 0.0, "contact_fetch": 0.0, "validation": 0.0}
+    for stage, cost in total_stage_rows:
+        stage_key = _stage_cost_key(stage)
+        if stage_key is not None:
+            totals[stage_key] += float(cost or 0.0)
+
+    items: list[CostLineItem] = []
+    for company_id, domain in page_rows:
+        bucket = by_company.get(company_id, {"scrape": 0.0, "analysis": 0.0, "contact_fetch": 0.0, "validation": 0.0})
+        overall = bucket["scrape"] + bucket["analysis"] + bucket["contact_fetch"] + bucket["validation"]
+        items.append(
+            CostLineItem(
+                company_id=str(company_id),
+                domain=domain,
+                scrape=bucket["scrape"],
+                analysis=bucket["analysis"],
+                contact_fetch=bucket["contact_fetch"],
+                validation=bucket["validation"],
+                overall=overall,
+            )
+        )
     return CostStatsResponse(
         currency="USD",
         window_days=window_days,
-        totals=_cost_totals(),
+        totals=StageCostTotals(
+            scrape=totals["scrape"],
+            analysis=totals["analysis"],
+            contact_fetch=totals["contact_fetch"],
+            validation=totals["validation"],
+            overall=totals["scrape"] + totals["analysis"] + totals["contact_fetch"] + totals["validation"],
+        ),
         total=total or 0,
         has_more=has_more,
         limit=limit,

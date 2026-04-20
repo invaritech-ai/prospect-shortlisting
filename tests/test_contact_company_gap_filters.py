@@ -5,13 +5,15 @@ from uuid import uuid4
 
 from sqlmodel import Session
 
+from app.api.routes.campaigns import create_campaign
 from app.api.routes.contacts import list_contacts_by_company
+from app.api.schemas.campaign import CampaignCreate
 from app.models import Company, ContactFetchJob, ProspectContact, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 
 
-def _seed_company(session: Session, *, domain: str) -> Company:
-    upload = Upload(filename="contacts.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0)
+def _seed_company(session: Session, *, domain: str, campaign_id) -> Company:
+    upload = Upload(filename="contacts.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0, campaign_id=campaign_id)
     session.add(upload)
     session.flush()
     company = Company(
@@ -27,8 +29,9 @@ def _seed_company(session: Session, *, domain: str) -> Company:
 
 
 def test_contacts_company_gap_filter_and_counters(sqlite_session: Session) -> None:
-    company_a = _seed_company(sqlite_session, domain="no-match.example")
-    company_b = _seed_company(sqlite_session, domain="matched-no-email.example")
+    campaign = create_campaign(payload=CampaignCreate(name="Gap Filter Scope"), session=sqlite_session)
+    company_a = _seed_company(sqlite_session, domain="no-match.example", campaign_id=campaign.id)
+    company_b = _seed_company(sqlite_session, domain="matched-no-email.example", campaign_id=campaign.id)
 
     fetch_job_a = ContactFetchJob(company_id=company_a.id, provider="snov", state=ContactFetchJobState.SUCCEEDED)
     fetch_job_b = ContactFetchJob(company_id=company_b.id, provider="snov", state=ContactFetchJobState.SUCCEEDED)
@@ -63,6 +66,7 @@ def test_contacts_company_gap_filter_and_counters(sqlite_session: Session) -> No
     sqlite_session.commit()
 
     resp_no_match = list_contacts_by_company(
+        campaign_id=campaign.id,
         match_gap_filter="contacts_no_match",
         session=sqlite_session,
     )
@@ -75,6 +79,7 @@ def test_contacts_company_gap_filter_and_counters(sqlite_session: Session) -> No
     )
 
     resp_no_email = list_contacts_by_company(
+        campaign_id=campaign.id,
         match_gap_filter="matched_no_email",
         session=sqlite_session,
     )
@@ -84,7 +89,8 @@ def test_contacts_company_gap_filter_and_counters(sqlite_session: Session) -> No
 
 
 def test_contacts_company_last_attempt_is_null_when_missing_jobs(sqlite_session: Session) -> None:
-    company = _seed_company(sqlite_session, domain="no-jobs.example")
+    campaign = create_campaign(payload=CampaignCreate(name="No Jobs Scope"), session=sqlite_session)
+    company = _seed_company(sqlite_session, domain="no-jobs.example", campaign_id=campaign.id)
     sqlite_session.add(
         ProspectContact(
             company_id=company.id,
@@ -100,6 +106,6 @@ def test_contacts_company_last_attempt_is_null_when_missing_jobs(sqlite_session:
     )
     sqlite_session.commit()
 
-    resp = list_contacts_by_company(search="no-jobs.example", session=sqlite_session)
+    resp = list_contacts_by_company(campaign_id=campaign.id, search="no-jobs.example", session=sqlite_session)
     assert len(resp.items) == 1
     assert resp.items[0].last_contact_attempted_at is None

@@ -13,12 +13,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
 from app.core.logging import log_event
-from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule
+from app.models import Company, ContactFetchJob, ProspectContact, ProspectContactEmail, TitleMatchRule
 from app.models.pipeline import ContactFetchJobState
 from app.services.pipeline_service import recompute_contact_stages
 from app.services.pipeline_run_orchestrator import enqueue_s4_for_contact_success
@@ -296,6 +296,116 @@ def test_title_match_detailed(title: str, session: Session) -> dict:
     }
 
 
+def _normalize_email(email: str | None) -> str:
+    return (email or "").strip().lower()
+
+
+def _normalize_name(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _find_existing_contact(
+    *,
+    session: Session,
+    company_id: UUID,
+    contact_entry: dict[str, Any],
+) -> ProspectContact | None:
+    email_normalized = _normalize_email(contact_entry.get("email"))
+    if email_normalized:
+        existing_contact_by_email = session.exec(
+            select(ProspectContact)
+            .join(ProspectContactEmail, col(ProspectContactEmail.contact_id) == col(ProspectContact.id))
+            .where(
+                col(ProspectContact.company_id) == company_id,
+                col(ProspectContactEmail.email_normalized) == email_normalized,
+            )
+        ).first()
+        if existing_contact_by_email:
+            return existing_contact_by_email
+        existing_primary = session.exec(
+            select(ProspectContact).where(
+                col(ProspectContact.company_id) == company_id,
+                func.lower(func.trim(col(ProspectContact.email))) == email_normalized,
+            )
+        ).first()
+        if existing_primary:
+            return existing_primary
+
+    linkedin_url = (contact_entry.get("linkedin_url") or "").strip()
+    if linkedin_url:
+        existing_linkedin = session.exec(
+            select(ProspectContact).where(
+                col(ProspectContact.company_id) == company_id,
+                col(ProspectContact.linkedin_url) == linkedin_url,
+            )
+        ).first()
+        if existing_linkedin:
+            return existing_linkedin
+
+    first_name = _normalize_name(contact_entry.get("first_name"))
+    last_name = _normalize_name(contact_entry.get("last_name"))
+    title = _normalize_name(contact_entry.get("title"))
+    if first_name and last_name and title:
+        candidates = list(
+            session.exec(
+                select(ProspectContact).where(col(ProspectContact.company_id) == company_id)
+            )
+        )
+        for candidate in candidates:
+            if _normalize_name(candidate.first_name) != first_name:
+                continue
+            if _normalize_name(candidate.last_name) != last_name:
+                continue
+            candidate_title = _normalize_name(candidate.title)
+            if not candidate_title:
+                continue
+            if candidate_title != title:
+                continue
+            return candidate
+    return None
+
+
+def _upsert_contact_email(
+    *,
+    session: Session,
+    contact: ProspectContact,
+    email: str | None,
+    source: str,
+    provider_email_status: str | None,
+    set_primary_if_missing: bool = True,
+) -> None:
+    normalized = _normalize_email(email)
+    if not normalized:
+        return
+    existing = session.exec(
+        select(ProspectContactEmail).where(
+            col(ProspectContactEmail.contact_id) == contact.id,
+            col(ProspectContactEmail.email_normalized) == normalized,
+        )
+    ).first()
+    if existing:
+        existing.source = source
+        if provider_email_status:
+            existing.provider_email_status = provider_email_status
+        existing.updated_at = utcnow()
+        session.add(existing)
+    else:
+        session.add(
+            ProspectContactEmail(
+                contact_id=contact.id,
+                source=source,
+                email=normalized,
+                email_normalized=normalized,
+                provider_email_status=provider_email_status,
+                is_primary=bool(set_primary_if_missing and not (contact.email or "").strip()),
+            )
+        )
+    if set_primary_if_missing and not (contact.email or "").strip():
+        contact.email = normalized
+        contact.provider_email_status = provider_email_status
+        session.add(contact)
+
+
 def compute_title_rule_stats(session: Session) -> dict:
     """Compute per-rule contact match counts."""
     rules = list(session.exec(
@@ -354,6 +464,44 @@ def compute_title_rule_stats(session: Session) -> dict:
 # ── ContactService ────────────────────────────────────────────────────────────
 
 class ContactService:
+    def _dispatch_contact_task(self, *, provider: str, job_id: UUID) -> None:
+        from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo
+
+        if provider == "apollo":
+            fetch_contacts_apollo.delay(str(job_id))
+        else:
+            fetch_contacts.delay(str(job_id))
+
+    def _prepare_next_provider_if_needed(
+        self,
+        *,
+        session: Session,
+        job: ContactFetchJob,
+    ) -> tuple[bool, tuple[str, UUID] | None]:
+        next_provider = (job.next_provider or "").strip().lower()
+        if next_provider not in {"snov", "apollo"}:
+            return False, None
+        existing_active = session.exec(
+            select(ContactFetchJob.id).where(
+                col(ContactFetchJob.company_id) == job.company_id,
+                col(ContactFetchJob.provider) == next_provider,
+                col(ContactFetchJob.terminal_state).is_(False),
+            )
+        ).first()
+        if existing_active:
+            return True, None
+        followup = ContactFetchJob(
+            company_id=job.company_id,
+            pipeline_run_id=job.pipeline_run_id,
+            provider=next_provider,
+            next_provider=None,
+        )
+        session.add(followup)
+        session.flush()
+        if followup.id:
+            return True, (next_provider, followup.id)
+        return False, None
+
     def run_contact_fetch(self, *, engine: Any, job_id: UUID) -> ContactFetchJob | None:
         return self._run_contact_fetch(engine=engine, job_id=job_id, provider="snov")
 
@@ -629,38 +777,49 @@ class ContactService:
                 return None
 
             for c in contacts_to_write:
-                # Upsert: if same company+email exists, update it
-                existing: ProspectContact | None = None
-                if c["email"]:
-                    existing = session.exec(
-                        select(ProspectContact).where(
-                            col(ProspectContact.company_id) == company_id,
-                            col(ProspectContact.email) == c["email"],
-                        )
-                    ).first()
+                existing = _find_existing_contact(
+                    session=session,
+                    company_id=company_id,
+                    contact_entry=c,
+                )
 
                 if existing:
-                    if c.get("apollo_prospect_raw"):
-                        continue
                     existing.contact_fetch_job_id = job_id
-                    existing.first_name = c["first_name"]
-                    existing.last_name = c["last_name"]
-                    existing.title = c["title"]
+                    existing.first_name = c["first_name"] or existing.first_name
+                    existing.last_name = c["last_name"] or existing.last_name
+                    existing.title = c["title"] or existing.title
                     existing.title_match = c["title_match"]
-                    existing.linkedin_url = c["linkedin_url"]
-                    existing.provider_email_status = c["provider_email_status"]
-                    existing.snov_confidence = c["snov_confidence"]
+                    existing.linkedin_url = c["linkedin_url"] or existing.linkedin_url
+                    existing.source = existing.source or job_provider
+                    existing.provider_email_status = c["provider_email_status"] or existing.provider_email_status
+                    existing.snov_confidence = c["snov_confidence"] or existing.snov_confidence
                     if c["snov_prospect_raw"] is not None:
                         existing.snov_prospect_raw = c["snov_prospect_raw"]
                     if c.get("apollo_prospect_raw") is not None:
                         existing.apollo_prospect_raw = c.get("apollo_prospect_raw")
                     if c["snov_email_raw"] is not None:
                         existing.snov_email_raw = c["snov_email_raw"]
+                    if existing.email:
+                        _upsert_contact_email(
+                            session=session,
+                            contact=existing,
+                            email=existing.email,
+                            source=existing.source,
+                            provider_email_status=existing.provider_email_status,
+                            set_primary_if_missing=False,
+                        )
+                    _upsert_contact_email(
+                        session=session,
+                        contact=existing,
+                        email=c.get("email"),
+                        source=job_provider,
+                        provider_email_status=c.get("provider_email_status"),
+                    )
                     existing.updated_at = utcnow()
                     session.add(existing)
                     contacts_written += 1
                 else:
-                    session.add(ProspectContact(
+                    new_contact = ProspectContact(
                         company_id=company_id,
                         contact_fetch_job_id=job_id,
                         source=job_provider,
@@ -676,7 +835,16 @@ class ContactService:
                         snov_prospect_raw=c["snov_prospect_raw"],
                         apollo_prospect_raw=c.get("apollo_prospect_raw"),
                         snov_email_raw=c["snov_email_raw"],
-                    ))
+                    )
+                    session.add(new_contact)
+                    session.flush()
+                    _upsert_contact_email(
+                        session=session,
+                        contact=new_contact,
+                        email=c.get("email"),
+                        source=job_provider,
+                        provider_email_status=c.get("provider_email_status"),
+                    )
                     contacts_written += 1
 
             now_finish = utcnow()
@@ -688,11 +856,16 @@ class ContactService:
             job.updated_at = now_finish
             job.lock_token = None
             job.lock_expires_at = None
+            has_followup, followup_task = self._prepare_next_provider_if_needed(session=session, job=job)
             session.add(job)
             recompute_contact_stages(session, company_ids=[company_id])
             session.commit()
             session.refresh(job)
-            enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
+            if followup_task is not None:
+                provider_name, followup_job_id = followup_task
+                self._dispatch_contact_task(provider=provider_name, job_id=followup_job_id)
+            if not has_followup:
+                enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
             return job
 
     def _complete_job(
@@ -717,10 +890,15 @@ class ContactService:
             job.updated_at = now
             job.lock_token = None
             job.lock_expires_at = None
+            has_followup, followup_task = self._prepare_next_provider_if_needed(session=session, job=job)
             session.add(job)
             session.commit()
             session.refresh(job)
-            enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
+            if followup_task is not None:
+                provider_name, followup_job_id = followup_task
+                self._dispatch_contact_task(provider=provider_name, job_id=followup_job_id)
+            if not has_followup:
+                enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
             return job
 
     def _fail_job(
@@ -761,7 +939,22 @@ class ContactService:
             job.last_error_code = error_code
             job.last_error_message = error_message
             job.updated_at = utcnow()
+            has_followup = False
+            followup_task: tuple[str, UUID] | None = None
+            if job.terminal_state:
+                has_followup, followup_task = self._prepare_next_provider_if_needed(session=session, job=job)
             session.add(job)
             session.commit()
             session.refresh(job)
+            if followup_task is not None:
+                provider_name, followup_job_id = followup_task
+                self._dispatch_contact_task(provider=provider_name, job_id=followup_job_id)
+            if has_followup:
+                log_event(
+                    logger,
+                    "contact_fetch_followup_enqueued_after_failure",
+                    job_id=str(job.id),
+                    provider=job.provider,
+                    next_provider=job.next_provider,
+                )
             return job

@@ -10,8 +10,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from app.core.config import settings
 from app.core.logging import log_event
+from app.services import credentials_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,15 @@ class ApolloClient:
         min_interval_sec: float = 0.6,
         default_timeout: int = 30,
     ) -> None:
-        self._api_key = (settings.apollo_api_key or "").strip()
+        self._api_key = ""
         self._max_retries = max_retries
         self._min_interval = min_interval_sec
         self._default_timeout = default_timeout
         self._last_call_at: float = 0.0
         self.last_error_code: str = ""
+
+    def _resolved_api_key(self) -> str:
+        return credentials_resolver.resolve("apollo", "api_key") or (self._api_key or "").strip()
 
     def _throttle(self) -> None:
         gap = time.monotonic() - self._last_call_at
@@ -108,6 +111,7 @@ class ApolloClient:
         timeout: int | None = None,
     ) -> tuple[dict, str]:
         self._throttle()
+        api_key = self._resolved_api_key()
         url = f"{_APOLLO_BASE}{path}"
         if query_params:
             query = urlencode(query_params, doseq=True)
@@ -121,7 +125,7 @@ class ApolloClient:
                 "Content-Type": "application/json",
                 "Cache-Control": "no-cache",
                 "Accept": "application/json",
-                "X-Api-Key": self._api_key,
+                "X-Api-Key": api_key,
             },
         )
         return self._do_request(req, timeout or self._default_timeout)
@@ -150,7 +154,7 @@ class ApolloClient:
         If person_titles is provided, Apollo pre-filters by job title,
         reducing results to relevant contacts and saving API credits.
         """
-        if not self._api_key:
+        if not self._resolved_api_key():
             self.last_error_code = ERR_APOLLO_CREDENTIALS_MISSING
             return []
 
@@ -170,7 +174,7 @@ class ApolloClient:
 
     def reveal_email(self, person_id: str) -> dict | None:
         """Enrich a single person record to reveal an email address."""
-        if not self._api_key:
+        if not self._resolved_api_key():
             self.last_error_code = ERR_APOLLO_CREDENTIALS_MISSING
             return None
 

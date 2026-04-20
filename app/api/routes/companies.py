@@ -170,6 +170,23 @@ def _apply_stage_filter(stmt, normalized_stage_filter: str):
     return stmt.where(col(Company.pipeline_stage) == normalized_stage_filter)
 
 
+def _validate_campaign_upload_scope(
+    *,
+    session: Session,
+    campaign_id: UUID,
+    upload_id: UUID | None,
+) -> None:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    if upload_id is None:
+        return
+    upload = session.get(Upload, upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="upload_id is not assigned to the selected campaign.")
+
+
 # ---------------------------------------------------------------------------
 # Feedback
 # ---------------------------------------------------------------------------
@@ -226,6 +243,7 @@ _COMPANY_SORT_FIELDS = frozenset(
 @router.get("/companies", response_model=CompanyList)
 def list_companies(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     decision_filter: str = Query(default="all"),
@@ -254,6 +272,7 @@ def list_companies(
         sort_dir = getattr(sort_dir, "default", "asc")
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
     letter_values: list[str] = []
     if letters:
@@ -314,6 +333,7 @@ def list_companies(
         .outerjoin(contact_counts, contact_counts.c.company_id == Company.id)
         .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
     )
+    statement = statement.where(col(Upload.campaign_id) == campaign_id)
     if upload_id is not None:
         statement = statement.where(col(Company.upload_id) == upload_id)
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
@@ -353,10 +373,12 @@ def list_companies(
         total_stmt = (
             select(func.count())
             .select_from(Company)
+            .join(Upload, Upload.id == Company.upload_id)
             .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
             .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
             .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         )
+        total_stmt = total_stmt.where(col(Upload.campaign_id) == campaign_id)
         if upload_id is not None:
             total_stmt = total_stmt.where(col(Company.upload_id) == upload_id)
         total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
@@ -401,6 +423,7 @@ def list_companies(
 @router.get("/companies/ids", response_model=CompanyIdsResult)
 def list_company_ids(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     letter: str | None = Query(default=None, min_length=1, max_length=1),
@@ -408,6 +431,12 @@ def list_company_ids(
     stage_filter: str = Query(default="all"),
     upload_id: UUID | None = Query(default=None),
 ) -> CompanyIdsResult:
+    if not isinstance(letter, str):
+        letter = getattr(letter, "default", None)
+    if not isinstance(letters, str):
+        letters = getattr(letters, "default", None)
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
     letter_values: list[str] = []
     if letters:
         letter_values = sorted({part.strip().lower() for part in letters.split(",") if part.strip()})
@@ -419,16 +448,19 @@ def list_company_ids(
     latest_decision_text = latest_classification.c.predicted_label
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
     normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
         decision_filter, scrape_filter, stage_filter
     )
     statement = (
         select(Company.id)
+        .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
+    statement = statement.where(col(Upload.campaign_id) == campaign_id)
     if upload_id is not None:
         statement = statement.where(col(Company.upload_id) == upload_id)
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
@@ -446,16 +478,20 @@ def list_company_ids(
 @router.get("/companies/letter-counts", response_model=LetterCounts)
 def get_letter_counts(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     stage_filter: str = Query(default="all"),
     upload_id: UUID | None = Query(default=None),
 ) -> LetterCounts:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
     normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
         decision_filter, scrape_filter, stage_filter
@@ -464,12 +500,14 @@ def get_letter_counts(
     stmt = (
         select(letter_expr.label("letter"), func.count().label("cnt"))
         .select_from(Company)
+        .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         .where(letter_expr.between("a", "z"))
         .group_by(letter_expr)
     )
+    stmt = stmt.where(col(Upload.campaign_id) == campaign_id)
     if upload_id is not None:
         stmt = stmt.where(col(Company.upload_id) == upload_id)
     stmt = _apply_decision_filter(stmt, decision_lower, normalized_filter)
@@ -487,10 +525,12 @@ def get_letter_counts(
 @router.get("/companies/counts", response_model=CompanyCounts)
 def get_company_counts(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     upload_id: UUID | None = Query(default=None),
 ) -> CompanyCounts:
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_classification.c.predicted_label)
@@ -509,20 +549,27 @@ def get_company_counts(
             func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("not_scraped"),
         )
         .select_from(Company)
+        .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
+    counts_stmt = counts_stmt.where(col(Upload.campaign_id) == campaign_id)
     if upload_id is not None:
         counts_stmt = counts_stmt.where(col(Company.upload_id) == upload_id)
     row = session.exec(counts_stmt).one()
 
-    stage_stmt = select(
+    stage_stmt = (
+        select(
         func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.UPLOADED, 1), else_=0)).label("uploaded"),
         func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED, 1), else_=0)).label("scraped"),
         func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.CLASSIFIED, 1), else_=0)).label("classified"),
         func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.CONTACT_READY, 1), else_=0)).label("contact_ready"),
-    ).select_from(Company)
+    )
+        .select_from(Company)
+        .join(Upload, Upload.id == Company.upload_id)
+        .where(col(Upload.campaign_id) == campaign_id)
+    )
     if upload_id is not None:
         stage_stmt = stage_stmt.where(col(Company.upload_id) == upload_id)
     stage_row = session.exec(stage_stmt).one()
@@ -548,11 +595,18 @@ def get_company_counts(
 # ---------------------------------------------------------------------------
 
 @router.get("/companies/export.csv")
-def export_companies_csv(session: Session = Depends(get_session)) -> Response:
+def export_companies_csv(
+    campaign_id: UUID = Query(...),
+    upload_id: UUID | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> Response:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
     latest_classification = _latest_classification_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
-    rows = session.exec(
+    rows_stmt = (
         select(
             Company.raw_url,
             func.coalesce(effective_decision, "Unknown"),
@@ -560,13 +614,17 @@ def export_companies_csv(session: Session = Depends(get_session)) -> Response:
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
+        .where(col(Upload.campaign_id) == campaign_id)
         .order_by(
             col(Upload.created_at).asc(),
             case((col(Company.source_row_number).is_(None), 1), else_=0).asc(),
             col(Company.source_row_number).asc(),
             col(Company.created_at).asc(),
         )
-    ).all()
+    )
+    if upload_id is not None:
+        rows_stmt = rows_stmt.where(col(Company.upload_id) == upload_id)
+    rows = session.exec(rows_stmt).all()
 
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")

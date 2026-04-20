@@ -1,24 +1,34 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { TitleMatchRuleRead, TitleRuleStatsResponse, TitleTestResult } from '../../lib/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { TitleMatchRuleRead, TitleRuleImpactPreview, TitleRuleStatsResponse, TitleTestResult } from '../../lib/types'
 import {
   createTitleMatchRule,
   deleteTitleMatchRule,
   getTitleRuleStats,
   listTitleMatchRules,
+  previewTitleRuleImpact,
+  queueTitleRuleImpactFetch,
   seedTitleMatchRules,
   testTitleMatch,
 } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 
 interface TitleRulesPanelProps {
+  campaignId: string | null
   isOpen: boolean
   onClose: () => void
 }
 
-export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
+export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanelProps) {
   const [rules, setRules] = useState<TitleMatchRuleRead[]>([])
   const [stats, setStats] = useState<TitleRuleStatsResponse | null>(null)
+  const [impactPreview, setImpactPreview] = useState<TitleRuleImpactPreview | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isQueueingImpactFetch, setIsQueueingImpactFetch] = useState(false)
+  const [impactSource, setImpactSource] = useState<'snov' | 'apollo' | 'both'>('snov')
+  const [includeStaleImpact, setIncludeStaleImpact] = useState(false)
+  const [useProviderDefaultStaleDays, setUseProviderDefaultStaleDays] = useState(true)
+  const [staleDays, setStaleDays] = useState(30)
+  const [forceRefreshImpact, setForceRefreshImpact] = useState(false)
 
   const [testTitleValue, setTestTitleValue] = useState('')
   const [testResult, setTestResult] = useState<TitleTestResult | null>(null)
@@ -28,8 +38,65 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
   const [newMatchType, setNewMatchType] = useState<'keyword' | 'regex' | 'seniority'>('keyword')
   const [newKeywords, setNewKeywords] = useState('')
   const [isAdding, setIsAdding] = useState(false)
+  const [impactNotice, setImpactNotice] = useState('')
   const [deletingIds, setDeletingIds] = useState(new Set<string>())
   const [error, setError] = useState('')
+  const impactRequestRef = useRef(0)
+  const impactSourceRef = useRef(impactSource)
+  const includeStaleRef = useRef(includeStaleImpact)
+  const useProviderDefaultsRef = useRef(useProviderDefaultStaleDays)
+  const staleDaysRef = useRef(staleDays)
+  const forceRefreshRef = useRef(forceRefreshImpact)
+
+  useEffect(() => {
+    impactSourceRef.current = impactSource
+  }, [impactSource])
+
+  useEffect(() => {
+    includeStaleRef.current = includeStaleImpact
+  }, [includeStaleImpact])
+
+  useEffect(() => {
+    useProviderDefaultsRef.current = useProviderDefaultStaleDays
+  }, [useProviderDefaultStaleDays])
+
+  useEffect(() => {
+    staleDaysRef.current = staleDays
+  }, [staleDays])
+
+  useEffect(() => {
+    forceRefreshRef.current = forceRefreshImpact
+  }, [forceRefreshImpact])
+
+  const loadImpactPreview = useCallback(async () => {
+    if (!campaignId) {
+      impactRequestRef.current += 1
+      setImpactPreview(null)
+      return
+    }
+    const activeSource = impactSourceRef.current
+    const activeIncludeStale = includeStaleRef.current
+    const activeUseProviderDefaults = useProviderDefaultsRef.current
+    const activeStaleDays = staleDaysRef.current
+    const activeForceRefresh = forceRefreshRef.current
+    const reqId = impactRequestRef.current + 1
+    impactRequestRef.current = reqId
+    try {
+      const preview = await previewTitleRuleImpact(campaignId, {
+        source: activeSource,
+        includeStale: activeIncludeStale,
+        ...(activeIncludeStale && !activeUseProviderDefaults ? { staleDays: activeStaleDays } : {}),
+        forceRefresh: activeForceRefresh,
+      })
+      if (impactRequestRef.current === reqId) {
+        setImpactPreview(preview)
+      }
+    } catch {
+      if (impactRequestRef.current === reqId) {
+        setImpactPreview(null)
+      }
+    }
+  }, [campaignId])
 
   const loadAll = useCallback(async () => {
     setIsLoading(true)
@@ -49,6 +116,19 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
     if (isOpen) void loadAll()
   }, [isOpen, loadAll])
 
+  useEffect(() => {
+    if (!isOpen) return
+    void loadImpactPreview()
+  }, [isOpen, campaignId, impactSource, includeStaleImpact, useProviderDefaultStaleDays, staleDays, forceRefreshImpact, loadImpactPreview])
+
+  useEffect(() => {
+    setImpactNotice('')
+    if (!isOpen) {
+      impactRequestRef.current += 1
+      setImpactPreview(null)
+    }
+  }, [campaignId, isOpen])
+
   const onTest = async () => {
     if (!testTitleValue.trim()) return
     setIsTesting(true)
@@ -66,10 +146,12 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
     if (!newKeywords.trim()) return
     setIsAdding(true)
     setError('')
+    setImpactNotice('')
     try {
       await createTitleMatchRule({ rule_type: newRuleType, keywords: newKeywords.trim(), match_type: newMatchType })
       setNewKeywords('')
       await loadAll()
+      await loadImpactPreview()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to add rule')
     } finally {
@@ -79,9 +161,11 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
 
   const onDeleteRule = async (ruleId: string) => {
     setDeletingIds((p) => new Set([...p, ruleId]))
+    setImpactNotice('')
     try {
       await deleteTitleMatchRule(ruleId)
       await loadAll()
+      await loadImpactPreview()
     } catch {
       setError('Failed to delete')
     } finally {
@@ -93,8 +177,45 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
     }
   }
 
+  const onQueueImpactFetch = async () => {
+    if (!campaignId) {
+      setError('Select a campaign to queue impacted contact fetches.')
+      return
+    }
+    setIsQueueingImpactFetch(true)
+    setError('')
+    setImpactNotice('')
+    try {
+      const result = await queueTitleRuleImpactFetch(campaignId, impactSource, {
+        includeStale: includeStaleImpact,
+        ...(includeStaleImpact && !useProviderDefaultStaleDays ? { staleDays } : {}),
+        forceRefresh: forceRefreshImpact,
+      })
+      await loadImpactPreview()
+      setImpactNotice(
+        result.queued_count > 0
+          ? `Queued ${result.queued_count.toLocaleString()} impacted company fetch jobs.`
+          : 'No impacted companies needed new fetch jobs.',
+      )
+    } catch {
+      setError('Failed to queue impacted fetch jobs')
+    } finally {
+      setIsQueueingImpactFetch(false)
+    }
+  }
+
   const getMatchCount = (ruleId: string) =>
     stats?.rules.find((s) => s.rule_id === ruleId)?.contact_match_count ?? null
+  const onSeedRules = async () => {
+    try {
+      await seedTitleMatchRules()
+      await loadAll()
+      await loadImpactPreview()
+    } catch {
+      setError('Failed to seed rules')
+    }
+  }
+
 
   const includeRules = rules.filter((r) => r.rule_type === 'include')
   const excludeRules = rules.filter((r) => r.rule_type === 'exclude')
@@ -111,6 +232,104 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
               of {stats.total_contacts.toLocaleString()} contacts match current rules
             </span>
           </div>
+        )}
+
+        {impactPreview && (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-800">
+            <p className="font-semibold">
+              Impact preview: {impactPreview.affected_company_count.toLocaleString()} companies and{' '}
+              {impactPreview.affected_contact_count.toLocaleString()} matched contacts
+              {forceRefreshImpact
+                ? ' will be refreshed explicitly.'
+                : includeStaleImpact
+                  ? ' need refresh or email completion.'
+                  : ' are missing email.'}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
+              <label className="flex items-center gap-1.5">
+                source
+                <select
+                  value={impactSource}
+                  onChange={(e) => setImpactSource(e.target.value as 'snov' | 'apollo' | 'both')}
+                  className="rounded border border-sky-300 bg-white px-1.5 py-0.5 text-[11px]"
+                >
+                  <option value="snov">Snov</option>
+                  <option value="apollo">Apollo</option>
+                  <option value="both">Both</option>
+                </select>
+              </label>
+              {impactSource === 'both' && (
+                <span className="rounded border border-sky-300 bg-white px-2 py-0.5 text-[11px] font-medium text-sky-800">
+                  Both runs sequentially: Snov first, Apollo follow-up per company.
+                </span>
+              )}
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={includeStaleImpact}
+                  onChange={(e) => setIncludeStaleImpact(e.target.checked)}
+                />
+                Include stale contacts
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={useProviderDefaultStaleDays}
+                  onChange={(e) => setUseProviderDefaultStaleDays(e.target.checked)}
+                  disabled={!includeStaleImpact}
+                />
+                Use provider default stale days
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={forceRefreshImpact}
+                  onChange={(e) => setForceRefreshImpact(e.target.checked)}
+                />
+                Force refresh matched contacts
+              </label>
+              <label className="flex items-center gap-1.5">
+                stale after
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={staleDays}
+                  onChange={(e) => setStaleDays(Math.max(1, Math.min(365, Number(e.target.value) || 30)))}
+                  className="w-16 rounded border border-sky-300 bg-white px-1.5 py-0.5 text-[11px]"
+                  disabled={!includeStaleImpact || useProviderDefaultStaleDays}
+                />
+                days
+              </label>
+              {includeStaleImpact && (
+                <span className="text-sky-700">
+                  stale contacts included: {impactPreview.stale_contact_count.toLocaleString()}
+                </span>
+              )}
+              {includeStaleImpact && useProviderDefaultStaleDays && impactPreview.provider_default_days && (
+                <span className="text-sky-700">
+                  defaults: snov {impactPreview.provider_default_days.snov ?? 30}d, apollo {impactPreview.provider_default_days.apollo ?? 45}d
+                </span>
+              )}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void onQueueImpactFetch()}
+                disabled={isQueueingImpactFetch || impactPreview.affected_company_count === 0 || !campaignId}
+                className="rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-bold text-white transition hover:bg-sky-700 disabled:opacity-50"
+              >
+                {isQueueingImpactFetch ? 'Queueing…' : 'Queue fetch for impacted companies'}
+              </button>
+              {!campaignId && <span className="text-[11px] text-sky-700">Select a campaign to queue jobs.</span>}
+            </div>
+          </div>
+        )}
+
+        {impactNotice && (
+          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            {impactNotice}
+          </p>
         )}
 
         {/* Test a title */}
@@ -318,7 +537,7 @@ export function TitleRulesPanel({ isOpen, onClose }: TitleRulesPanelProps) {
 
         <button
           type="button"
-          onClick={() => void seedTitleMatchRules().then(() => loadAll())}
+          onClick={() => void onSeedRules()}
           className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800"
         >
           Seed default rules

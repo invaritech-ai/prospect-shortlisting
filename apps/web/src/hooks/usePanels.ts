@@ -81,6 +81,7 @@ export interface UsePanelsResult {
 export function usePanels(
   setError: (e: string) => void,
   setNotice: (n: string) => void,
+  selectedCampaignId: string | null,
   onFeedbackSaved?: () => void,
 ): UsePanelsResult {
   // ── Markdown preview ──────────────────────────────────────────────────────
@@ -203,10 +204,17 @@ export function usePanels(
     setCompanyContactGapFilter('all')
     setCompanyContactsError('')
     setIsCompanyContactsLoading(true)
+    if (!selectedCampaignId) {
+      setCompanyContactsError('Select a campaign first.')
+      setIsCompanyContactsLoading(false)
+      return
+    }
     try {
       const [response, summaryResponse] = await Promise.all([
-        listCompanyContacts(company.id, company.contact_count > 0 ? { limit: company.contact_count } : {}),
-        listContactCompanies({ search: company.domain, limit: 200, offset: 0, matchGapFilter: 'all' }),
+        listCompanyContacts(selectedCampaignId, company.id, company.contact_count > 0 ? { limit: company.contact_count } : {}),
+        selectedCampaignId
+          ? listContactCompanies({ campaignId: selectedCampaignId, search: company.domain, limit: 200, offset: 0, matchGapFilter: 'all' })
+          : Promise.resolve({ total: 0, has_more: false, limit: 200, offset: 0, items: [] }),
       ])
       if (companyContactsRequestRef.current !== requestId) return
       setCompanyContacts(response.items)
@@ -219,7 +227,7 @@ export function usePanels(
     } finally {
       if (companyContactsRequestRef.current === requestId) setIsCompanyContactsLoading(false)
     }
-  }, [])
+  }, [selectedCampaignId])
 
   const closeCompanyContacts = useCallback(() => {
     companyContactsRequestRef.current += 1

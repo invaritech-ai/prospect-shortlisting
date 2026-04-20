@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     snov_client_secret: str = ""
     apollo_api_key: str = ""
     zerobounce_api_key: str = ""
+    # Master key used by the settings secret store to encrypt/decrypt
+    # integration credentials stored in the `integration_secrets` table.
+    # Must be a valid urlsafe base64-encoded 32-byte Fernet key. If absent,
+    # the DB-backed settings are disabled and env fallback is used.
+    settings_encryption_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

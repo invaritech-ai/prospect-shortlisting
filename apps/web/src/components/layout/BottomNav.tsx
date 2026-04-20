@@ -1,6 +1,18 @@
 import { useState } from 'react'
 import type { ActiveView } from '../../lib/navigation'
-import { IconBuilding, IconGlobe, IconChart, IconPulse, IconPencil, IconDots, IconUsers } from '../ui/icons'
+import {
+  IconBuilding,
+  IconGlobe,
+  IconChart,
+  IconPulse,
+  IconPencil,
+  IconDots,
+  IconCog,
+  IconUsers,
+  IconTimeline,
+  IconSliders,
+  IconCheck,
+} from '../ui/icons'
 
 interface BottomNavProps {
   activeView: ActiveView
@@ -16,16 +28,22 @@ const NAV_ITEMS = [
 
 export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: BottomNavProps) {
   const [moreOpen, setMoreOpen] = useState(false)
-  const moreActive = activeView === 'campaigns' || activeView === 's3-contacts' || activeView === 's4-validation'
+  const moreActive =
+    activeView === 'campaigns'
+    || activeView === 'operations'
+    || activeView === 'settings'
+    || activeView === 'full-pipeline'
+    || activeView === 's3-contacts'
+    || activeView === 's4-validation'
 
   return (
     <>
       {moreOpen && (
-        <div className="fixed inset-0 z-[var(--z-overlay)] md:hidden" onClick={() => setMoreOpen(false)} aria-hidden="true" />
+        <div className="fixed inset-0 z-(--z-overlay) md:hidden" onClick={() => setMoreOpen(false)} aria-hidden="true" />
       )}
 
       {moreOpen && (
-        <div className="fixed bottom-[calc(var(--oc-bottom-nav-h)+10px)] right-3 z-[var(--z-drawer)] w-60 rounded-2xl border border-(--oc-border) bg-(--oc-surface-strong) p-2 shadow-[0_10px_30px_rgba(7,21,31,0.2)] md:hidden">
+        <div className="fixed bottom-[calc(var(--oc-bottom-nav-h)+10px)] right-3 z-(--z-drawer) w-60 rounded-2xl border border-(--oc-border) bg-(--oc-surface-strong) p-2 shadow-[0_10px_30px_rgba(7,21,31,0.2)] md:hidden">
           <button
             type="button"
             onClick={() => {
@@ -41,6 +59,54 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
           >
             <IconBuilding size={16} />
             Campaigns
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('operations')
+              setMoreOpen(false)
+            }}
+            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+              activeView === 'operations'
+                ? 'font-bold'
+                : 'text-(--oc-muted) hover:bg-(--oc-surface)'
+            }`}
+            style={activeView === 'operations' ? { backgroundColor: 'var(--oc-accent-soft)', color: 'var(--oc-accent-ink)' } : {}}
+          >
+            <IconTimeline size={16} />
+            Operations
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('settings')
+              setMoreOpen(false)
+            }}
+            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+              activeView === 'settings'
+                ? 'font-bold'
+                : 'text-(--oc-muted) hover:bg-(--oc-surface)'
+            }`}
+            style={activeView === 'settings' ? { backgroundColor: 'var(--oc-accent-soft)', color: 'var(--oc-accent-ink)' } : {}}
+          >
+            <IconCog size={16} />
+            Settings
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('full-pipeline')
+              setMoreOpen(false)
+            }}
+            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+              activeView === 'full-pipeline'
+                ? 'font-bold'
+                : 'text-(--oc-muted) hover:bg-(--oc-surface)'
+            }`}
+            style={activeView === 'full-pipeline' ? { backgroundColor: 'var(--oc-accent-soft)', color: 'var(--oc-accent-ink)' } : {}}
+          >
+            <IconSliders size={16} />
+            Full Pipeline
           </button>
           <button
             type="button"
@@ -71,7 +137,7 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
             }`}
             style={activeView === 's4-validation' ? { backgroundColor: 'var(--s4)22', color: 'var(--s4)' } : {}}
           >
-            <IconBuilding size={16} />
+            <IconCheck size={16} />
             S4 · Validation
           </button>
           <button
@@ -90,7 +156,7 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
 
       <nav
         className="
-          md:hidden fixed bottom-0 inset-x-0 z-[var(--z-toolbar)]
+          fixed bottom-0 inset-x-0 z-(--z-toolbar) md:hidden
           flex items-stretch border-t border-(--oc-border)
           bg-(--oc-surface-strong) backdrop-blur-sm
         "

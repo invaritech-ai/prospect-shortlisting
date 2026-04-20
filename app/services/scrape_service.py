@@ -19,6 +19,7 @@ from sqlalchemy import update as sa_update
 from app.models import AnalysisJob, ClassificationResult, Company, ScrapeJob, ScrapePage
 from app.services.fetch_service import (
     FetchResult,  # re-exported for backwards compat
+    _recover_https_tls_error,
     _static_fetch,
     fetch_with_fallback,
     is_parked_domain,
@@ -316,7 +317,10 @@ class ScrapeService:
             if static_result.selector is not None:
                 static_results[canonical] = static_result
                 logger.info("scrape_static_hit kind=%s url=%s", kind, canonical)
-            elif static_result.error_code in ("dns_not_resolved", "tls_error"):
+            elif static_result.error_code == "tls_error":
+                recovered = await _recover_https_tls_error(canonical)
+                static_results[canonical] = recovered or static_result
+            elif static_result.error_code == "dns_not_resolved":
                 # Permanent error — don't bother with stealth
                 static_results[canonical] = static_result
             else:

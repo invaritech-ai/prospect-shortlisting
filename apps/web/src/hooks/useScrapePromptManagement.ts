@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
-import type { ScrapePromptRead } from '../lib/types'
+import type { ScrapePageKind, ScrapePromptRead } from '../lib/types'
 import {
+  ApiError,
   activateScrapePrompt,
   createScrapePrompt,
   deleteScrapePrompt,
@@ -10,6 +11,28 @@ import {
 import { parseApiError } from '../lib/utils'
 
 const SCRAPE_PROMPT_SELECTION_KEY = 'ps:selected-scrape-prompt-id'
+const COMPAT_DEFAULT_SCRAPE_PROMPT_ID = 'compat-default-scrape-prompt'
+
+function buildCompatDefaultScrapePrompt(): ScrapePromptRead {
+  const now = new Date().toISOString()
+  const pageKinds: ScrapePageKind[] = ['about', 'products', 'contact', 'team', 'leadership', 'services', 'pricing']
+  const compiledPromptText = ['Find the best URL for each of these page types:', ...pageKinds.map((kind) => `- ${kind}`)].join('\n')
+  return {
+    id: COMPAT_DEFAULT_SCRAPE_PROMPT_ID,
+    name: 'Default scrape prompt',
+    enabled: true,
+    is_system_default: true,
+    is_active: true,
+    intent_text: 'Find the best URL for each of these page types: about, products, contact, team, leadership, services, pricing.',
+    compiled_prompt_text: compiledPromptText,
+    scrape_rules_structured: {
+      page_kinds: pageKinds,
+      classifier_prompt_text: compiledPromptText,
+    },
+    created_at: now,
+    updated_at: now,
+  }
+}
 
 export interface UseScrapePromptManagementResult {
   scrapePrompts: ScrapePromptRead[]
@@ -24,6 +47,7 @@ export interface UseScrapePromptManagementResult {
   isScrapePromptsLoading: boolean
   isScrapePromptSaving: boolean
   isScrapePromptDeleting: boolean
+  isScrapePromptApiUnavailable: boolean
   scrapePromptError: string
   scrapePromptSheetOpen: boolean
   setScrapePromptName: (v: string) => void
@@ -48,6 +72,8 @@ export function useScrapePromptManagement(
 ): UseScrapePromptManagementResult {
   const editingPromptIdRef = useRef<string | null>(null)
   const selectedPromptIdRef = useRef('')
+  const scrapePromptApiUnavailableRef = useRef(false)
+  const scrapePromptApiUnavailableNotifiedRef = useRef(false)
 
   const [scrapePrompts, setScrapePrompts] = useState<ScrapePromptRead[]>([])
   const [selectedScrapePromptIdState, setSelectedScrapePromptIdState] = useState('')
@@ -59,6 +85,7 @@ export function useScrapePromptManagement(
   const [isScrapePromptsLoading, setIsScrapePromptsLoading] = useState(false)
   const [isScrapePromptSaving, setIsScrapePromptSaving] = useState(false)
   const [isScrapePromptDeleting, setIsScrapePromptDeleting] = useState(false)
+  const [isScrapePromptApiUnavailable, setIsScrapePromptApiUnavailable] = useState(false)
   const [scrapePromptError, setScrapePromptError] = useState('')
   const [scrapePromptSheetOpen, setScrapePromptSheetOpen] = useState(false)
 
@@ -72,54 +99,86 @@ export function useScrapePromptManagement(
     setEditingScrapePromptIdState(v)
   }, [])
 
+  const applyPromptRows = useCallback(
+    (rows: ScrapePromptRead[], preferredId?: string, preserveEditor = false) => {
+      setScrapePrompts(rows)
+      setScrapePromptError('')
+
+      const active = rows.find((p) => p.is_active) ?? null
+      const stored = window.localStorage.getItem(SCRAPE_PROMPT_SELECTION_KEY) ?? ''
+      const preferredSelection =
+        (preferredId && rows.find((p) => p.id === preferredId)?.id) ||
+        (selectedPromptIdRef.current && rows.find((p) => p.id === selectedPromptIdRef.current)?.id) ||
+        rows.find((p) => p.id === stored)?.id ||
+        active?.id ||
+        rows[0]?.id ||
+        ''
+      setSelectedScrapePromptId(preferredSelection)
+      setActiveScrapePromptId(active?.id ?? '')
+
+      if (preferredSelection) window.localStorage.setItem(SCRAPE_PROMPT_SELECTION_KEY, preferredSelection)
+      else window.localStorage.removeItem(SCRAPE_PROMPT_SELECTION_KEY)
+
+      const preservedEditor =
+        preserveEditor && editingPromptIdRef.current
+          ? rows.find((p) => p.id === editingPromptIdRef.current) ?? null
+          : null
+      const forEditor =
+        preservedEditor ??
+        rows.find((p) => p.id === (preferredId || preferredSelection)) ??
+        rows[0] ??
+        null
+
+      if (forEditor) {
+        setEditingScrapePromptId(forEditor.id)
+        setScrapePromptName(forEditor.name)
+        setScrapePromptIntentText(forEditor.intent_text ?? '')
+        setScrapePromptEnabled(forEditor.enabled)
+      } else {
+        setEditingScrapePromptId(null)
+        setScrapePromptName('')
+        setScrapePromptIntentText('')
+        setScrapePromptEnabled(true)
+      }
+    },
+    [setEditingScrapePromptId, setSelectedScrapePromptId],
+  )
+
   const loadScrapePrompts = useCallback(
     async (preferredId?: string, preserveEditor = false) => {
+      if (scrapePromptApiUnavailableRef.current) {
+        setIsScrapePromptApiUnavailable(true)
+        applyPromptRows([buildCompatDefaultScrapePrompt()], preferredId, preserveEditor)
+        return
+      }
       setIsScrapePromptsLoading(true)
       try {
         const rows = await listScrapePrompts()
-        setScrapePrompts(rows)
-        setScrapePromptError('')
-
-        const active = rows.find((p) => p.is_active) ?? null
-        const stored = window.localStorage.getItem(SCRAPE_PROMPT_SELECTION_KEY) ?? ''
-        const preferredSelection =
-          (preferredId && rows.find((p) => p.id === preferredId)?.id) ||
-          (selectedPromptIdRef.current && rows.find((p) => p.id === selectedPromptIdRef.current)?.id) ||
-          rows.find((p) => p.id === stored)?.id ||
-          active?.id ||
-          rows[0]?.id ||
-          ''
-        setSelectedScrapePromptId(preferredSelection)
-        setActiveScrapePromptId(active?.id ?? '')
-
-        if (preferredSelection) window.localStorage.setItem(SCRAPE_PROMPT_SELECTION_KEY, preferredSelection)
-        else window.localStorage.removeItem(SCRAPE_PROMPT_SELECTION_KEY)
-
-        if (!preserveEditor) {
-          const forEditor =
-            rows.find((p) => p.id === (preferredId || editingPromptIdRef.current || preferredSelection)) ??
-            rows[0] ??
-            null
-          if (forEditor) {
-            setEditingScrapePromptId(forEditor.id)
-            setScrapePromptName(forEditor.name)
-            setScrapePromptIntentText(forEditor.intent_text ?? '')
-            setScrapePromptEnabled(forEditor.enabled)
-          } else {
-            setEditingScrapePromptId(null)
-            setScrapePromptName('')
-            setScrapePromptIntentText('')
-            setScrapePromptEnabled(true)
-          }
-        }
+        applyPromptRows(rows, preferredId, preserveEditor)
       } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          scrapePromptApiUnavailableRef.current = true
+          setIsScrapePromptApiUnavailable(true)
+          applyPromptRows([buildCompatDefaultScrapePrompt()], preferredId, preserveEditor)
+          if (!scrapePromptApiUnavailableNotifiedRef.current) {
+            scrapePromptApiUnavailableNotifiedRef.current = true
+            setNotice('Scrape prompt API unavailable on this backend. Using built-in default scrape prompt.')
+          }
+          return
+        }
         setScrapePromptError(parseApiError(err))
       } finally {
         setIsScrapePromptsLoading(false)
       }
     },
-    [setEditingScrapePromptId, setSelectedScrapePromptId],
+    [applyPromptRows, setNotice],
   )
+
+  const ensureScrapePromptApiAvailable = useCallback((): boolean => {
+    if (!scrapePromptApiUnavailableRef.current) return true
+    setScrapePromptError('Scrape prompt editing is unavailable on this backend (missing /v1/scrape-prompts routes).')
+    return false
+  }, [])
 
   const onSelectScrapePrompt = useCallback(
     (prompt: ScrapePromptRead) => {
@@ -133,14 +192,16 @@ export function useScrapePromptManagement(
   )
 
   const onNewScrapePrompt = useCallback(() => {
+    if (!ensureScrapePromptApiAvailable()) return
     setEditingScrapePromptId(null)
     setScrapePromptName('')
     setScrapePromptIntentText('')
     setScrapePromptEnabled(true)
     setScrapePromptError('')
-  }, [setEditingScrapePromptId])
+  }, [ensureScrapePromptApiAvailable, setEditingScrapePromptId])
 
   const onSaveScrapePromptAsNew = useCallback(async () => {
+    if (!ensureScrapePromptApiAvailable()) return
     if (!scrapePromptName.trim()) {
       setScrapePromptError('Name is required.')
       return
@@ -161,9 +222,10 @@ export function useScrapePromptManagement(
     } finally {
       setIsScrapePromptSaving(false)
     }
-  }, [scrapePromptName, scrapePromptIntentText, scrapePromptEnabled, loadScrapePrompts, setError, setNotice])
+  }, [ensureScrapePromptApiAvailable, scrapePromptName, scrapePromptIntentText, scrapePromptEnabled, loadScrapePrompts, setError, setNotice])
 
   const onUpdateCurrentScrapePrompt = useCallback(async () => {
+    if (!ensureScrapePromptApiAvailable()) return
     if (!editingScrapePromptIdState) {
       setScrapePromptError('Select an existing scrape prompt to update.')
       return
@@ -192,6 +254,7 @@ export function useScrapePromptManagement(
     scrapePromptName,
     scrapePromptIntentText,
     scrapePromptEnabled,
+    ensureScrapePromptApiAvailable,
     loadScrapePrompts,
     setError,
     setNotice,
@@ -199,6 +262,7 @@ export function useScrapePromptManagement(
 
   const onToggleScrapePromptEnabled = useCallback(
     async (prompt: ScrapePromptRead) => {
+      if (!ensureScrapePromptApiAvailable()) return
       setIsScrapePromptSaving(true)
       try {
         const updated = await updateScrapePrompt(prompt.id, { enabled: !prompt.enabled })
@@ -210,11 +274,12 @@ export function useScrapePromptManagement(
         setIsScrapePromptSaving(false)
       }
     },
-    [editingScrapePromptIdState, loadScrapePrompts],
+    [editingScrapePromptIdState, ensureScrapePromptApiAvailable, loadScrapePrompts],
   )
 
   const onActivateScrapePrompt = useCallback(
     async (prompt: ScrapePromptRead) => {
+      if (!ensureScrapePromptApiAvailable()) return
       if (!prompt.enabled) {
         setScrapePromptError('Enable this scrape prompt before activating it.')
         return
@@ -231,11 +296,12 @@ export function useScrapePromptManagement(
         setIsScrapePromptSaving(false)
       }
     },
-    [editingScrapePromptIdState, loadScrapePrompts, setError, setNotice],
+    [editingScrapePromptIdState, ensureScrapePromptApiAvailable, loadScrapePrompts, setError, setNotice],
   )
 
   const onDeleteScrapePrompt = useCallback(
     async (prompt: ScrapePromptRead) => {
+      if (!ensureScrapePromptApiAvailable()) return
       if (prompt.is_system_default) {
         setScrapePromptError('System default scrape prompt cannot be deleted.')
         return
@@ -265,7 +331,7 @@ export function useScrapePromptManagement(
         setIsScrapePromptDeleting(false)
       }
     },
-    [loadScrapePrompts, setError, setNotice],
+    [ensureScrapePromptApiAvailable, loadScrapePrompts, setError, setNotice],
   )
 
   const openScrapePromptSheet = useCallback(() => {
@@ -294,6 +360,7 @@ export function useScrapePromptManagement(
     isScrapePromptsLoading,
     isScrapePromptSaving,
     isScrapePromptDeleting,
+    isScrapePromptApiUnavailable,
     scrapePromptError,
     scrapePromptSheetOpen,
     setScrapePromptName,

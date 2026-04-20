@@ -26,7 +26,10 @@ interface DashboardViewProps {
   onSetIsDragActive: (v: boolean) => void
   onUpload: (e: FormEvent) => void
   // Navigation
+  hasSelectedCampaign: boolean
   onNavigate: (view: PipelineStageView) => void
+  onOpenCampaigns: () => void
+  onOpenOperations: () => void
 }
 
 interface StageCardDef {
@@ -49,7 +52,10 @@ export function DashboardView({
   onSetFile,
   onSetIsDragActive,
   onUpload,
+  hasSelectedCampaign,
   onNavigate,
+  onOpenCampaigns,
+  onOpenOperations,
 }: DashboardViewProps) {
   const cards: StageCardDef[] = [
     {
@@ -103,11 +109,29 @@ export function DashboardView({
 
   return (
     <div className="space-y-6">
+      {!hasSelectedCampaign && (
+        <section className="rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-4">
+          <p className="text-sm text-(--oc-muted)">
+            Stage screens are campaign-scoped. Select a campaign first to run S1-S4 flows.
+          </p>
+          <button
+            type="button"
+            className="mt-3 rounded-xl bg-(--oc-accent) px-3 py-2 text-xs font-bold text-white"
+            onClick={onOpenCampaigns}
+          >
+            Select campaign
+          </button>
+        </section>
+      )}
+
       {/* Pipeline stage cards */}
       <section>
         <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-(--oc-muted)">
           Pipeline
         </h2>
+        <p className="mb-3 text-xs text-(--oc-muted)">
+          Use stage cards for focused S1-S4 work. Use Full Pipeline for cross-stage triage and bulk actions.
+        </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {cards.map((card) => {
             const isLive =
@@ -119,7 +143,13 @@ export function DashboardView({
               <button
                 key={card.view}
                 type="button"
-                onClick={() => onNavigate(card.view)}
+                onClick={() => {
+                  if (!hasSelectedCampaign) {
+                    onOpenCampaigns()
+                    return
+                  }
+                  onNavigate(card.view)
+                }}
                 className="group flex flex-col gap-2 rounded-2xl border p-4 text-left transition hover:shadow-md"
                 style={{
                   backgroundColor: `var(${card.stageBg})`,
@@ -152,7 +182,7 @@ export function DashboardView({
 
       {/* Stats row */}
       {hasQueueActivity && stats && (
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {(stats.scrape.running > 0 || stats.scrape.queued > 0 || stats.scrape.stuck_count > 0) && (
             <div className="flex items-center gap-2 rounded-xl border border-(--s1) bg-(--s1-bg) px-3 py-2">
               <span className="relative flex h-2 w-2">
@@ -197,6 +227,13 @@ export function DashboardView({
               </span>
             </div>
           )}
+          <button
+            type="button"
+            onClick={onOpenOperations}
+            className="rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-xs font-semibold text-(--oc-accent-ink) transition hover:border-(--oc-accent)"
+          >
+            View in Operations
+          </button>
         </div>
       )}
 

@@ -211,6 +211,27 @@ def test_start_pipeline_run_reuses_completed_scrape_jobs(sqlite_session: Session
     assert queued_jobs[0].normalized_url.startswith(queued_company.normalized_url)
 
 
+def test_start_pipeline_run_with_selected_company_ids_scopes_run(sqlite_session: Session) -> None:
+    campaign, companies = _seed_campaign_with_companies(sqlite_session, 2)
+    prompt = _seed_analysis_prompt(sqlite_session)
+
+    response = start_pipeline_run(
+        payload=PipelineRunStartRequest(
+            campaign_id=campaign.id,
+            company_ids=[str(companies[0].id)],
+            analysis_prompt_snapshot={"prompt_id": str(prompt.id)},
+        ),
+        session=sqlite_session,
+        x_idempotency_key=None,
+    )
+
+    assert response.requested_count == 1
+    assert response.queued_count == 1
+    run = sqlite_session.get(PipelineRun, response.pipeline_run_id)
+    assert run is not None
+    assert run.company_ids_snapshot == [str(companies[0].id)]
+
+
 def test_orchestrator_s1_to_s2_creates_analysis_jobs_and_enqueues(monkeypatch: pytest.MonkeyPatch, sqlite_session: Session) -> None:
     campaign, company = _seed_campaign_with_company(sqlite_session)
     prompt = Prompt(name="p1", enabled=True, prompt_text="Classify {domain}")

@@ -15,15 +15,16 @@ from app.services.upload_service import UploadService
 
 
 def test_create_and_list_campaign(sqlite_session: Session) -> None:
+    before = list_campaigns(session=sqlite_session, limit=200, offset=0)
     created = create_campaign(
         payload=CampaignCreate(name="Q2 Outreach", description="Primary outbound push"),
         session=sqlite_session,
     )
     assert created.name == "Q2 Outreach"
 
-    listed = list_campaigns(session=sqlite_session, limit=20, offset=0)
-    assert listed.total == 1
-    assert listed.items[0].id == created.id
+    listed = list_campaigns(session=sqlite_session, limit=200, offset=0)
+    assert listed.total == before.total + 1
+    assert any(item.id == created.id for item in listed.items)
 
 
 def test_assign_existing_uploads_to_campaign(sqlite_session: Session) -> None:

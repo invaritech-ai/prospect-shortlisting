@@ -16,6 +16,7 @@ Usage
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import ssl
@@ -25,8 +26,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from app.core.config import settings
 from app.core.logging import log_event
+from app.services import credentials_resolver
 from app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
@@ -44,9 +45,34 @@ ERR_SNOV_FAILED              = "snov_failed"
 # ── In-memory token fallback (per-process) ────────────────────────────────────
 _mem_token: str = ""
 _mem_token_expires_at: float = 0.0  # monotonic
+_mem_token_cache_key: str = ""
 
 
 _REDIS_TOKEN_KEY = "snov:access_token"
+
+
+def _credential_cache_key(client_id: str, client_secret: str) -> str:
+    digest = hashlib.sha256(f"{client_id}\0{client_secret}".encode("utf-8")).hexdigest()[:24]
+    return f"{_REDIS_TOKEN_KEY}:{digest}"
+
+
+def reset_token_cache() -> None:
+    global _mem_token, _mem_token_expires_at, _mem_token_cache_key  # noqa: PLW0603
+    _mem_token = ""
+    _mem_token_expires_at = 0.0
+    _mem_token_cache_key = ""
+
+
+def clear_cached_access_tokens() -> None:
+    reset_token_cache()
+    redis = get_redis()
+    if not redis:
+        return
+    try:
+        for key in redis.scan_iter(match=f"{_REDIS_TOKEN_KEY}*"):
+            redis.delete(key)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class SnovClient:
@@ -75,8 +101,8 @@ class SnovClient:
         min_interval_sec: float = 1.0,
         default_timeout: int = 30,
     ) -> None:
-        self._client_id = (settings.snov_client_id or "").strip()
-        self._client_secret = (settings.snov_client_secret or "").strip()
+        self._client_id = ""
+        self._client_secret = ""
         self._max_retries = max_retries
         self._poll_interval = poll_interval_sec
         self._poll_max_attempts = poll_max_attempts
@@ -150,25 +176,34 @@ class SnovClient:
 
     # ── OAuth token ───────────────────────────────────────────────────────────
 
-    def _get_access_token(self) -> tuple[str, str]:
+    def _get_access_token(self, *, force_refresh: bool = False) -> tuple[str, str]:
         """Return (access_token, error_code). Token cached in Redis → in-memory."""
-        global _mem_token, _mem_token_expires_at  # noqa: PLW0603
+        global _mem_token, _mem_token_expires_at, _mem_token_cache_key  # noqa: PLW0603
 
-        if not self._client_id or not self._client_secret:
+        client_id = credentials_resolver.resolve("snov", "client_id") or (self._client_id or "").strip()
+        client_secret = credentials_resolver.resolve("snov", "client_secret") or (self._client_secret or "").strip()
+        if not client_id or not client_secret:
             return "", ERR_SNOV_CREDENTIALS_MISSING
+
+        cache_key = _credential_cache_key(client_id, client_secret)
 
         # 1. Try Redis cache
         redis = get_redis()
-        if redis:
+        if redis and not force_refresh:
             try:
-                cached = redis.get(_REDIS_TOKEN_KEY)
+                cached = redis.get(cache_key)
                 if cached:
                     return cached.decode("utf-8"), ""
             except Exception:  # noqa: BLE001
                 pass
 
         # 2. Try in-memory cache (per-process fallback)
-        if _mem_token and time.monotonic() < _mem_token_expires_at:
+        if (
+            not force_refresh
+            and _mem_token
+            and _mem_token_cache_key == cache_key
+            and time.monotonic() < _mem_token_expires_at
+        ):
             return _mem_token, ""
 
         # 3. Fetch new token
@@ -176,8 +211,8 @@ class SnovClient:
         url = f"{_SNOV_BASE}/v1/oauth/access_token"
         payload = urlencode({
             "grant_type": "client_credentials",
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
+            "client_id": client_id,
+            "client_secret": client_secret,
         }).encode("utf-8")
         req = Request(url, data=payload, method="POST",
                       headers={"Content-Type": "application/x-www-form-urlencoded"})
@@ -209,13 +244,14 @@ class SnovClient:
         # Cache in Redis
         if redis:
             try:
-                redis.setex(_REDIS_TOKEN_KEY, ttl, token)
+                redis.setex(cache_key, ttl, token)
             except Exception:  # noqa: BLE001
                 pass
 
         # Cache in memory
         _mem_token = token
         _mem_token_expires_at = time.monotonic() + ttl
+        _mem_token_cache_key = cache_key
 
         log_event(logger, "snov_token_refreshed", expires_in=expires_in)
         return token, ""

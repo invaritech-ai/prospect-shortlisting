@@ -40,6 +40,7 @@ from urllib.request import Request, urlopen
 
 from app.core.config import settings
 from app.core.logging import log_event
+from app.services import credentials_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ class LLMClient:
         min_interval_sec: float = 0.0,
         default_timeout: int = 120,
     ) -> None:
-        self._api_key = (settings.openrouter_api_key or "").strip()
+        self._api_key = ""
         self._base_url = settings.openrouter_base_url.rstrip("/")
         self._purpose = purpose
         self._max_retries = max_retries
@@ -95,6 +96,9 @@ class LLMClient:
         self._min_interval = min_interval_sec
         self._default_timeout = default_timeout
         self._last_call_at: float = 0.0  # monotonic; per-instance throttle
+
+    def _resolved_api_key(self) -> str:
+        return credentials_resolver.resolve("openrouter", "api_key") or (self._api_key or "").strip()
 
     def chat_with_usage(
         self,
@@ -120,7 +124,8 @@ class LLMClient:
             "billed_cost_usd": None,
             "raw_usage": None,
         }
-        if not self._api_key:
+        api_key = self._resolved_api_key()
+        if not api_key:
             log_event(logger, "llm_api_key_missing", purpose=self._purpose, model=model)
             return "", ERR_API_KEY_MISSING, usage_meta
 
@@ -148,7 +153,7 @@ class LLMClient:
                 data=json.dumps(payload).encode("utf-8"),
                 method="POST",
                 headers={
-                    "Authorization": f"Bearer {self._api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": settings.openrouter_site_url,
                     "X-Title": settings.openrouter_app_name,

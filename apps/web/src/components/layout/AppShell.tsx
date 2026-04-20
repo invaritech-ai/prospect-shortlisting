@@ -4,7 +4,7 @@ import type { StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconCog } from '../ui/icons'
 
 interface AppShellProps {
   className?: string
@@ -13,6 +13,9 @@ interface AppShellProps {
   activeCampaignName?: string | null
   stats: StatsResponse | null
   onOpenPromptLibrary: () => void
+  authEnabled?: boolean
+  userDisplayName?: string | null
+  onLogout?: () => void
   children: ReactNode
 }
 
@@ -60,12 +63,14 @@ function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
   dashboard: { label: 'Dashboard', Icon: IconPulse },
+  operations: { label: 'Operations', Icon: IconTimeline },
   campaigns: { label: 'Campaigns', Icon: IconBuilding },
-  'full-pipeline': { label: 'Full Pipeline', Icon: IconTimeline },
+  settings: { label: 'Settings', Icon: IconCog },
+  'full-pipeline': { label: 'Full Pipeline', Icon: IconSliders },
   's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
   's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
   's3-contacts': { label: 'S3 · Contact Fetch', Icon: IconUsers },
-  's4-validation': { label: 'S4 · Validation', Icon: IconBuilding },
+  's4-validation': { label: 'S4 · Validation', Icon: IconCheck },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'
@@ -77,6 +82,9 @@ export function AppShell({
   activeCampaignName,
   stats,
   onOpenPromptLibrary,
+  authEnabled = false,
+  userDisplayName = null,
+  onLogout,
   children,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -131,7 +139,12 @@ export function AppShell({
           <span className="h-5 w-px bg-(--oc-border)" />
           <div className="flex items-center gap-1.5 min-w-0 ml-0.5">
             <Icon size={16} className="text-(--oc-accent) shrink-0" />
-            <span className="text-sm font-bold text-(--oc-accent-ink) truncate">{label}</span>
+            <div className="min-w-0">
+              <span className="block truncate text-sm font-bold text-(--oc-accent-ink)">{label}</span>
+              <span className="block truncate text-[10px] font-medium text-(--oc-muted)">
+                Campaign: {activeCampaignName ?? 'none selected'}
+              </span>
+            </div>
           </div>
           {activity && (
             <span className="ml-auto relative flex h-2.5 w-2.5 shrink-0">
@@ -139,6 +152,15 @@ export function AppShell({
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-(--oc-accent)" />
             </span>
           )}
+          {authEnabled && onLogout ? (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="ml-1 rounded-md border border-(--oc-border) bg-white px-2 py-1 text-[10px] font-semibold text-(--oc-muted)"
+            >
+              Logout
+            </button>
+          ) : null}
         </header>
 
         {/* Desktop top bar — outside scroll region so title + live stats stay visible */}
@@ -146,14 +168,36 @@ export function AppShell({
           className="hidden shrink-0 items-center gap-4 border-b border-(--oc-border) bg-(--oc-surface-strong)/95 px-6 py-2.5 backdrop-blur-sm md:flex"
           style={{ minHeight: '52px' }}
         >
-          <div className="flex min-w-0 items-center gap-2">
-            <Icon size={18} className="shrink-0 text-(--oc-accent)" />
-            <span className="truncate text-sm font-bold text-(--oc-accent-ink)">{label}</span>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <Icon size={18} className="shrink-0 text-(--oc-accent)" />
+              <span className="truncate text-sm font-bold text-(--oc-accent-ink)">{label}</span>
+            </div>
+            <p className="truncate text-[10px] font-medium text-(--oc-muted)">
+              Campaign: {activeCampaignName ?? 'none selected'}
+            </p>
           </div>
           <span className="h-5 w-px shrink-0 bg-(--oc-border)" />
           <div className="min-w-0 flex-1">
             <DesktopLiveSummary stats={stats} />
           </div>
+          {authEnabled && userDisplayName ? (
+            <span className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-muted)">
+              <span className="inline-flex items-center gap-1.5">
+                <IconUsers size={12} />
+                {userDisplayName}
+              </span>
+            </span>
+          ) : null}
+          {authEnabled && onLogout ? (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="rounded-lg border border-(--oc-border) bg-white px-3 py-1.5 text-xs font-semibold text-(--oc-muted) transition hover:border-(--oc-accent)"
+            >
+              Logout
+            </button>
+          ) : null}
           {activity && (
             <span className="relative flex h-2.5 w-2.5 shrink-0">
               <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-(--oc-accent) opacity-60" />

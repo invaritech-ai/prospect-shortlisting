@@ -6,6 +6,7 @@ import type {
   ContactCompanySummary,
   ContactCountsResponse,
   DecisionFilter,
+  StatsResponse,
 } from '../../../lib/types'
 import { listContactCompanies } from '../../../lib/api'
 import { parseApiError } from '../../../lib/utils'
@@ -15,6 +16,7 @@ import { Badge } from '../../ui/Badge'
 import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
+import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
 type AuditMode = 'off' | 'no_matches' | 'matched'
 
@@ -50,6 +52,7 @@ function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
 }
 
 interface S3ContactFetchViewProps {
+  campaignId: string | null
   companies: CompanyList | null
   letterCounts: Record<string, number>
   activeLetters: Set<string>
@@ -60,6 +63,7 @@ interface S3ContactFetchViewProps {
   isFetching: boolean
   isSelectingAll: boolean
   contactCounts: ContactCountsResponse | null
+  stats: StatsResponse | null
   onDecisionFilterChange: (filter: DecisionFilter) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
@@ -97,6 +101,7 @@ const FETCH_BUTTONS: Array<{ source: 'apollo' | 'snov' | 'both'; label: string; 
 ]
 
 export function S3ContactFetchView({
+  campaignId,
   companies,
   letterCounts,
   activeLetters,
@@ -107,6 +112,7 @@ export function S3ContactFetchView({
   isFetching,
   isSelectingAll,
   contactCounts,
+  stats,
   onDecisionFilterChange,
   onToggleLetter,
   onClearLetters,
@@ -143,6 +149,11 @@ export function S3ContactFetchView({
   }, [auditMode, search])
 
   useEffect(() => {
+    if (!campaignId) {
+      setAuditData(null)
+      setAuditError('')
+      return
+    }
     if (auditMode === 'off') {
       setAuditData(null)
       setAuditError('')
@@ -157,6 +168,7 @@ export function S3ContactFetchView({
       : { titleMatch: true }
     const trimmed = search.trim()
     listContactCompanies({
+      campaignId,
       ...gapOptions,
       limit: AUDIT_PAGE_SIZE,
       offset: auditOffset,
@@ -173,7 +185,7 @@ export function S3ContactFetchView({
       .finally(() => {
         if (auditRequestRef.current === reqId) setIsAuditLoading(false)
       })
-  }, [auditMode, auditOffset, search])
+  }, [auditMode, auditOffset, campaignId, search])
 
   const isAuditActive = auditMode !== 'off'
   const auditItems = auditData?.items ?? []
@@ -194,10 +206,57 @@ export function S3ContactFetchView({
   const isSearchFiltered = search !== ''
   const displayCount = isSearchFiltered ? visibleCompanies.length : (companies?.total ?? 0)
   const effectiveTotalMatching = isSearchFiltered ? visibleCompanies.length : totalMatching
+  const contactFetch = stats?.contact_fetch
+  const cfRunning = contactFetch?.running ?? 0
+  const cfQueued = contactFetch?.queued ?? 0
+  const cfCompleted = contactFetch?.completed ?? 0
+  const cfFailed = contactFetch?.failed ?? 0
+  const cfTotal = contactFetch?.total ?? 0
+  const cfPct = contactFetch?.pct_done ?? 0
+  const cfProcessed = cfCompleted + cfFailed
+  const cfHasActivity = cfRunning > 0 || cfQueued > 0
 
   return (
     <div className="space-y-3">
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
+      {contactFetch && (cfHasActivity || cfCompleted > 0 || cfFailed > 0) && (
+        <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
+                Contact Fetch Queue
+              </span>
+              {cfHasActivity && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                  Active
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-(--oc-muted)">
+              {cfProcessed.toLocaleString()} / {cfTotal.toLocaleString()} processed
+            </span>
+          </div>
+          <p className="mb-2 text-[11px] text-(--oc-muted)">
+            <RelativeTimeLabel timestamp={stats?.as_of} />
+          </p>
+          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(cfPct, 100)}%`,
+                background: cfHasActivity ? 'linear-gradient(90deg, var(--s3), #0ea5e9)' : '#16a34a',
+              }}
+            />
+          </div>
+          <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
+            {cfRunning > 0 && <span className="font-bold text-amber-600">{cfRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
+            {cfQueued > 0 && <span className="font-bold text-(--oc-muted)">{cfQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
+            <span className="font-bold text-emerald-700">{cfCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
+            {cfFailed > 0 && <span className="font-bold text-rose-600">{cfFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
         <div className="flex-1">
@@ -337,6 +396,9 @@ export function S3ContactFetchView({
                 {isFetching ? '…' : label}
               </button>
             ))}
+            <span className="text-[11px] text-(--oc-muted)">
+              Both = sequential chain (Snov first, Apollo second) to avoid parallel provider spend.
+            </span>
           </SelectionBar>
         </>
       )}
@@ -571,6 +633,7 @@ export function S3ContactFetchView({
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'both')}
+                      title="Sequential chain: Snov first, Apollo follow-up."
                       className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition"
                       style={{ backgroundColor: 'var(--s3)' }}
                     >

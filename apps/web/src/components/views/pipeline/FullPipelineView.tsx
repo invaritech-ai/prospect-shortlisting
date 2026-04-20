@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, PipelineCostSummaryRead, PipelineRunProgressRead } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, CostStatsResponse, PipelineCostSummaryRead, PipelineRunProgressRead } from '../../../lib/types'
 import {
   companyListBrowseUrl,
   matchesFullPipelineFilters,
@@ -109,6 +109,7 @@ const STATUS_FILTERS: Array<{ value: FullPipelineStatusFilter; label: string }> 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface FullPipelineViewProps {
+  activeCampaignName: string | null
   companies: CompanyList | null
   letterCounts: Record<string, number>
   activeLetter: string | null
@@ -133,11 +134,13 @@ interface FullPipelineViewProps {
   onSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
   latestRunProgress: PipelineRunProgressRead | null
   campaignCostSummary: PipelineCostSummaryRead | null
+  campaignCostBreakdown: CostStatsResponse | null
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function FullPipelineView({
+  activeCampaignName,
   companies,
   letterCounts,
   activeLetter,
@@ -162,6 +165,7 @@ export function FullPipelineView({
   onSelectAllMatching,
   latestRunProgress,
   campaignCostSummary,
+  campaignCostBreakdown,
 }: FullPipelineViewProps) {
   const [statusFilter, setStatusFilter] = useState<FullPipelineStatusFilter>('all')
   const [search, setSearch] = useState('')
@@ -179,11 +183,19 @@ export function FullPipelineView({
       <div
         className="sticky top-0 z-20 shrink-0 space-y-2 border-b border-(--oc-border) bg-(--oc-bg)/95 pb-2 backdrop-blur-sm"
       >
+      <p className="px-1 pt-1 text-[11px] text-(--oc-muted)">
+        Cross-stage control center. For detailed stage work, use the dedicated S1-S4 views.
+      </p>
       {/* Topbar */}
       <div className="flex items-center gap-2 px-1 pt-1">
         <span className="text-sm font-extrabold tracking-tight text-(--oc-accent-ink)">
           Full Pipeline
         </span>
+        {activeCampaignName && (
+          <span className="rounded-full border border-(--oc-border) bg-white px-2 py-0.5 text-[11px] font-semibold text-(--oc-muted)">
+            {activeCampaignName}
+          </span>
+        )}
         {companies?.total != null && (
           <span className="text-xs text-(--oc-muted)">{companies.total.toLocaleString()} domains</span>
         )}
@@ -201,10 +213,10 @@ export function FullPipelineView({
           type="button"
           onClick={onStartCampaignPipeline}
           disabled={isStartingCampaignPipeline}
-          title="Starts a campaign pipeline run and queues eligible companies into the S1 queue."
+          title="Starts a chained campaign pipeline run (S1→S4)."
           className="rounded-lg border border-(--oc-accent) bg-(--oc-accent-soft) px-3 py-1.5 text-xs font-semibold text-(--oc-accent-ink) transition hover:bg-(--oc-accent-soft)/80 disabled:opacity-60"
         >
-          {isStartingCampaignPipeline ? 'Queueing S1…' : 'Start campaign pipeline'}
+          {isStartingCampaignPipeline ? 'Starting run…' : 'Start campaign pipeline'}
         </button>
       </div>
 
@@ -255,6 +267,11 @@ export function FullPipelineView({
             Campaign spend: ${Number(campaignCostSummary.total_cost_usd || 0).toFixed(4)}
           </span>
         )}
+        {campaignCostBreakdown && (
+          <span className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-muted)">
+            Domains with spend: {campaignCostBreakdown.total}
+          </span>
+        )}
       </div>
       {latestRunProgress && (
         <div className="space-y-2 rounded-lg border border-(--oc-border) bg-white px-3 py-2">
@@ -301,10 +318,10 @@ export function FullPipelineView({
             type="button"
             onClick={onScrapeSelected}
             disabled={isScraping}
-            title="Starts pipeline for selected rows by queueing S1 scrape jobs."
+            title="Starts a chained run for selected rows (S1→S4)."
             className="rounded-lg bg-(--oc-accent) px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-60"
           >
-            {isScraping ? 'Queueing S1…' : 'Start pipeline (S1 queue)'}
+            {isScraping ? 'Starting run…' : 'Start pipeline'}
           </button>
           <button
             type="button"

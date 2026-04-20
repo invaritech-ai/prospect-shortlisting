@@ -28,3 +28,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+
+  worker-scrape-local:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-scrape-browserless:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  beat:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started

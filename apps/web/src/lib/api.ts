@@ -23,6 +23,11 @@ import type {
   DrainQueueResult,
   FeedbackRead,
   FeedbackUpsert,
+  IntegrationsStatusResponse,
+  IntegrationProviderId,
+  IntegrationProviderStatus,
+  IntegrationProviderUpdateRequest,
+  IntegrationTestResponse,
 
   LetterCounts,
   PromptCreate,
@@ -47,6 +52,7 @@ import type {
   StatsResponse,
   TitleMatchRuleCreate,
   TitleMatchRuleRead,
+  TitleRuleImpactPreview,
   TitleRuleSeedResult,
   TitleTestResult,
   TitleRuleStatsResponse,
@@ -65,6 +71,28 @@ const API_BASE_URL = (
 ).replace(/\/+$/, '')
 type ScrapeJobFilter = 'all' | 'active' | 'completed' | 'failed'
 
+interface ApiSessionConfig {
+  getAccessToken?: () => string | null
+  onUnauthorized?: () => void
+}
+
+export interface AuthUserRead {
+  email: string
+  display_name?: string | null
+}
+
+export interface AuthLoginResponse {
+  user: AuthUserRead
+  access_token?: string | null
+  token_type?: string | null
+}
+
+let apiSessionConfig: ApiSessionConfig = {}
+
+export function configureApiSession(config: ApiSessionConfig): void {
+  apiSessionConfig = config
+}
+
 export class ApiError extends Error {
   status: number
   detail: unknown
@@ -77,7 +105,14 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, init)
+  const token = apiSessionConfig.getAccessToken?.() ?? null
+  const headers = new Headers(init?.headers)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: init?.credentials ?? 'include',
+  })
   if (response.status === 204) {
     if (!response.ok) throw new ApiError(response.status, null)
     return undefined as T
@@ -85,6 +120,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const contentType = response.headers.get('content-type') ?? ''
   const body = contentType.includes('application/json') ? await response.json() : await response.text()
   if (!response.ok) {
+    if (response.status === 401) apiSessionConfig.onUnauthorized?.()
     const detail =
       typeof body === 'object' && body !== null && 'detail' in body
         ? (body as { detail: unknown }).detail
@@ -149,6 +185,7 @@ export async function assignUploadsToCampaign(campaignId: string, uploadIds: str
 }
 
 export async function listCompanies(
+  campaignId: string,
   limit = 25,
   offset = 0,
   decisionFilter: DecisionFilter = 'all',
@@ -161,7 +198,7 @@ export async function listCompanies(
   uploadId?: string,
   letters?: string[],
 ): Promise<CompanyList> {
-  let url = `/v1/companies?limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sortBy)}&sort_dir=${sortDir}`
+  let url = `/v1/companies?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sortBy)}&sort_dir=${sortDir}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
   if (letters && letters.length > 0) url += `&letters=${encodeURIComponent(letters.join(','))}`
   if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
@@ -331,17 +368,19 @@ export async function getAnalysisJobDetail(analysisJobId: string): Promise<Analy
   return request<AnalysisJobDetailRead>(`/v1/analysis-jobs/${analysisJobId}`)
 }
 
-export async function getStats(uploadId?: string): Promise<StatsResponse> {
+export async function getStats(campaignId: string, uploadId?: string): Promise<StatsResponse> {
   const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
   if (uploadId) params.set('upload_id', uploadId)
   const suffix = params.toString() ? `?${params.toString()}` : ''
   return request<StatsResponse>(`/v1/stats${suffix}`)
 }
 
 export async function getCostStats(
-  options: { windowDays?: number; uploadId?: string; limit?: number; offset?: number } = {},
+  options: { campaignId: string; windowDays?: number; uploadId?: string; limit?: number; offset?: number },
 ): Promise<CostStatsResponse> {
   const params = new URLSearchParams()
+  if (options.campaignId) params.set('campaign_id', options.campaignId)
   if (options.windowDays) params.set('window_days', String(options.windowDays))
   if (options.uploadId) params.set('upload_id', options.uploadId)
   if (options.limit) params.set('limit', String(options.limit))
@@ -361,12 +400,15 @@ export async function resetStuckAnalysisJobs(): Promise<ResetStuckResult> {
   return request<ResetStuckResult>('/v1/analysis-jobs/reset-stuck', { method: 'POST' })
 }
 
-export async function getCompanyCounts(): Promise<CompanyCounts> {
-  return request<CompanyCounts>('/v1/companies/counts')
+export async function getCompanyCounts(campaignId: string, uploadId?: string): Promise<CompanyCounts> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
+  if (uploadId) params.set('upload_id', uploadId)
+  return request<CompanyCounts>(`/v1/companies/counts?${params.toString()}`)
 }
 
-export function getCompaniesExportUrl(): string {
-  return `${API_BASE_URL}/v1/companies/export.csv`
+export function getCompaniesExportUrl(campaignId: string): string {
+  return `${API_BASE_URL}/v1/companies/export.csv?campaign_id=${encodeURIComponent(campaignId)}`
 }
 
 export async function upsertCompanyFeedback(companyId: string, payload: FeedbackUpsert): Promise<FeedbackRead> {
@@ -378,6 +420,7 @@ export async function upsertCompanyFeedback(companyId: string, payload: Feedback
 }
 
 export async function listCompanyIds(
+  campaignId: string,
   decisionFilter: DecisionFilter = 'all',
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
@@ -385,7 +428,7 @@ export async function listCompanyIds(
   uploadId?: string,
   letters?: string[],
 ): Promise<CompanyIdsResult> {
-  let url = `/v1/companies/ids?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`
+  let url = `/v1/companies/ids?campaign_id=${encodeURIComponent(campaignId)}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`
   if (letter) url += `&letter=${encodeURIComponent(letter)}`
   if (letters && letters.length > 0) url += `&letters=${encodeURIComponent(letters.join(','))}`
   if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
@@ -393,6 +436,7 @@ export async function listCompanyIds(
 }
 
 export async function getLetterCounts(
+  campaignId: string,
   decisionFilter: DecisionFilter = 'all',
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
@@ -400,29 +444,30 @@ export async function getLetterCounts(
 ): Promise<LetterCounts> {
   const uploadParam = uploadId ? `&upload_id=${encodeURIComponent(uploadId)}` : ''
   return request<LetterCounts>(
-    `/v1/companies/letter-counts?decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}${uploadParam}`,
+    `/v1/companies/letter-counts?campaign_id=${encodeURIComponent(campaignId)}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}${uploadParam}`,
   )
 }
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
 
-export async function fetchContactsForCompany(companyId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts`, { method: 'POST' })
+export async function fetchContactsForCompany(campaignId: string, companyId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
 }
 
-export async function fetchContactsForRun(runId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts`, { method: 'POST' })
+export async function fetchContactsForRun(campaignId: string, runId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
 }
 
-export async function fetchContactsForCompanyApollo(companyId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo`, { method: 'POST' })
+export async function fetchContactsForCompanyApollo(campaignId: string, companyId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
 }
 
-export async function fetchContactsForRunApollo(runId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo`, { method: 'POST' })
+export async function fetchContactsForRunApollo(campaignId: string, runId: string): Promise<ContactFetchResult> {
+  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
 }
 
 export async function fetchContactsSelected(
+  campaignId: string,
   companyIds: string[],
   source: 'snov' | 'apollo' | 'both',
   options: { idempotencyKey?: string } = {},
@@ -433,12 +478,13 @@ export async function fetchContactsSelected(
       'Content-Type': 'application/json',
       ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
     },
-    body: JSON.stringify({ company_ids: companyIds, source }),
+    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, source }),
   })
 }
 
 export async function listContacts(
   options: {
+    campaignId: string
     titleMatch?: boolean
     verificationStatus?: string
     stageFilter?: ContactStageFilter
@@ -451,9 +497,10 @@ export async function listContacts(
     letters?: string[]
     uploadId?: string
     countByLetters?: boolean
-  } = {},
+  },
 ): Promise<ContactListResponse> {
   const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
   if (options.stageFilter) params.set('stage_filter', options.stageFilter)
@@ -470,10 +517,12 @@ export async function listContacts(
 }
 
 export async function listCompanyContacts(
+  campaignId: string,
   companyId: string,
   options: { limit?: number; offset?: number; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter } = {},
 ): Promise<ContactListResponse> {
   const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
@@ -484,6 +533,7 @@ export async function listCompanyContacts(
 
 export async function listContactCompanies(
   options: {
+    campaignId: string
     search?: string
     limit?: number
     offset?: number
@@ -492,9 +542,10 @@ export async function listContactCompanies(
     stageFilter?: ContactStageFilter
     matchGapFilter?: MatchGapFilter
     uploadId?: string
-  } = {},
+  },
 ): Promise<ContactCompanyListResponse> {
   const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
   if (options.search) params.set('search', options.search)
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
@@ -507,9 +558,10 @@ export async function listContactCompanies(
 }
 
 export function getContactsExportUrl(
-  options: { titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter; companyId?: string; uploadId?: string } = {},
+  options: { campaignId: string; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter; companyId?: string; uploadId?: string },
 ): string {
   const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
   if (options.stageFilter) params.set('stage_filter', options.stageFilter)
@@ -518,8 +570,9 @@ export function getContactsExportUrl(
   return `${API_BASE_URL}/v1/contacts/export.csv?${params.toString()}`
 }
 
-export async function getContactCounts(uploadId?: string): Promise<ContactCountsResponse> {
+export async function getContactCounts(campaignId: string, uploadId?: string): Promise<ContactCountsResponse> {
   const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
   if (uploadId) params.set('upload_id', uploadId)
   const suffix = params.toString() ? `?${params.toString()}` : ''
   return request<ContactCountsResponse>(`/v1/contacts/counts${suffix}`)
@@ -566,6 +619,77 @@ export async function testTitleMatch(title: string): Promise<TitleTestResult> {
 
 export async function getTitleRuleStats(): Promise<TitleRuleStatsResponse> {
   return request<TitleRuleStatsResponse>('/v1/title-match-rules/stats')
+}
+
+export async function previewTitleRuleImpact(
+  campaignId: string,
+  options: { source?: 'snov' | 'apollo' | 'both'; includeStale?: boolean; staleDays?: number; forceRefresh?: boolean } = {},
+): Promise<TitleRuleImpactPreview> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
+  if (options.source) params.set('source', options.source)
+  if (options.includeStale !== undefined) params.set('include_stale', String(options.includeStale))
+  if (options.staleDays !== undefined) params.set('stale_days', String(options.staleDays))
+  if (options.forceRefresh !== undefined) params.set('force_refresh', String(options.forceRefresh))
+  return request<TitleRuleImpactPreview>(
+    `/v1/title-match-rules/impact-preview?${params.toString()}`,
+  )
+}
+
+export async function queueTitleRuleImpactFetch(
+  campaignId: string,
+  source: 'snov' | 'apollo' | 'both' = 'snov',
+  options: { includeStale?: boolean; staleDays?: number; forceRefresh?: boolean } = {},
+): Promise<ContactFetchResult> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
+  params.set('source', source)
+  if (options.includeStale !== undefined) params.set('include_stale', String(options.includeStale))
+  if (options.staleDays !== undefined) params.set('stale_days', String(options.staleDays))
+  if (options.forceRefresh !== undefined) params.set('force_refresh', String(options.forceRefresh))
+  return request<ContactFetchResult>(
+    `/v1/title-match-rules/impact-fetch?${params.toString()}`,
+    { method: 'POST' },
+  )
+}
+
+export async function getIntegrationSettings(): Promise<IntegrationsStatusResponse> {
+  return request<IntegrationsStatusResponse>('/v1/settings/integrations')
+}
+
+export async function updateIntegrationProvider(
+  provider: IntegrationProviderId,
+  payload: IntegrationProviderUpdateRequest,
+): Promise<IntegrationProviderStatus> {
+  return request<IntegrationProviderStatus>(`/v1/settings/integrations/${encodeURIComponent(provider)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function testIntegrationProvider(
+  provider: IntegrationProviderId,
+): Promise<IntegrationTestResponse> {
+  return request<IntegrationTestResponse>(`/v1/settings/integrations/${encodeURIComponent(provider)}/test`, {
+    method: 'POST',
+  })
+}
+
+export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {
+  return request<AuthLoginResponse>('/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+}
+
+export async function getCurrentUser(): Promise<AuthUserRead> {
+  return request<AuthUserRead>('/v1/auth/me')
+}
+
+export async function logoutSession(): Promise<void> {
+  await request<void>('/v1/auth/logout', { method: 'POST' })
 }
 
 /** Parse a date string as UTC.

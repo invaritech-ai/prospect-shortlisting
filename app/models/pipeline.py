@@ -366,6 +366,7 @@ class ContactFetchJob(SQLModel, table=True):
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     provider: str = Field(default="snov", max_length=32, index=True)
+    next_provider: str | None = Field(default=None, max_length=32, index=True)
 
     state: ContactFetchJobState = Field(
         default=ContactFetchJobState.QUEUED,
@@ -481,6 +482,29 @@ class ProspectContact(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProspectContactEmail(SQLModel, table=True):
+    """Normalized email records attached to a prospect contact."""
+
+    __tablename__ = "prospect_contact_emails"
+    __table_args__ = (
+        UniqueConstraint(
+            "contact_id",
+            "email_normalized",
+            name="uq_prospect_contact_emails_contact_email",
+        ),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    contact_id: UUID = Field(foreign_key="prospect_contacts.id", index=True)
+    source: str = Field(default="snov", max_length=32, index=True)
+    email: str = Field(max_length=512)
+    email_normalized: str = Field(max_length=512, index=True)
+    provider_email_status: str | None = Field(default=None, max_length=32, index=True)
+    is_primary: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class TitleMatchRule(SQLModel, table=True):

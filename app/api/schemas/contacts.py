@@ -21,6 +21,7 @@ class ProspectContactRead(UTCReadModel):
     title_match: bool
     linkedin_url: str | None
     email: str | None
+    emails: list[str] | None = None
     pipeline_stage: str
     provider_email_status: str | None
     verification_status: str
@@ -67,6 +68,7 @@ class TitleRuleSeedResult(BaseModel):
 
 
 class BulkContactFetchRequest(BaseModel):
+    campaign_id: UUID
     company_ids: list[UUID] = Field(min_length=1)
     source: Literal["snov", "apollo", "both"] = "snov"
 
@@ -75,6 +77,20 @@ class RematchResult(BaseModel):
     updated: int
     fetch_jobs_queued: int
     message: str
+
+
+class TitleRuleImpactPreview(BaseModel):
+    campaign_id: UUID
+    source: str = "snov"
+    include_stale: bool = False
+    stale_days: int | None = 30
+    stale_days_override: int | None = None
+    provider_default_days: dict[str, int] | None = None
+    force_refresh: bool = False
+    affected_company_count: int
+    affected_contact_count: int
+    stale_contact_count: int = 0
+    affected_company_ids: list[UUID]
 
 
 class TitleTestRequest(BaseModel):
@@ -133,6 +149,7 @@ class ContactCountsResponse(BaseModel):
 
 
 class ContactVerifyRequest(BaseModel):
+    campaign_id: UUID
     contact_ids: list[UUID] | None = None
     company_ids: list[UUID] | None = None
     title_match: bool | None = None

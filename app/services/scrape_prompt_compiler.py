@@ -19,7 +19,7 @@ PAGE_KIND_PATTERNS: dict[str, tuple[str, ...]] = {
     "home": (r"\bhome(page)?\b", r"\blanding page\b"),
     "about": (r"\babout\b", r"\bour story\b", r"\bcompany info\b"),
     "products": (r"\bproducts?\b", r"\bsolutions?\b", r"\bcatalog\b"),
-    "contact": (r"\bcontact\b", r"\bget in touch\b", r"\bsupport\b"),
+    "contact": (r"\bcontacts?\b", r"\bget in touch\b", r"\bsupport\b"),
     "team": (r"\bteam\b", r"\bpeople\b", r"\bstaff\b"),
     "leadership": (r"\bleadership\b", r"\bexecutive(s)?\b", r"\bfounders?\b"),
     "services": (r"\bservices?\b", r"\bofferings?\b"),

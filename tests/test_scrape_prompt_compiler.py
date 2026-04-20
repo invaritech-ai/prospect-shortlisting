@@ -25,3 +25,10 @@ def test_compiler_defaults_when_no_keywords_found() -> None:
         "pricing",
     ]
     assert "- home" not in compiled.compiled_prompt_text
+
+
+def test_compiler_detects_plural_contacts_keyword() -> None:
+    compiled = compile_scrape_prompt("Find homepage and contacts.")
+    assert compiled.page_kinds == ["home", "contact"]
+    assert "- home" in compiled.compiled_prompt_text
+    assert "- contact" in compiled.compiled_prompt_text

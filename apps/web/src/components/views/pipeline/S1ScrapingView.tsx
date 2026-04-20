@@ -5,6 +5,7 @@ import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
+import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
 interface S1ScrapingViewProps {
   companies: CompanyList | null
@@ -182,6 +183,9 @@ export function S1ScrapingView({
                 {completed.toLocaleString()} / {total.toLocaleString()}
               </span>
             </div>
+            <p className="mb-2 text-[11px] text-(--oc-muted)">
+              <RelativeTimeLabel timestamp={stats?.as_of} />
+            </p>
             <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
               <div
                 className="h-full rounded-full transition-all duration-500"

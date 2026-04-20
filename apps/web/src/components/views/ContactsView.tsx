@@ -186,6 +186,7 @@ function TitleRulesManager({ rules, onAdd, onDelete, deletingIds, onSeed, isSeed
 }
 
 interface CompanyDrawerProps {
+  campaignId: string | null
   company: ContactCompanySummary
   onClose: () => void
   rules: TitleMatchRuleRead[]
@@ -199,6 +200,7 @@ interface CompanyDrawerProps {
 }
 
 function CompanyDrawer({
+  campaignId,
   company,
   onClose,
   rules,
@@ -217,17 +219,21 @@ function CompanyDrawer({
   const [isRulesOpen, setIsRulesOpen] = useState(false)
 
   useEffect(() => {
+    if (!campaignId) {
+      setContacts([])
+      return
+    }
     setIsLoading(true)
     setError('')
-    listCompanyContacts(company.company_id, { limit: 200 })
+    listCompanyContacts(campaignId, company.company_id, { limit: 200 })
       .then((data) => setContacts(data.items))
       .catch((err) => setError(parseError(err)))
       .finally(() => setIsLoading(false))
-  }, [company.company_id])
+  }, [campaignId, company.company_id])
 
   const displayed = matchedOnly ? contacts.filter((c) => c.title_match) : contacts
   const summary = summarizeCompanyContacts(contacts)
-  const exportUrl = getContactsExportUrl({ companyId: company.company_id })
+  const exportUrl = campaignId ? getContactsExportUrl({ campaignId, companyId: company.company_id }) : '#'
 
   return (
     <Drawer
@@ -414,7 +420,7 @@ function CompanyRow({ company, onClick }: { company: ContactCompanySummary; onCl
   )
 }
 
-export function ContactsView() {
+export function ContactsView({ campaignId = null }: { campaignId?: string | null } = {}) {
   const [companies, setCompanies] = useState<ContactCompanyListResponse | null>(null)
   const [counts, setCounts] = useState<ContactCountsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -445,10 +451,16 @@ export function ContactsView() {
       nextVerification = verificationFilter,
       nextMatchedOnly = matchedOnly,
     ) => {
+      if (!campaignId) {
+        setCompanies(null)
+        setOffset(0)
+        return
+      }
       setIsLoading(true)
       setError('')
       try {
         const data = await listContactCompanies({
+          campaignId,
           search: nextSearch || undefined,
           limit,
           offset: off,
@@ -465,14 +477,18 @@ export function ContactsView() {
         setIsLoading(false)
       }
     },
-    [limit, matchedOnly, search, stageFilter, verificationFilter],
+    [campaignId, limit, matchedOnly, search, stageFilter, verificationFilter],
   )
 
   const loadCounts = useCallback(async () => {
+    if (!campaignId) {
+      setCounts(null)
+      return
+    }
     try {
-      setCounts(await getContactCounts())
+      setCounts(await getContactCounts(campaignId))
     } catch { /* non-critical */ }
-  }, [])
+  }, [campaignId])
 
   useEffect(() => {
     void loadCompanies(0, search, stageFilter, verificationFilter, matchedOnly)
@@ -548,11 +564,16 @@ export function ContactsView() {
   }
 
   const handleVerify = async () => {
+    if (!campaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     setIsVerifying(true)
     setError('')
     setNotice('')
     try {
       const result = await verifyContacts({
+        campaign_id: campaignId,
         title_match: matchedOnly ? true : undefined,
         verification_status: verificationFilter || undefined,
         search: search || undefined,
@@ -570,11 +591,12 @@ export function ContactsView() {
     }
   }
 
-  const exportUrl = getContactsExportUrl({
+  const exportUrl = campaignId ? getContactsExportUrl({
+    campaignId,
     titleMatch: matchedOnly ? true : undefined,
     verificationStatus: verificationFilter || undefined,
     stageFilter,
-  })
+  }) : '#'
 
   const filteredEligibleVerify = companies?.items.reduce((sum, item) => sum + item.eligible_verify_count, 0) ?? 0
 
@@ -779,6 +801,7 @@ export function ContactsView() {
 
       {selectedCompany && (
         <CompanyDrawer
+          campaignId={campaignId}
           company={selectedCompany}
           onClose={() => setSelectedCompany(null)}
           rules={rules}
