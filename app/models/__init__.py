@@ -1,5 +1,6 @@
 from app.models.scrape import ScrapeJob, ScrapePage
 from app.models.pipeline import (
+    AiUsageEvent,
     AnalysisJob,
     Campaign,
     ClassificationResult,
@@ -10,6 +11,8 @@ from app.models.pipeline import (
     CrawlArtifact,
     CrawlJob,
     JobEvent,
+    PipelineRun,
+    PipelineRunEvent,
     Prompt,
     ScrapePrompt,
     ProspectContact,
@@ -22,6 +25,9 @@ __all__ = [
     "ScrapeJob",
     "ScrapePage",
     "Campaign",
+    "PipelineRun",
+    "PipelineRunEvent",
+    "AiUsageEvent",
     "Upload",
     "Company",
     "CompanyFeedback",

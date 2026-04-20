@@ -21,6 +21,7 @@ from app.core.logging import log_event
 from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule
 from app.models.pipeline import ContactFetchJobState
 from app.services.pipeline_service import recompute_contact_stages
+from app.services.pipeline_run_orchestrator import enqueue_s4_for_contact_success
 from app.services.apollo_client import (
     ERR_APOLLO_AUTH_FAILED,
     ERR_APOLLO_CREDENTIALS_MISSING,
@@ -691,6 +692,7 @@ class ContactService:
             recompute_contact_stages(session, company_ids=[company_id])
             session.commit()
             session.refresh(job)
+            enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
             return job
 
     def _complete_job(
@@ -718,6 +720,7 @@ class ContactService:
             session.add(job)
             session.commit()
             session.refresh(job)
+            enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
             return job
 
     def _fail_job(

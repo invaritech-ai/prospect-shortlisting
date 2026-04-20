@@ -4,11 +4,15 @@ import assert from 'node:assert/strict'
 import {
   activateScrapePrompt,
   createScrapePrompt,
+  getCampaignCosts,
+  getPipelineRunCosts,
+  getPipelineRunProgress,
   listCompanies,
   listCompanyIds,
   listContactCompanies,
   listContacts,
   listScrapePrompts,
+  startPipelineRun,
   scrapeAllCompanies,
   scrapeSelectedCompanies,
   updateScrapePrompt,
@@ -209,4 +213,99 @@ test('activateScrapePrompt posts to activate endpoint', async () => {
 
   assert.match(requested, /\/v1\/scrape-prompts\/sp1\/activate$/)
   assert.equal(method, 'POST')
+})
+
+test('startPipelineRun posts campaign-scoped payload', async () => {
+  let requested = ''
+  let method = ''
+  let sentBody = ''
+  mockFetch((url, init) => {
+    requested = url
+    method = String(init?.method ?? '')
+    sentBody = String(init?.body ?? '')
+    return {
+      pipeline_run_id: 'run-1',
+      requested_count: 10,
+      reused_count: 2,
+      queued_count: 7,
+      skipped_count: 1,
+      failed_count: 0,
+    }
+  })
+
+  await startPipelineRun({
+    campaign_id: 'camp-1',
+    scrape_rules_snapshot: { page_kinds: ['home', 'contact'] },
+    analysis_prompt_snapshot: { prompt_id: 'p-1', prompt_text: 'Label ICP fit' },
+  })
+
+  assert.match(requested, /\/v1\/pipeline-runs\/start$/)
+  assert.equal(method, 'POST')
+  assert.match(sentBody, /"campaign_id":"camp-1"/)
+  assert.match(sentBody, /"scrape_rules_snapshot":\{"page_kinds":\["home","contact"\]\}/)
+  assert.match(sentBody, /"analysis_prompt_snapshot":\{"prompt_id":"p-1","prompt_text":"Label ICP fit"\}/)
+})
+
+test('getPipelineRunProgress requests run progress endpoint', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return {
+      pipeline_run_id: 'run-1',
+      campaign_id: 'camp-1',
+      status: 'queued',
+      requested_count: 5,
+      reused_count: 0,
+      queued_count: 5,
+      skipped_count: 0,
+      failed_count: 0,
+      created_at: '2026-01-01T00:00:00Z',
+      started_at: null,
+      finished_at: null,
+      stages: {},
+    }
+  })
+
+  await getPipelineRunProgress('run-1')
+  assert.match(requested, /\/v1\/pipeline-runs\/run-1\/progress$/)
+})
+
+test('getPipelineRunCosts requests run costs endpoint', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return {
+      pipeline_run_id: 'run-1',
+      campaign_id: 'camp-1',
+      company_id: null,
+      total_cost_usd: '0.100000',
+      event_count: 1,
+      input_tokens: 10,
+      output_tokens: 5,
+      by_stage: {},
+    }
+  })
+
+  await getPipelineRunCosts('run-1')
+  assert.match(requested, /\/v1\/pipeline-runs\/run-1\/costs$/)
+})
+
+test('getCampaignCosts requests campaign costs endpoint', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return {
+      pipeline_run_id: null,
+      campaign_id: 'camp-1',
+      company_id: null,
+      total_cost_usd: '0.100000',
+      event_count: 1,
+      input_tokens: 10,
+      output_tokens: 5,
+      by_stage: {},
+    }
+  })
+
+  await getCampaignCosts('camp-1')
+  assert.match(requested, /\/v1\/campaigns\/camp-1\/costs$/)
 })

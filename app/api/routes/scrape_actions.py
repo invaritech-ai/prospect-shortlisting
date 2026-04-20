@@ -37,6 +37,7 @@ def _enqueue_scrapes_for_companies(
     companies: list[Company],
     scrape_rules: dict | None = None,
     idempotency_key: str | None = None,
+    pipeline_run_id: UUID | None = None,
 ) -> CompanyScrapeResult:
     failed_company_ids: list[UUID] = []
     valid: list[tuple[Company, str, str]] = []
@@ -82,6 +83,7 @@ def _enqueue_scrapes_for_companies(
                 website_url=company.normalized_url,
                 normalized_url=normalized,
                 domain=domain,
+                pipeline_run_id=pipeline_run_id,
                 js_fallback=(
                     bool(scrape_rules.get("js_fallback"))
                     if scrape_rules and scrape_rules.get("js_fallback") is not None

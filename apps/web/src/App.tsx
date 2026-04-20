@@ -10,15 +10,17 @@ import {
   fetchContactsForCompany,
   fetchContactsForCompanyApollo,
   getContactsExportUrl,
+  getCampaignCosts,
   getCompanyCounts,
   getContactCounts,
+  getPipelineRunProgress,
   getStats,
   listRuns,
   listScrapeJobs,
   listCampaigns,
   listUploads,
   resetStuckJobs,
-  scrapeAllCompanies,
+  startPipelineRun,
   uploadFileToCampaign,
 } from './lib/api'
 import type {
@@ -30,6 +32,8 @@ import type {
   RunRead,
   ScrapeJobRead,
   StatsResponse,
+  PipelineRunProgressRead,
+  PipelineCostSummaryRead,
 } from './lib/types'
 import type { ActiveView } from './lib/navigation'
 import { parseApiError } from './lib/utils'
@@ -63,7 +67,6 @@ import { CompanyContactsPreviewPanel } from './components/panels/CompanyContacts
 import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPanel'
 
 // UI
-import { ConfirmDialog } from './components/ui/ConfirmDialog'
 import { Toast, type ToastNoticeAction } from './components/ui/Toast'
 
 const MAX_POLL_FAILURES = 3
@@ -97,6 +100,9 @@ function App() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
   const [isCampaignLoading, setIsCampaignLoading] = useState(false)
   const [isCampaignSaving, setIsCampaignSaving] = useState(false)
+  const [latestPipelineRunId, setLatestPipelineRunId] = useState<string | null>(null)
+  const [latestPipelineRunProgress, setLatestPipelineRunProgress] = useState<PipelineRunProgressRead | null>(null)
+  const [campaignCostSummary, setCampaignCostSummary] = useState<PipelineCostSummaryRead | null>(null)
   const activeCampaignName =
     campaigns.find((c) => c.id === selectedCampaignId)?.name ??
     campaigns[0]?.name ??
@@ -110,11 +116,9 @@ function App() {
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
 
-  // ── Confirm dialogs ───────────────────────────────────────────────────────
-  const [bulkConfirm, setBulkConfirm] = useState<null | 'scrape_all' | 'classify_all'>(null)
-
   // ── Title rules panel ─────────────────────────────────────────────────────
   const [isTitleRulesOpen, setIsTitleRulesOpen] = useState(false)
+  const [isStartingCampaignPipeline, setIsStartingCampaignPipeline] = useState(false)
 
   // ── Custom hooks ──────────────────────────────────────────────────────────
   const promptMgmt = usePromptManagement(setError, setNotice)
@@ -194,6 +198,19 @@ function App() {
     }
   }, [selectedCampaignId])
 
+  const loadCampaignCostSummary = useCallback(async (campaignId: string | null) => {
+    if (!campaignId) {
+      setCampaignCostSummary(null)
+      return
+    }
+    try {
+      const summary = await getCampaignCosts(campaignId)
+      setCampaignCostSummary(summary)
+    } catch {
+      // non-critical telemetry path
+    }
+  }, [])
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -215,6 +232,33 @@ function App() {
     }, 10000)
     return () => window.clearInterval(timer)
   }, [loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignData])
+
+  useEffect(() => {
+    void loadCampaignCostSummary(selectedCampaignId)
+    setLatestPipelineRunId(null)
+    setLatestPipelineRunProgress(null)
+  }, [loadCampaignCostSummary, selectedCampaignId])
+
+  useEffect(() => {
+    if (!latestPipelineRunId) return
+    let cancelled = false
+    const loadProgress = async () => {
+      try {
+        const progress = await getPipelineRunProgress(latestPipelineRunId)
+        if (!cancelled) setLatestPipelineRunProgress(progress)
+      } catch {
+        // non-critical telemetry path
+      }
+    }
+    void loadProgress()
+    const timer = window.setInterval(() => {
+      void loadProgress()
+    }, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [latestPipelineRunId])
 
   useEffect(() => {
     if (!error) return
@@ -397,37 +441,49 @@ function App() {
     finally { setIsResettingStuck(false) }
   }
 
-  // ── Bulk confirm handlers ─────────────────────────────────────────────────
-
-  const runScrapeAll = async () => {
-    setError(''); setNotice(''); setNoticeAction(null)
-    try {
-      const result = await scrapeAllCompanies({
-        scrapeRules: scrapePromptMgmt.activeScrapePrompt?.scrape_rules_structured ?? undefined,
-      })
-      void loadCompanyCounts()
-      pipeline.refreshPipelineView()
-      void loadRecentActivity()
-      const msg = `Queued ${result.queued_count}/${result.requested_count} companies for scraping.`
-      setNotice(result.failed_company_ids.length > 0 ? `${msg} ${result.failed_company_ids.length} failed.` : msg)
-    } catch (err) { setError(parseApiError(err)) }
-  }
-
-  const runClassifyAll = async () => {
-    if (!promptMgmt.selectedPrompt?.enabled) {
-      setError('Select an enabled prompt before running classification.')
+  const onStartCampaignPipeline = async () => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign before starting a pipeline run.')
       return
     }
-    setError(''); setNotice(''); setNoticeAction(null)
+    setError('')
+    setNotice('')
+    setNoticeAction(null)
+    setIsStartingCampaignPipeline(true)
     try {
-      const result = await createRuns({
-        prompt_id: promptMgmt.selectedPrompt.id,
-        scope: 'all',
+      const result = await startPipelineRun({
+        campaign_id: selectedCampaignId,
+        scrape_rules_snapshot: {
+          scrape_prompt_id: scrapePromptMgmt.activeScrapePrompt?.id ?? null,
+          scrape_prompt_name: scrapePromptMgmt.activeScrapePrompt?.name ?? null,
+          intent_text: scrapePromptMgmt.activeScrapePrompt?.intent_text ?? null,
+          compiled_prompt_text: scrapePromptMgmt.activeScrapePrompt?.compiled_prompt_text ?? null,
+          scrape_rules_structured: scrapePromptMgmt.activeScrapePrompt?.scrape_rules_structured ?? null,
+        },
+        analysis_prompt_snapshot: promptMgmt.selectedPrompt
+          ? {
+              prompt_id: promptMgmt.selectedPrompt.id,
+              prompt_name: promptMgmt.selectedPrompt.name,
+              prompt_text: promptMgmt.selectedPrompt.prompt_text,
+              enabled: promptMgmt.selectedPrompt.enabled,
+            }
+          : null,
       })
+      setNotice(
+        `Pipeline run ${result.pipeline_run_id} queued: requested ${result.requested_count}, reused ${result.reused_count}, queued ${result.queued_count}, skipped ${result.skipped_count}, failed ${result.failed_count}.`,
+      )
+      setLatestPipelineRunId(result.pipeline_run_id)
+      void loadStats()
+      void loadCompanyCounts()
       void loadRecentActivity()
-      const runCount = result.runs.length
-      setNotice(`Created ${runCount} run${runCount === 1 ? '' : 's'} and queued ${result.queued_count}/${result.requested_count} classifications.`)
-    } catch (err) { setError(parseApiError(err)) }
+      void loadCampaignData()
+      void loadCampaignCostSummary(selectedCampaignId)
+      pipeline.refreshPipelineView()
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsStartingCampaignPipeline(false)
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -468,6 +524,10 @@ function App() {
             onCreateCampaign={(name, description) => void onCreateCampaign(name, description)}
             onDeleteCampaign={(campaignId) => void onDeleteCampaign(campaignId)}
             onAssignUploads={(campaignId, uploadIds) => void onAssignUploads(campaignId, uploadIds)}
+            onStartCampaignPipeline={() => void onStartCampaignPipeline()}
+            isStartingCampaignPipeline={isStartingCampaignPipeline}
+            latestRunProgress={latestPipelineRunProgress}
+            campaignCostSummary={campaignCostSummary}
           />
         )}
 
@@ -489,10 +549,14 @@ function App() {
             onToggleAll={pipeline.onFullPipelineToggleAll}
             onClearSelection={pipeline.onFullPipelineClearSelection}
             onScrapeSelected={pipeline.onFullPipelineScrapeSelected}
+            onStartCampaignPipeline={() => void onStartCampaignPipeline()}
             onResumeCompany={pipeline.onFullPipelineResumeCompany}
             onPagePrev={pipeline.onFullPipelinePagePrev}
             onPageNext={pipeline.onFullPipelinePageNext}
             onPageSizeChange={pipeline.onFullPipelinePageSizeChange}
+            isStartingCampaignPipeline={isStartingCampaignPipeline}
+            latestRunProgress={latestPipelineRunProgress}
+            campaignCostSummary={campaignCostSummary}
           />
         )}
 
@@ -769,44 +833,6 @@ function App() {
         onMatchGapFilterChange={panels.setCompanyContactGapFilter}
         onClose={panels.closeCompanyContacts}
       />
-
-      <ConfirmDialog
-        open={bulkConfirm === 'scrape_all'}
-        title="Queue scrapes for all companies?"
-        confirmLabel="Queue scrapes"
-        onClose={() => setBulkConfirm(null)}
-        onConfirm={() => {
-          setBulkConfirm(null)
-          void runScrapeAll()
-        }}
-      >
-        <p>
-          You have approximately{' '}
-          <strong>{companyCounts != null ? companyCounts.total.toLocaleString() : '—'}</strong> companies.
-          New scrape jobs are created in the background.
-        </p>
-        <p className="mt-3">
-          Any domain that already has an <strong>active</strong> scrape (queued or running) is skipped.
-        </p>
-      </ConfirmDialog>
-
-      <ConfirmDialog
-        open={bulkConfirm === 'classify_all'}
-        title="Run classification for all companies?"
-        confirmLabel="Queue classifications"
-        onClose={() => setBulkConfirm(null)}
-        onConfirm={() => {
-          setBulkConfirm(null)
-          void runClassifyAll()
-        }}
-      >
-        <p>
-          Prompt: <strong>{promptMgmt.selectedPrompt?.name ?? '—'}</strong>
-        </p>
-        <p className="mt-3">
-          Only companies with a <strong>completed</strong> scrape are queued. Others are skipped.
-        </p>
-      </ConfirmDialog>
 
       <Toast error={error} notice={notice} noticeAction={noticeAction} />
 

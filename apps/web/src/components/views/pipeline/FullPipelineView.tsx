@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, PipelineCostSummaryRead, PipelineRunProgressRead } from '../../../lib/types'
 import {
   companyListBrowseUrl,
   matchesFullPipelineFilters,
@@ -122,13 +122,17 @@ interface FullPipelineViewProps {
   onToggleAll: (ids: string[]) => void
   onClearSelection: () => void
   onScrapeSelected: () => void
+  onStartCampaignPipeline: () => void
   onResumeCompany: (company: CompanyListItem) => void
   isScraping: boolean
+  isStartingCampaignPipeline: boolean
   onPagePrev: () => void
   onPageNext: () => void
   onPageSizeChange: (size: number) => void
   isSelectingAllMatching: boolean
   onSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
+  latestRunProgress: PipelineRunProgressRead | null
+  campaignCostSummary: PipelineCostSummaryRead | null
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -147,13 +151,17 @@ export function FullPipelineView({
   onToggleAll,
   onClearSelection,
   onScrapeSelected,
+  onStartCampaignPipeline,
   onResumeCompany,
   isScraping,
+  isStartingCampaignPipeline,
   onPagePrev,
   onPageNext,
   onPageSizeChange,
   isSelectingAllMatching,
   onSelectAllMatching,
+  latestRunProgress,
+  campaignCostSummary,
 }: FullPipelineViewProps) {
   const [statusFilter, setStatusFilter] = useState<FullPipelineStatusFilter>('all')
   const [search, setSearch] = useState('')
@@ -189,6 +197,15 @@ export function FullPipelineView({
             className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--oc-accent) focus:bg-white"
           />
         </div>
+        <button
+          type="button"
+          onClick={onStartCampaignPipeline}
+          disabled={isStartingCampaignPipeline}
+          title="Starts a campaign pipeline run and queues eligible companies into the S1 queue."
+          className="rounded-lg border border-(--oc-accent) bg-(--oc-accent-soft) px-3 py-1.5 text-xs font-semibold text-(--oc-accent-ink) transition hover:bg-(--oc-accent-soft)/80 disabled:opacity-60"
+        >
+          {isStartingCampaignPipeline ? 'Queueing S1…' : 'Start campaign pipeline'}
+        </button>
       </div>
 
       {/* Filter bar */}
@@ -233,7 +250,42 @@ export function FullPipelineView({
         >
           {isSelectingAllMatching ? 'Selecting…' : 'Select all matching filters'}
         </button>
+        {campaignCostSummary && (
+          <span className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-muted)">
+            Campaign spend: ${Number(campaignCostSummary.total_cost_usd || 0).toFixed(4)}
+          </span>
+        )}
       </div>
+      {latestRunProgress && (
+        <div className="space-y-2 rounded-lg border border-(--oc-border) bg-white px-3 py-2">
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="font-semibold text-(--oc-text)">
+              Live run status: {latestRunProgress.status}
+            </span>
+            <span className="text-(--oc-muted)">
+              queued {latestRunProgress.queued_count} · reused {latestRunProgress.reused_count} · failed {latestRunProgress.failed_count}
+            </span>
+          </div>
+          {Object.entries(latestRunProgress.stages).map(([stage, counts]) => {
+            const total = Math.max(1, counts.total)
+            const done = counts.completed + counts.failed
+            const pct = Math.min(100, Math.round((done / total) * 100))
+            return (
+              <div key={stage} className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-(--oc-muted)">
+                  <span>{stage}</span>
+                  <span>
+                    {counts.running} running · {counts.completed} done · {counts.failed} failed
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-surface)">
+                  <div className="h-full rounded-full bg-(--oc-accent)" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
       </div>
 
       {/* Selection bar */}
@@ -249,10 +301,10 @@ export function FullPipelineView({
             type="button"
             onClick={onScrapeSelected}
             disabled={isScraping}
-            title="Queues scrape jobs (S1) for the selected domains. Use per-row Resume or S2–S4 when you are ready for later stages."
+            title="Starts pipeline for selected rows by queueing S1 scrape jobs."
             className="rounded-lg bg-(--oc-accent) px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-60"
           >
-            {isScraping ? 'Starting…' : 'Run pipeline'}
+            {isScraping ? 'Queueing S1…' : 'Start pipeline (S1 queue)'}
           </button>
           <button
             type="button"

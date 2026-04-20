@@ -29,6 +29,7 @@ from app.services.fetch_service import (
 from app.services.link_service import apply_page_selection_rules, discover_focus_targets
 from app.services.markdown_service import MarkdownService
 from app.services.pipeline_service import recompute_company_stages
+from app.services.pipeline_run_orchestrator import enqueue_s2_for_scrape_success
 from app.services.url_utils import canonical_internal_url, clean_text, domain_from_url, normalize_url
 
 
@@ -633,6 +634,8 @@ class ScrapeService:
             session.add(job)
             recompute_company_stages(session, normalized_urls=[normalized_url])
             session.commit()
+            if job.status == "completed":
+                enqueue_s2_for_scrape_success(engine=engine, scrape_job_id=job.id)
 
             log_event(
                 logger,

@@ -28,6 +28,10 @@ import type {
   PromptCreate,
   PromptRead,
   PromptUpdate,
+  PipelineCostSummaryRead,
+  PipelineRunProgressRead,
+  PipelineRunStartRequest,
+  PipelineRunStartResponse,
   ScrapePromptCreate,
   ScrapePromptRead,
   ScrapePromptUpdate,
@@ -293,6 +297,26 @@ export async function createRuns(payload: RunCreateRequest): Promise<RunCreateRe
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+export async function startPipelineRun(payload: PipelineRunStartRequest): Promise<PipelineRunStartResponse> {
+  return request<PipelineRunStartResponse>('/v1/pipeline-runs/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getPipelineRunProgress(runId: string): Promise<PipelineRunProgressRead> {
+  return request<PipelineRunProgressRead>(`/v1/pipeline-runs/${encodeURIComponent(runId)}/progress`)
+}
+
+export async function getPipelineRunCosts(runId: string): Promise<PipelineCostSummaryRead> {
+  return request<PipelineCostSummaryRead>(`/v1/pipeline-runs/${encodeURIComponent(runId)}/costs`)
+}
+
+export async function getCampaignCosts(campaignId: string): Promise<PipelineCostSummaryRead> {
+  return request<PipelineCostSummaryRead>(`/v1/campaigns/${encodeURIComponent(campaignId)}/costs`)
 }
 
 export async function listRuns(limit = 25, offset = 0): Promise<RunRead[]> {

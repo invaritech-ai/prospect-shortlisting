@@ -25,6 +25,7 @@ class ScrapeJob(SQLModel, table=True):
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     website_url: str
     normalized_url: str
     domain: str

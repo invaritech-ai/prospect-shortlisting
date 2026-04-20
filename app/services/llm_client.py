@@ -96,7 +96,7 @@ class LLMClient:
         self._default_timeout = default_timeout
         self._last_call_at: float = 0.0  # monotonic; per-instance throttle
 
-    def chat(
+    def chat_with_usage(
         self,
         *,
         model: str,
@@ -104,15 +104,25 @@ class LLMClient:
         temperature: float = 0.0,
         response_format: dict | None = None,
         timeout: int | None = None,
-    ) -> tuple[str, str]:
-        """Send a chat completion. Returns ``(content, error_code)``.
+    ) -> tuple[str, str, dict]:
+        """Send a chat completion. Returns ``(content, error_code, usage_meta)``.
 
         ``error_code`` is ``""`` on success, an ``ERR_*`` constant on failure.
         On failure ``content`` is always ``""``.
         """
+        usage_meta: dict = {
+            "provider": "openrouter",
+            "model": model,
+            "request_id": None,
+            "openrouter_generation_id": None,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "billed_cost_usd": None,
+            "raw_usage": None,
+        }
         if not self._api_key:
             log_event(logger, "llm_api_key_missing", purpose=self._purpose, model=model)
-            return "", ERR_API_KEY_MISSING
+            return "", ERR_API_KEY_MISSING, usage_meta
 
         # Per-instance throttle
         if self._min_interval > 0:
@@ -147,6 +157,7 @@ class LLMClient:
             try:
                 with urlopen(req, context=_SSL_CTX, timeout=effective_timeout) as resp:  # noqa: S310
                     raw = resp.read().decode("utf-8", errors="ignore")
+                    response_headers = dict(resp.headers.items()) if getattr(resp, "headers", None) else {}
 
                 self._last_call_at = time.monotonic()
                 latency_ms = int((self._last_call_at - t_start) * 1000)
@@ -156,7 +167,7 @@ class LLMClient:
                 if not choices:
                     log_event(logger, "llm_empty_choices",
                               model=model, purpose=self._purpose, latency_ms=latency_ms)
-                    return "", ERR_EMPTY_RESPONSE
+                    return "", ERR_EMPTY_RESPONSE, usage_meta
 
                 content = choices[0]["message"]["content"]
                 if isinstance(content, list):
@@ -169,13 +180,34 @@ class LLMClient:
                 content = str(content or "").strip()
 
                 usage = decoded.get("usage") or {}
+                usage_meta["request_id"] = (
+                    response_headers.get("x-request-id")
+                    or response_headers.get("X-Request-Id")
+                    or decoded.get("id")
+                )
+                usage_meta["openrouter_generation_id"] = (
+                    usage.get("generation_id")
+                    or response_headers.get("x-openrouter-generation-id")
+                    or response_headers.get("X-Openrouter-Generation-Id")
+                    or decoded.get("openrouter_generation_id")
+                    or decoded.get("generation_id")
+                )
+                usage_meta["prompt_tokens"] = int(usage.get("prompt_tokens") or 0)
+                usage_meta["completion_tokens"] = int(usage.get("completion_tokens") or 0)
+                usage_meta["billed_cost_usd"] = (
+                    usage.get("cost")
+                    or usage.get("total_cost")
+                    or decoded.get("cost")
+                    or decoded.get("billed_cost_usd")
+                )
+                usage_meta["raw_usage"] = usage or None
                 log_event(
                     logger, "llm_call_ok",
                     model=model, purpose=self._purpose, latency_ms=latency_ms,
                     prompt_tokens=usage.get("prompt_tokens"),
                     completion_tokens=usage.get("completion_tokens"),
                 )
-                return content, ""
+                return content, "", usage_meta
 
             except HTTPError as exc:
                 last_exc = exc
@@ -199,27 +231,46 @@ class LLMClient:
                 if is_429:
                     log_event(logger, "llm_429_exhausted", model=model, purpose=self._purpose,
                               error=str(exc), attempts=attempt + 1)
-                    return "", ERR_RATE_LIMITED
+                    return "", ERR_RATE_LIMITED, usage_meta
                 if is_5xx:
                     log_event(logger, "llm_5xx_exhausted", model=model, purpose=self._purpose,
                               status=exc.code, error=str(exc), attempts=attempt + 1)
-                    return "", ERR_SERVER_ERROR
+                    return "", ERR_SERVER_ERROR, usage_meta
 
                 log_event(logger, "llm_http_error", model=model, purpose=self._purpose,
                           status=exc.code, error=str(exc))
-                return "", ERR_FAILED
+                return "", ERR_FAILED, usage_meta
 
             except TimeoutError:
                 log_event(logger, "llm_timeout", model=model, purpose=self._purpose,
                           timeout_sec=effective_timeout)
-                return "", ERR_TIMEOUT
+                return "", ERR_TIMEOUT, usage_meta
 
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 log_event(logger, "llm_error", model=model, purpose=self._purpose,
                           error=str(exc), traceback=traceback.format_exc())
-                return "", ERR_FAILED
+                return "", ERR_FAILED, usage_meta
 
         log_event(logger, "llm_retries_exhausted", model=model, purpose=self._purpose,
                   error=str(last_exc), attempts=self._max_retries + 1)
-        return "", ERR_FAILED
+        return "", ERR_FAILED, usage_meta
+
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict],
+        temperature: float = 0.0,
+        response_format: dict | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str, str]:
+        """Backward-compatible wrapper returning ``(content, error_code)`` only."""
+        content, error, _ = self.chat_with_usage(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            response_format=response_format,
+            timeout=timeout,
+        )
+        return content, error

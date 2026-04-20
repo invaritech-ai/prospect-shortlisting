@@ -69,6 +69,7 @@ app.conf.update(
         "app.tasks.scrape.scrape_website": {"queue": "scrape"},
         "app.tasks.analysis.run_analysis_job": {"queue": "analysis"},
         "app.tasks.beat.reconcile_stuck_jobs": {"queue": "beat"},
+        "app.tasks.beat.reconcile_openrouter_costs": {"queue": "beat"},
         "app.tasks.contacts.fetch_contacts": {"queue": "contacts"},
         "app.tasks.contacts.fetch_contacts_apollo": {"queue": "contacts"},
         "app.tasks.contacts.verify_contacts_batch": {"queue": "contacts"},
@@ -78,6 +79,10 @@ app.conf.update(
         "reconcile-stuck-jobs": {
             "task": "app.tasks.beat.reconcile_stuck_jobs",
             "schedule": crontab(minute="*/10"),
+        },
+        "reconcile-openrouter-costs": {
+            "task": "app.tasks.beat.reconcile_openrouter_costs",
+            "schedule": crontab(minute="*/15"),
         },
     },
     timezone="UTC",

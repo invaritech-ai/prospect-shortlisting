@@ -309,6 +309,66 @@ export type RunCreateResult = {
   runs: RunRead[]
 }
 
+export type PipelineRunStartRequest = {
+  campaign_id: string
+  company_ids?: string[]
+  scrape_rules_snapshot?: Record<string, unknown> | null
+  analysis_prompt_snapshot?: Record<string, unknown> | null
+  contact_rules_snapshot?: Record<string, unknown> | null
+  validation_policy_snapshot?: Record<string, unknown> | null
+  force_rerun?: Record<string, boolean> | null
+}
+
+export type PipelineRunStartResponse = {
+  pipeline_run_id: string
+  requested_count: number
+  reused_count: number
+  queued_count: number
+  skipped_count: number
+  failed_count: number
+}
+
+export type PipelineStageProgressRead = {
+  queued: number
+  running: number
+  completed: number
+  failed: number
+  total: number
+}
+
+export type PipelineRunProgressRead = {
+  pipeline_run_id: string
+  campaign_id: string
+  status: string
+  requested_count: number
+  reused_count: number
+  queued_count: number
+  skipped_count: number
+  failed_count: number
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  stages: Record<string, PipelineStageProgressRead>
+}
+
+export type PipelineStageCostRead = {
+  cost_usd: number | string
+  event_count: number
+  input_tokens: number
+  output_tokens: number
+}
+
+export type PipelineCostSummaryRead = {
+  pipeline_run_id: string | null
+  campaign_id: string | null
+  company_id: string | null
+  total_cost_usd: number | string
+  event_count: number
+  input_tokens: number
+  output_tokens: number
+  by_stage: Record<string, PipelineStageCostRead>
+}
+
 export type AnalysisRunJobRead = {
   analysis_job_id: string
   run_id: string
