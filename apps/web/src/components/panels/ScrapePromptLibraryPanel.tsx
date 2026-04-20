@@ -300,12 +300,9 @@ export function ScrapePromptLibraryPanel({
               <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
                 Structured rules (read-only)
               </span>
-              <textarea
-                value={formatScrapeRulesPreview(editingPrompt?.scrape_rules_structured)}
-                readOnly
-                rows={8}
-                className="w-full rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] px-4 py-3 font-mono text-xs leading-6 text-[var(--oc-muted)] outline-none"
-              />
+              <pre className="w-full overflow-x-auto whitespace-pre-wrap wrap-break-word rounded-2xl border border-(--oc-border) bg-(--oc-surface) px-4 py-3 font-mono text-xs leading-6 text-(--oc-muted)">
+                {formatScrapeRulesPreview(editingPrompt?.scrape_rules_structured)}
+              </pre>
             </label>
 
             <label className="flex cursor-pointer items-center gap-2.5">

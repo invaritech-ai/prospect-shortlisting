@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem, ScrapePromptRead, ScrapeRules, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, ScrapePromptRead, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -53,11 +53,6 @@ const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
   { value: 'permanent', label: 'Permanent' },
   { value: 'soft', label: 'Soft' },
 ]
-
-function formatScrapeRulesPreview(rules: ScrapeRules | null | undefined): string {
-  if (!rules) return 'No derived scrape rules yet. Configure pages intent in Prompt Library.'
-  return JSON.stringify(rules, null, 2)
-}
 
 function scrapeBadgeClass(status: string): string {
   const s = status.toLowerCase()
@@ -211,66 +206,41 @@ export function S1ScrapingView({
           </div>
         )}
 
-        {/* Header */}
-        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}>
-          <div className="flex-1">
+        {/* Header — mobile-first: stack title, full-width search, then prompt link */}
+        <div
+          className="flex flex-col gap-3 rounded-xl px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2"
+          style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}
+        >
+          <div className="min-w-0 flex-1">
             <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
             <p className="text-xs" style={{ color: 'var(--s1-text)', opacity: 0.7 }}>
               Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
             </p>
           </div>
-          <div className="relative">
-            <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search domains…"
-              className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white"
-              style={{ width: 180 }} />
+          <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
+            <div className="relative min-w-0 w-full sm:w-[180px] sm:shrink-0">
+              <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search domains…"
+                className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white" />
+            </div>
+            <button
+              type="button"
+              onClick={onOpenPromptLibrary}
+              title={selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Open scrape prompt library'}
+              className="min-w-0 w-full text-left text-xs text-(--oc-muted) underline underline-offset-2 transition hover:text-(--oc-text) sm:w-auto sm:max-w-[min(20rem,45vw)] sm:shrink-0 sm:text-right"
+            >
+              <span className="block min-w-0 truncate sm:whitespace-nowrap">
+                {selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Select prompt…'}
+              </span>
+            </button>
           </div>
         </div>
 
         {/* Letter strip */}
         <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} />
-
-        <div className="rounded-xl border border-(--oc-border) bg-white px-3 py-2.5">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-(--oc-muted)">Pages of interest</p>
-            <button
-              type="button"
-              onClick={onOpenPromptLibrary}
-              className="text-[11px] text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text)"
-            >
-              {selectedScrapePrompt ? 'Edit scraping prompts' : 'Open scraping prompts'}
-            </button>
-          </div>
-
-          {selectedScrapePrompt ? (
-            <div className="space-y-2">
-              <div className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-3 py-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-(--oc-muted)">Intent (plain English)</p>
-                <p className="mt-1 text-xs text-(--oc-text)">
-                  {selectedScrapePrompt.intent_text?.trim() || 'No pages intent configured. Default scrape behavior will be used.'}
-                </p>
-              </div>
-              <div className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-3 py-2">
-                <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-(--oc-muted)">
-                  Derived scrape rules (read-only)
-                </p>
-                <textarea
-                  readOnly
-                  value={formatScrapeRulesPreview(selectedScrapePrompt.scrape_rules_structured)}
-                  rows={7}
-                  className="w-full resize-none rounded-md border border-(--oc-border) bg-white px-2 py-1.5 font-mono text-[11px] leading-5 text-(--oc-muted) outline-none"
-                />
-              </div>
-            </div>
-          ) : (
-            <p className="text-xs text-(--oc-muted)">
-              No scrape prompt selected. Open scraping prompts and select an enabled prompt to define pages intent.
-            </p>
-          )}
-        </div>
 
         {/* Sub-filter chips + Pager */}
           <div className="flex items-center justify-between gap-2">
