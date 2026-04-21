@@ -4,10 +4,12 @@ from __future__ import annotations
 import csv
 import io
 from datetime import timedelta
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import Integer, case, func, or_, select as sa_select, text
+from sqlalchemy import Integer, and_, case, func, or_, select as sa_select, text
+from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
@@ -22,6 +24,7 @@ from app.api.schemas.contacts import (
     MatchGapFilter,
     ProspectContactRead,
     RematchResult,
+    TitleRuleImpactPreview,
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
     TitleRuleSeedResult,
@@ -33,17 +36,21 @@ from app.api.schemas.contacts import (
 from app.db.session import get_session
 from app.models import (
     AnalysisJob,
+    Campaign,
     ClassificationResult,
     Company,
     ContactFetchJob,
     ContactVerifyJob,
     ProspectContact,
+    ProspectContactEmail,
     Run,
     TitleMatchRule,
+    Upload,
 )
 from app.models.pipeline import (
     AnalysisJobState,
     CompanyPipelineStage,
+    ContactFetchJobState,
     ContactVerifyJobState,
     PredictedLabel,
     utcnow,
@@ -68,6 +75,8 @@ router = APIRouter(prefix="/v1", tags=["contacts"])
 
 _ALLOWED_CONTACT_STAGE_FILTERS = frozenset({"all", "fetched", "verified", "campaign_ready"})
 _ALLOWED_MATCH_GAP_FILTERS = frozenset({"all", "contacts_no_match", "matched_no_email", "ready_candidates"})
+_IMPACT_SOURCE_VALUES = frozenset({"snov", "apollo", "both"})
+_IMPACT_PROVIDER_STALE_DEFAULT_DAYS: dict[str, int] = {"snov": 30, "apollo": 45}
 
 
 def _validate_contact_stage_filter(stage_filter: str) -> str:
@@ -86,6 +95,68 @@ def _validate_match_gap_filter(value: str) -> MatchGapFilter:
     if normalized not in _ALLOWED_MATCH_GAP_FILTERS:
         raise HTTPException(status_code=422, detail="Invalid match_gap_filter.")
     return normalized  # type: ignore[return-value]
+
+
+def _validate_campaign_upload_scope(
+    *,
+    session: Session,
+    campaign_id: UUID,
+    upload_id: UUID | None,
+) -> None:
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    if upload_id is None:
+        return
+    upload = session.get(Upload, upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="upload_id is not assigned to the selected campaign.")
+
+
+def _campaign_upload_scope(campaign_id: UUID):
+    return col(Company.upload_id).in_(select(Upload.id).where(col(Upload.campaign_id) == campaign_id))
+
+
+def _contact_emails_map(session: Session, contacts: list[ProspectContact]) -> dict[UUID, list[str]]:
+    contact_ids = [contact.id for contact in contacts if contact.id]
+    if not contact_ids:
+        return {}
+    rows = list(
+        session.exec(
+            select(
+                ProspectContactEmail.contact_id,
+                ProspectContactEmail.email,
+                ProspectContactEmail.is_primary,
+                ProspectContactEmail.updated_at,
+            )
+            .where(col(ProspectContactEmail.contact_id).in_(contact_ids))
+            .order_by(
+                col(ProspectContactEmail.contact_id),
+                col(ProspectContactEmail.is_primary).desc(),
+                col(ProspectContactEmail.updated_at).desc(),
+            )
+        )
+    )
+    out: dict[UUID, list[str]] = {contact.id: [] for contact in contacts if contact.id}
+    seen_norm: dict[UUID, set[str]] = {contact.id: set() for contact in contacts if contact.id}
+    for contact_id, email, _is_primary, _updated_at in rows:
+        if not email:
+            continue
+        bucket = out.setdefault(contact_id, [])
+        norm = email.strip().lower()
+        if norm and norm not in seen_norm.setdefault(contact_id, set()):
+            bucket.append(email)
+            seen_norm[contact_id].add(norm)
+    for contact in contacts:
+        if not contact.id:
+            continue
+        if contact.email:
+            norm = contact.email.strip().lower()
+            if norm and norm not in seen_norm.setdefault(contact.id, set()):
+                out.setdefault(contact.id, []).insert(0, contact.email)
+                seen_norm[contact.id].add(norm)
+    return out
 
 
 def _verification_eligible_condition():
@@ -152,6 +223,7 @@ def _apply_contact_filters(
 
 def _select_verification_contact_ids(session: Session, payload: ContactVerifyRequest) -> list[UUID]:
     explicit_ids = list(dict.fromkeys(payload.contact_ids or []))
+    campaign_scope = _campaign_upload_scope(payload.campaign_id)
     if explicit_ids:
         rows = list(
             session.exec(
@@ -159,6 +231,7 @@ def _select_verification_contact_ids(session: Session, payload: ContactVerifyReq
                 .join(Company, col(Company.id) == col(ProspectContact.company_id))
                 .where(
                     col(ProspectContact.id).in_(explicit_ids),
+                    campaign_scope,
                     *_verification_eligible_condition(),
                 )
             )
@@ -175,7 +248,7 @@ def _select_verification_contact_ids(session: Session, payload: ContactVerifyReq
         stage_filter=payload.stage_filter or "all",
         company_ids=company_ids or None,
     )
-    stmt = stmt.where(*_verification_eligible_condition())
+    stmt = stmt.where(campaign_scope, *_verification_eligible_condition())
     return list(session.exec(stmt))
 
 
@@ -184,6 +257,7 @@ def _enqueue_contact_fetches(
     session: Session,
     companies: list[Company],
     provider: str = "snov",
+    next_provider: str | None = None,
 ) -> ContactFetchResult:
     if not companies:
         return ContactFetchResult(
@@ -194,39 +268,277 @@ def _enqueue_contact_fetches(
         )
 
     company_ids = [c.id for c in companies]
-    active_company_ids: set[UUID] = set(
+    # Lock target companies while deciding queue actions so concurrent requests
+    # do not double-enqueue the same provider chain on databases that support it.
+    session.exec(
+        select(Company.id).where(col(Company.id).in_(company_ids)).with_for_update()
+    ).all()
+    normalized_next_provider = (next_provider or "").strip().lower() or None
+    if normalized_next_provider not in {"snov", "apollo"} or normalized_next_provider == provider:
+        normalized_next_provider = None
+    providers_to_scan = {provider}
+    if normalized_next_provider:
+        providers_to_scan.add(normalized_next_provider)
+    active_jobs = list(
         session.exec(
-            select(ContactFetchJob.company_id).where(
+            select(ContactFetchJob).where(
                 col(ContactFetchJob.company_id).in_(company_ids),
                 col(ContactFetchJob.terminal_state).is_(False),
-                ContactFetchJob.provider == provider,
+                col(ContactFetchJob.provider).in_(tuple(providers_to_scan)),
             )
-        ).all()
+        )
     )
+    stale_active_company_ids: set[UUID] = set()
+    active_company_ids: set[UUID] = set()
+    active_followup_company_ids: set[UUID] = set()
+    active_updated = False
+    refreshed_active_jobs: list[ContactFetchJob] = []
+    for active_job in active_jobs:
+        session.refresh(active_job)
+        company_id = active_job.company_id
+        if not company_id:
+            continue
+        if active_job.terminal_state:
+            if active_job.provider == provider:
+                stale_active_company_ids.add(company_id)
+            continue
+        refreshed_active_jobs.append(active_job)
+        if active_job.provider == provider:
+            active_company_ids.add(company_id)
+        if normalized_next_provider and active_job.provider == normalized_next_provider:
+            active_followup_company_ids.add(company_id)
+
+    for active_job in refreshed_active_jobs:
+        company_id = active_job.company_id
+        if not company_id or active_job.provider != provider:
+            continue
+        target_next_provider = (
+            normalized_next_provider if company_id not in active_followup_company_ids else None
+        )
+        current_next = (active_job.next_provider or "").strip().lower() or None
+        if current_next == target_next_provider:
+            continue
+        update_result = session.execute(
+            sa_update(ContactFetchJob)
+            .where(
+                col(ContactFetchJob.id) == active_job.id,
+                col(ContactFetchJob.terminal_state).is_(False),
+            )
+            .values(next_provider=target_next_provider)
+        )
+        if update_result.rowcount and update_result.rowcount > 0:
+            active_updated = True
+        else:
+            active_company_ids.discard(company_id)
+            stale_active_company_ids.add(company_id)
 
     jobs_to_create: list[ContactFetchJob] = []
     for company in companies:
         if company.id in active_company_ids:
             continue
-        jobs_to_create.append(ContactFetchJob(company_id=company.id, provider=provider))
+        if company.id in stale_active_company_ids:
+            continue
+        target_next_provider = (
+            normalized_next_provider if company.id not in active_followup_company_ids else None
+        )
+        jobs_to_create.append(
+            ContactFetchJob(
+                company_id=company.id,
+                provider=provider,
+                next_provider=target_next_provider,
+            )
+        )
 
-    if jobs_to_create:
+    if jobs_to_create or active_updated:
         session.add_all(jobs_to_create)
         session.commit()
 
     queued_job_ids: list[UUID] = []
+    dispatched_job_ids: set[UUID] = set()
     task = fetch_contacts_apollo if provider == "apollo" else fetch_contacts
-    for job in jobs_to_create:
-        if job.id:
+    try:
+        for job in jobs_to_create:
+            if not job.id:
+                continue
             task.delay(str(job.id))
+            dispatched_job_ids.add(job.id)
             queued_job_ids.append(job.id)
+    except Exception as exc:
+        undispatched_job_ids = [
+            job.id for job in jobs_to_create if job.id and job.id not in dispatched_job_ids
+        ]
+        if undispatched_job_ids:
+            failed_at = utcnow()
+            session.execute(
+                sa_update(ContactFetchJob)
+                .where(
+                    col(ContactFetchJob.id).in_(undispatched_job_ids),
+                    col(ContactFetchJob.terminal_state).is_(False),
+                )
+                .values(
+                    state=ContactFetchJobState.FAILED,
+                    terminal_state=True,
+                    next_provider=None,
+                    last_error_code="dispatch_failed",
+                    last_error_message=str(exc)[:4000],
+                    finished_at=failed_at,
+                    updated_at=failed_at,
+                )
+            )
+            session.commit()
+        raise
+
+    followup_already_fetching = 0
+    if stale_active_company_ids and normalized_next_provider:
+        followup_companies = [
+            company
+            for company in companies
+            if company.id in stale_active_company_ids and company.id not in active_followup_company_ids
+        ]
+        followup_result = _enqueue_contact_fetches(
+            session=session,
+            companies=followup_companies,
+            provider=normalized_next_provider,
+        )
+        followup_already_fetching = followup_result.already_fetching_count
+        queued_job_ids.extend(followup_result.queued_job_ids)
 
     return ContactFetchResult(
         requested_count=len(companies),
         queued_count=len(queued_job_ids),
-        already_fetching_count=len(active_company_ids),
+        already_fetching_count=len(active_company_ids) + followup_already_fetching,
         queued_job_ids=queued_job_ids,
     )
+
+
+def _campaign_or_404(session: Session, campaign_id: UUID) -> Campaign:
+    campaign = session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return campaign
+
+
+def _normalize_impact_source(source: str | None) -> Literal["snov", "apollo", "both"]:
+    if not isinstance(source, str):
+        source = getattr(source, "default", "snov")
+    normalized = source.strip().lower() if source else "snov"
+    if normalized not in _IMPACT_SOURCE_VALUES:
+        raise HTTPException(status_code=422, detail="Invalid source.")
+    return normalized  # type: ignore[return-value]
+
+
+def _build_stale_condition(
+    *,
+    source: Literal["snov", "apollo", "both"],
+    stale_days: int | None,
+):
+    source_expr = func.lower(func.coalesce(col(ProspectContact.source), ""))
+    if stale_days is not None:
+        stale_cutoff = utcnow() - timedelta(days=stale_days)
+        stale_base = and_(
+            col(ProspectContact.title_match).is_(True),
+            col(ProspectContact.email).is_not(None),
+            col(ProspectContact.updated_at) <= stale_cutoff,
+        )
+        if source == "both":
+            return stale_base
+        return and_(stale_base, source_expr == source)
+
+    snov_cutoff = utcnow() - timedelta(days=_IMPACT_PROVIDER_STALE_DEFAULT_DAYS["snov"])
+    apollo_cutoff = utcnow() - timedelta(days=_IMPACT_PROVIDER_STALE_DEFAULT_DAYS["apollo"])
+    snov_stale = and_(
+        source_expr == "snov",
+        col(ProspectContact.updated_at) <= snov_cutoff,
+    )
+    apollo_stale = and_(
+        source_expr == "apollo",
+        col(ProspectContact.updated_at) <= apollo_cutoff,
+    )
+    fallback_stale = and_(
+        source_expr.notin_(["snov", "apollo"]),
+        col(ProspectContact.updated_at) <= snov_cutoff,
+    )
+    stale_by_source = (
+        snov_stale
+        if source == "snov"
+        else apollo_stale
+        if source == "apollo"
+        else or_(snov_stale, apollo_stale, fallback_stale)
+    )
+    return and_(
+        col(ProspectContact.title_match).is_(True),
+        col(ProspectContact.email).is_not(None),
+        stale_by_source,
+    )
+
+
+def _title_rule_impact_targets(
+    *,
+    session: Session,
+    campaign_id: UUID,
+    source: Literal["snov", "apollo", "both"] = "snov",
+    include_stale: bool = False,
+    stale_days: int | None = None,
+    force_refresh: bool = False,
+) -> tuple[list[Company], int, int]:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    scope = _campaign_upload_scope(campaign_id)
+    stale_condition = _build_stale_condition(
+        source=source,
+        stale_days=stale_days,
+    )
+    if force_refresh:
+        target_condition = col(ProspectContact.title_match).is_(True)
+    elif include_stale:
+        target_condition = or_(
+            col(ProspectContact.email).is_(None),
+            stale_condition,
+        )
+    else:
+        target_condition = col(ProspectContact.email).is_(None)
+    impacted_contacts_stmt = (
+        select(func.count(ProspectContact.id))
+        .join(Company, col(Company.id) == col(ProspectContact.company_id))
+        .where(
+            scope,
+            col(ProspectContact.title_match).is_(True),
+            target_condition,
+        )
+    )
+    impacted_contact_count = session.exec(impacted_contacts_stmt).one() or 0
+    stale_contact_count_stmt = (
+        select(func.count(ProspectContact.id))
+        .join(Company, col(Company.id) == col(ProspectContact.company_id))
+        .where(
+            scope,
+            stale_condition,
+        )
+    )
+    stale_contact_count = session.exec(stale_contact_count_stmt).one() or 0
+    impacted_company_ids = list(
+        session.exec(
+            select(ProspectContact.company_id)
+            .join(Company, col(Company.id) == col(ProspectContact.company_id))
+            .where(
+                scope,
+                col(ProspectContact.title_match).is_(True),
+                target_condition,
+            )
+            .group_by(ProspectContact.company_id)
+        )
+    )
+    companies = (
+        list(
+            session.exec(
+                select(Company)
+                .where(col(Company.id).in_(impacted_company_ids))
+                .order_by(col(Company.domain).asc())
+            )
+        )
+        if impacted_company_ids
+        else []
+    )
+    return companies, int(impacted_contact_count), int(stale_contact_count)
 
 
 @router.post(
@@ -236,11 +548,18 @@ def _enqueue_contact_fetches(
 )
 def fetch_contacts_for_company(
     company_id: UUID,
+    campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     company = session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found.")
+    upload = session.get(Upload, company.upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="company_id is not assigned to the selected campaign.")
     return _enqueue_contact_fetches(session=session, companies=[company], provider="snov")
 
 
@@ -251,11 +570,18 @@ def fetch_contacts_for_company(
 )
 def fetch_apollo_contacts_for_company(
     company_id: UUID,
+    campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     company = session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found.")
+    upload = session.get(Upload, company.upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="company_id is not assigned to the selected campaign.")
     return _enqueue_contact_fetches(session=session, companies=[company], provider="apollo")
 
 
@@ -266,11 +592,18 @@ def fetch_apollo_contacts_for_company(
 )
 def fetch_contacts_for_run(
     run_id: UUID,
+    campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     run = session.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found.")
+    upload = session.get(Upload, run.upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="run_id is not assigned to the selected campaign.")
 
     companies = list(
         session.exec(
@@ -295,11 +628,18 @@ def fetch_contacts_for_run(
 )
 def fetch_apollo_contacts_for_run(
     run_id: UUID,
+    campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     run = session.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found.")
+    upload = session.get(Upload, run.upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="run_id is not assigned to the selected campaign.")
 
     companies = list(
         session.exec(
@@ -327,6 +667,9 @@ def fetch_contacts_selected(
     session: Session = Depends(get_session),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ) -> ContactFetchResult:
+    campaign = session.get(Campaign, payload.campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
     try:
         idempotency_key = normalize_idempotency_key(x_idempotency_key)
     except ValueError as exc:
@@ -351,20 +694,33 @@ def fetch_contacts_selected(
     try:
         requested_ids = list(dict.fromkeys(payload.company_ids))
         companies = list(
-            session.exec(select(Company).where(col(Company.id).in_(requested_ids)))
+            session.exec(
+                select(Company)
+                .join(Upload, col(Upload.id) == col(Company.upload_id))
+                .where(
+                    col(Company.id).in_(requested_ids),
+                    col(Upload.campaign_id) == payload.campaign_id,
+                )
+            )
         )
         if not companies:
             raise HTTPException(status_code=404, detail="No matching companies found.")
 
-        providers: list[str] = ["snov", "apollo"] if payload.source == "both" else [payload.source]
-        total_queued, total_already_fetching = 0, 0
-        all_job_ids: list[UUID] = []
-
-        for provider in providers:
-            r = _enqueue_contact_fetches(session=session, companies=companies, provider=provider)
-            total_queued += r.queued_count
-            total_already_fetching = max(total_already_fetching, r.already_fetching_count)
-            all_job_ids.extend(r.queued_job_ids)
+        if payload.source == "both":
+            r = _enqueue_contact_fetches(
+                session=session,
+                companies=companies,
+                provider="snov",
+                next_provider="apollo",
+            )
+            total_queued = r.queued_count
+            total_already_fetching = r.already_fetching_count
+            all_job_ids = list(r.queued_job_ids)
+        else:
+            r = _enqueue_contact_fetches(session=session, companies=companies, provider=payload.source)
+            total_queued = r.queued_count
+            total_already_fetching = r.already_fetching_count
+            all_job_ids = list(r.queued_job_ids)
 
         result = ContactFetchResult(
             requested_count=len(companies),
@@ -393,6 +749,7 @@ def fetch_contacts_selected(
 @router.get("/companies/{company_id}/contacts", response_model=ContactListResponse)
 def list_company_contacts(
     company_id: UUID,
+    campaign_id: UUID = Query(...),
     title_match: bool | None = Query(default=None),
     verification_status: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
@@ -400,9 +757,26 @@ def list_company_contacts(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> ContactListResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    if not isinstance(title_match, bool):
+        title_match = getattr(title_match, "default", None)
+    if not isinstance(verification_status, str):
+        verification_status = getattr(verification_status, "default", None)
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
+    if not isinstance(limit, int):
+        limit = int(getattr(limit, "default", 50))
+    if not isinstance(offset, int):
+        offset = int(getattr(offset, "default", 0))
+
     company = session.get(Company, company_id)
     if not company:
         raise HTTPException(status_code=404, detail="Company not found.")
+    upload = session.get(Upload, company.upload_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found.")
+    if upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="company_id is not assigned to the selected campaign.")
 
     q = select(ProspectContact).join(Company, col(Company.id) == col(ProspectContact.company_id))
     q = _apply_contact_filters(
@@ -422,18 +796,25 @@ def list_company_contacts(
             ).offset(offset).limit(limit)
         ).all()
     )
+    email_map = _contact_emails_map(session, items)
 
     return ContactListResponse(
         total=total,
         has_more=(offset + len(items)) < total,
         limit=limit,
         offset=offset,
-        items=[ProspectContactRead.model_validate({**c.__dict__, "domain": company.domain}) for c in items],
+        items=[
+            ProspectContactRead.model_validate(
+                {**c.__dict__, "domain": company.domain, "emails": email_map.get(c.id, [])}
+            )
+            for c in items
+        ],
     )
 
 
 @router.get("/contacts/companies", response_model=ContactCompanyListResponse)
 def list_contacts_by_company(
+    campaign_id: UUID = Query(...),
     search: str | None = Query(default=None),
     title_match: bool | None = Query(default=None),
     verification_status: str | None = Query(default=None),
@@ -444,6 +825,7 @@ def list_contacts_by_company(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> ContactCompanyListResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     if not isinstance(search, str):
         search = getattr(search, "default", None)
     if not isinstance(verification_status, str):
@@ -452,6 +834,7 @@ def list_contacts_by_company(
         title_match = getattr(title_match, "default", None)
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
     if not isinstance(limit, int):
         limit = int(getattr(limit, "default", 50))
     if not isinstance(offset, int):
@@ -515,6 +898,7 @@ def list_contacts_by_company(
         .outerjoin(latest_contact_attempt, latest_contact_attempt.c.company_id == col(Company.id))
         .group_by(col(Company.id), col(Company.domain), latest_contact_attempt.c.last_attempted_at)
     )
+    stmt = stmt.where(_campaign_upload_scope(campaign_id))
     if upload_id is not None:
         stmt = stmt.where(col(Company.upload_id) == upload_id)
     if search:
@@ -579,7 +963,16 @@ def list_contacts_by_company(
 
 
 _CONTACT_SORT_FIELDS = frozenset(
-    {"domain", "created_at", "first_name", "last_name", "title", "verification_status", "pipeline_stage"}
+    {
+        "domain",
+        "created_at",
+        "updated_at",
+        "first_name",
+        "last_name",
+        "title",
+        "verification_status",
+        "pipeline_stage",
+    }
 )
 
 
@@ -598,6 +991,7 @@ def _parse_letters(letters: str | None) -> list[str]:
 
 @router.get("/contacts", response_model=ContactListResponse)
 def list_all_contacts(
+    campaign_id: UUID = Query(...),
     title_match: bool | None = Query(default=None),
     verification_status: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
@@ -605,13 +999,14 @@ def list_all_contacts(
     search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    sort_by: str = Query(default="domain"),
-    sort_dir: str = Query(default="asc"),
+    sort_by: str = Query(default="updated_at"),
+    sort_dir: str = Query(default="desc"),
     letters: str | None = Query(default=None),
     count_by_letters: bool = Query(default=False),
     upload_id: UUID | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> ContactListResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     if not isinstance(title_match, bool):
         title_match = getattr(title_match, "default", None)
     if not isinstance(verification_status, str):
@@ -627,18 +1022,20 @@ def list_all_contacts(
     if not isinstance(offset, int):
         offset = int(getattr(offset, "default", 0))
     if not isinstance(sort_by, str):
-        sort_by = getattr(sort_by, "default", "domain")
+        sort_by = getattr(sort_by, "default", "updated_at")
     if not isinstance(sort_dir, str):
-        sort_dir = getattr(sort_dir, "default", "asc")
+        sort_dir = getattr(sort_dir, "default", "desc")
     if not isinstance(count_by_letters, bool):
         count_by_letters = bool(getattr(count_by_letters, "default", False))
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
     letter_values = _parse_letters(letters)
     q = select(ProspectContact, Company.domain).join(
         Company, col(Company.id) == col(ProspectContact.company_id)
     )
+    q = q.where(_campaign_upload_scope(campaign_id))
     q = _apply_contact_filters(
         q,
         title_match=title_match,
@@ -663,6 +1060,7 @@ def list_all_contacts(
     _contact_sort_map = {
         "domain": col(Company.domain),
         "created_at": col(ProspectContact.created_at),
+        "updated_at": col(ProspectContact.updated_at),
         "first_name": col(ProspectContact.first_name),
         "last_name": col(ProspectContact.last_name),
         "title": col(ProspectContact.title),
@@ -681,8 +1079,14 @@ def list_all_contacts(
     )
 
     items = []
+    contacts_only = [contact for contact, _domain in rows]
+    email_map = _contact_emails_map(session, contacts_only)
     for contact, domain in rows:
-        items.append(ProspectContactRead.model_validate({**contact.__dict__, "domain": domain}))
+        items.append(
+            ProspectContactRead.model_validate(
+                {**contact.__dict__, "domain": domain, "emails": email_map.get(contact.id, [])}
+            )
+        )
 
     letter_counts: dict[str, int] | None = None
     if count_by_letters:
@@ -694,6 +1098,7 @@ def list_all_contacts(
             .where(letter_expr.between("a", "z"))
             .group_by(letter_expr)
         )
+        letter_stmt = letter_stmt.where(_campaign_upload_scope(campaign_id))
         letter_stmt = _apply_contact_filters(
             letter_stmt,
             title_match=title_match,
@@ -722,8 +1127,13 @@ def list_all_contacts(
 @router.get("/contacts/counts", response_model=ContactCountsResponse)
 def get_contact_counts(
     session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
     upload_id: UUID | None = Query(default=None),
 ) -> ContactCountsResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
     statement = select(
         func.count().label("total"),
         func.coalesce(func.sum(case((col(ProspectContact.pipeline_stage) == "fetched", 1), else_=0)), 0).label("fetched"),
@@ -743,11 +1153,10 @@ def get_contact_counts(
             ),
             0,
         ).label("eligible_verify"),
-    ).select_from(ProspectContact)
+    ).select_from(ProspectContact).join(Company, col(Company.id) == col(ProspectContact.company_id))
+    statement = statement.where(_campaign_upload_scope(campaign_id))
     if upload_id is not None:
-        statement = statement.join(Company, col(Company.id) == col(ProspectContact.company_id)).where(
-            col(Company.upload_id) == upload_id
-        )
+        statement = statement.where(col(Company.upload_id) == upload_id)
     row = session.exec(
         statement
     ).one()
@@ -763,6 +1172,7 @@ def get_contact_counts(
 
 @router.get("/contacts/export.csv")
 def export_contacts_csv(
+    campaign_id: UUID = Query(...),
     title_match: bool | None = Query(default=None),
     verification_status: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
@@ -770,9 +1180,22 @@ def export_contacts_csv(
     upload_id: UUID | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> Response:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    if not isinstance(title_match, bool):
+        title_match = getattr(title_match, "default", None)
+    if not isinstance(verification_status, str):
+        verification_status = getattr(verification_status, "default", None)
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
+    if not isinstance(company_id, UUID):
+        company_id = getattr(company_id, "default", None)
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
     q = select(ProspectContact, Company.domain).join(
         Company, col(Company.id) == col(ProspectContact.company_id)
     )
+    q = q.where(_campaign_upload_scope(campaign_id))
     q = _apply_contact_filters(
         q,
         title_match=title_match,
@@ -828,6 +1251,9 @@ def verify_contacts(
     session: Session = Depends(get_session),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ) -> ContactVerifyResult:
+    campaign = session.get(Campaign, payload.campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
     try:
         idempotency_key = normalize_idempotency_key(x_idempotency_key)
     except ValueError as exc:
@@ -914,10 +1340,7 @@ def create_title_rule(
     session.add(rule)
     session.commit()
     session.refresh(rule)
-    _, company_ids = rematch_existing_contacts(session)
-    if company_ids:
-        companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
-        _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
+    rematch_existing_contacts(session)
     return TitleMatchRuleRead.model_validate(rule, from_attributes=True)
 
 
@@ -931,31 +1354,116 @@ def delete_title_rule(
         raise HTTPException(status_code=404, detail="Rule not found.")
     session.delete(rule)
     session.commit()
-    _, company_ids = rematch_existing_contacts(session)
-    if company_ids:
-        companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
-        _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
+    rematch_existing_contacts(session)
 
 
 @router.post("/title-match-rules/rematch", response_model=RematchResult)
 def rematch_contacts(session: Session = Depends(get_session)) -> RematchResult:
-    updated, company_ids = rematch_existing_contacts(session)
-    fetch_result = ContactFetchResult(
-        requested_count=0,
-        queued_count=0,
-        already_fetching_count=0,
-        queued_job_ids=[],
-    )
-    if company_ids:
-        companies = list(session.exec(select(Company).where(col(Company.id).in_(company_ids))))
-        fetch_result = _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
+    updated, _company_ids = rematch_existing_contacts(session)
     return RematchResult(
         updated=updated,
-        fetch_jobs_queued=fetch_result.queued_count,
+        fetch_jobs_queued=0,
         message=(
-            f"Re-evaluated all contacts; {updated} title_match flags changed, "
-            f"{fetch_result.queued_count} email fetch jobs queued."
+            f"Re-evaluated all contacts; {updated} title_match flags changed, no fetch jobs queued."
         ),
+    )
+
+
+@router.get("/title-match-rules/impact-preview", response_model=TitleRuleImpactPreview)
+def preview_title_rule_impact(
+    campaign_id: UUID = Query(...),
+    source: str = Query(default="snov"),
+    include_stale: bool = Query(default=False),
+    stale_days: int | None = Query(default=None, ge=1, le=365),
+    force_refresh: bool = Query(default=False),
+    session: Session = Depends(get_session),
+) -> TitleRuleImpactPreview:
+    normalized_source = _normalize_impact_source(source)
+    if not isinstance(include_stale, bool):
+        include_stale = bool(getattr(include_stale, "default", False))
+    if not isinstance(stale_days, int):
+        stale_days = getattr(stale_days, "default", None)
+    if not isinstance(force_refresh, bool):
+        force_refresh = bool(getattr(force_refresh, "default", False))
+    companies, affected_contact_count, stale_contact_count = _title_rule_impact_targets(
+        session=session,
+        campaign_id=campaign_id,
+        source=normalized_source,
+        include_stale=include_stale,
+        stale_days=stale_days,
+        force_refresh=force_refresh,
+    )
+    return TitleRuleImpactPreview(
+        campaign_id=campaign_id,
+        source=normalized_source,
+        include_stale=include_stale,
+        stale_days=(
+            stale_days
+            if stale_days is not None
+            else (
+                None
+                if normalized_source == "both"
+                else _IMPACT_PROVIDER_STALE_DEFAULT_DAYS[normalized_source]
+            )
+        ),
+        stale_days_override=stale_days,
+        provider_default_days=dict(_IMPACT_PROVIDER_STALE_DEFAULT_DAYS),
+        force_refresh=force_refresh,
+        affected_company_count=len(companies),
+        affected_contact_count=affected_contact_count,
+        stale_contact_count=stale_contact_count,
+        affected_company_ids=[company.id for company in companies],
+    )
+
+
+@router.post(
+    "/title-match-rules/impact-fetch",
+    response_model=ContactFetchResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def queue_title_rule_impact_fetch(
+    campaign_id: UUID = Query(...),
+    source: str = Query(default="snov"),
+    include_stale: bool = Query(default=False),
+    stale_days: int | None = Query(default=None, ge=1, le=365),
+    force_refresh: bool = Query(default=False),
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    if not isinstance(include_stale, bool):
+        include_stale = bool(getattr(include_stale, "default", False))
+    if not isinstance(stale_days, int):
+        stale_days = getattr(stale_days, "default", None)
+    if not isinstance(force_refresh, bool):
+        force_refresh = bool(getattr(force_refresh, "default", False))
+    normalized_source = _normalize_impact_source(source)
+    companies, _affected_contact_count, _stale_contact_count = _title_rule_impact_targets(
+        session=session,
+        campaign_id=campaign_id,
+        source=normalized_source,
+        include_stale=include_stale,
+        stale_days=stale_days,
+        force_refresh=force_refresh,
+    )
+    if normalized_source == "both":
+        result = _enqueue_contact_fetches(
+            session=session,
+            companies=companies,
+            provider="snov",
+            next_provider="apollo",
+        )
+        total_queued = result.queued_count
+        total_already_fetching = result.already_fetching_count
+        all_job_ids = list(result.queued_job_ids)
+    else:
+        result = _enqueue_contact_fetches(session=session, companies=companies, provider=normalized_source)
+        total_queued = result.queued_count
+        total_already_fetching = result.already_fetching_count
+        all_job_ids = list(result.queued_job_ids)
+    return ContactFetchResult(
+        requested_count=len(companies),
+        queued_count=total_queued,
+        already_fetching_count=total_already_fetching,
+        queued_job_ids=all_job_ids,
     )
 
 

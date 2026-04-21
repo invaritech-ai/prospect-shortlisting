@@ -9,7 +9,7 @@ from sqlmodel import Session, col, select
 from app.api.schemas.upload import CompanyScrapeAllRequest, CompanyScrapeRequest, CompanyScrapeResult
 from app.core.config import settings
 from app.db.session import get_session
-from app.models import Company, ScrapeJob
+from app.models import Company, ScrapeJob, Upload
 from app.services.idempotency_service import (
     IdempotencyConflictError,
     IdempotencyUnavailableError,
@@ -37,6 +37,7 @@ def _enqueue_scrapes_for_companies(
     companies: list[Company],
     scrape_rules: dict | None = None,
     idempotency_key: str | None = None,
+    pipeline_run_id: UUID | None = None,
 ) -> CompanyScrapeResult:
     failed_company_ids: list[UUID] = []
     valid: list[tuple[Company, str, str]] = []
@@ -82,6 +83,7 @@ def _enqueue_scrapes_for_companies(
                 website_url=company.normalized_url,
                 normalized_url=normalized,
                 domain=domain,
+                pipeline_run_id=pipeline_run_id,
                 js_fallback=(
                     bool(scrape_rules.get("js_fallback"))
                     if scrape_rules and scrape_rules.get("js_fallback") is not None
@@ -172,10 +174,24 @@ def scrape_selected_companies(
 
     try:
         requested_ids = list(dict.fromkeys(payload.company_ids))
-        stmt = select(Company).where(col(Company.id).in_(requested_ids))
+        stmt = (
+            select(Company)
+            .join(Upload, col(Upload.id) == col(Company.upload_id))
+            .where(
+                col(Upload.campaign_id) == payload.campaign_id,
+                col(Company.id).in_(requested_ids),
+            )
+        )
         if payload.upload_id is not None:
             stmt = stmt.where(col(Company.upload_id) == payload.upload_id)
         companies = list(session.exec(stmt))
+        found_ids = {company.id for company in companies}
+        invalid_ids = [company_id for company_id in requested_ids if company_id not in found_ids]
+        if invalid_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="One or more company_ids are not assigned to the selected campaign.",
+            )
         if not companies:
             result = CompanyScrapeResult(
                 requested_count=0,

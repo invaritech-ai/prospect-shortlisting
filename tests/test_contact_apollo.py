@@ -7,9 +7,9 @@ from uuid import uuid4
 
 from sqlmodel import Session, col, select
 
-from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule, Upload
+from app.models import Company, ContactFetchJob, ProspectContact, ProspectContactEmail, TitleMatchRule, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
-from app.services.contact_service import ContactService, _apollo
+from app.services.contact_service import ContactService, _apollo, _snov
 from app.tasks.beat import reconcile_stuck_jobs
 from app.tasks.contacts import fetch_contacts_apollo
 
@@ -154,13 +154,13 @@ def test_apollo_fetch_skips_duplicate_company_email(sqlite_engine, sqlite_sessio
 
     assert result is not None
     assert result.terminal_state is True
-    assert result.contacts_found == 1
+    assert result.contacts_found == 2
     assert result.title_matched_count == 2
 
     sqlite_session.expire_all()
     refreshed_job = sqlite_session.get(ContactFetchJob, apollo_job.id)
     assert refreshed_job is not None
-    assert refreshed_job.contacts_found == 1
+    assert refreshed_job.contacts_found == 2
     assert refreshed_job.title_matched_count == 2
 
     rows = list(
@@ -176,6 +176,341 @@ def test_apollo_fetch_skips_duplicate_company_email(sqlite_engine, sqlite_sessio
     new_row = next(row for row in rows if row.email == "new@apollo.example")
     assert new_row.apollo_prospect_raw is not None
     assert new_row.snov_prospect_raw is None
+    email_rows = list(
+        sqlite_session.exec(
+            select(ProspectContactEmail).where(col(ProspectContactEmail.contact_id).in_([row.id for row in rows]))
+        ).all()
+    )
+    assert len(email_rows) >= 2
+    assert {email_row.email for email_row in email_rows} >= {"dup@apollo.example", "new@apollo.example"}
+
+
+def test_apollo_fetch_dedups_same_contact_and_keeps_multiple_emails(sqlite_engine, sqlite_session: Session) -> None:
+    company = _make_company(sqlite_session, domain="apollo-dedup.example")
+    snov_job = ContactFetchJob(company_id=company.id, provider="snov")
+    sqlite_session.add(snov_job)
+    sqlite_session.commit()
+    sqlite_session.refresh(snov_job)
+    seeded_contact = ProspectContact(
+        company_id=company.id,
+        contact_fetch_job_id=snov_job.id,
+        source="snov",
+        first_name="Jane",
+        last_name="Doe",
+        title="VP Marketing",
+        title_match=True,
+        linkedin_url="https://linkedin.com/in/jane-doe",
+        email="jane@snov.example",
+        provider_email_status="verified",
+        verification_status="unverified",
+        snov_confidence=None,
+        snov_prospect_raw={"source": "snov"},
+        apollo_prospect_raw=None,
+        snov_email_raw=None,
+    )
+    sqlite_session.add(seeded_contact)
+    sqlite_session.commit()
+    sqlite_session.refresh(seeded_contact)
+    sqlite_session.add(
+        ProspectContactEmail(
+            contact_id=seeded_contact.id,
+            source="snov",
+            email="jane@snov.example",
+            email_normalized="jane@snov.example",
+            provider_email_status="verified",
+            is_primary=True,
+        )
+    )
+    sqlite_session.commit()
+
+    apollo_job = ContactFetchJob(company_id=company.id, provider="apollo")
+    sqlite_session.add(apollo_job)
+    sqlite_session.commit()
+    sqlite_session.refresh(apollo_job)
+    sqlite_session.add(TitleMatchRule(rule_type="include", keywords="marketing, vice president"))
+    sqlite_session.commit()
+
+    def fake_search_people(domain: str, page: int = 1, person_titles: list[str] | None = None) -> list[dict]:
+        _apollo.last_error_code = ""
+        if page != 1:
+            return []
+        return [
+            {
+                "id": "apollo-jane",
+                "first_name": "Jane",
+                "last_name_obfuscated": "Doe",
+                "title": "VP Marketing",
+                "linkedin_url": "https://linkedin.com/in/jane-doe",
+                "has_email": True,
+            }
+        ]
+
+    def fake_reveal_email(person_id: str) -> dict | None:
+        _apollo.last_error_code = ""
+        if person_id != "apollo-jane":
+            return None
+        return {
+            "id": person_id,
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "title": "VP Marketing",
+            "linkedin_url": "https://linkedin.com/in/jane-doe",
+            "email": "jane@apollo.example",
+            "email_status": "verified",
+        }
+
+    with patch.object(_apollo, "search_people", side_effect=fake_search_people), patch.object(
+        _apollo, "reveal_email", side_effect=fake_reveal_email
+    ):
+        result = ContactService().run_apollo_fetch(engine=sqlite_engine, job_id=apollo_job.id)
+
+    assert result is not None
+    assert result.terminal_state is True
+    rows = list(
+        sqlite_session.exec(
+            select(ProspectContact).where(col(ProspectContact.company_id) == company.id)
+        ).all()
+    )
+    assert len(rows) == 1
+    merged = rows[0]
+    assert merged.email == "jane@snov.example"
+    email_rows = list(
+        sqlite_session.exec(
+            select(ProspectContactEmail).where(col(ProspectContactEmail.contact_id) == merged.id)
+        ).all()
+    )
+    assert {email_row.email for email_row in email_rows} == {"jane@snov.example", "jane@apollo.example"}
+
+
+def test_apollo_fetch_email_lookup_scopes_dedup_by_company(sqlite_engine, sqlite_session: Session) -> None:
+    company_a = _make_company(sqlite_session, domain="scope-a.example")
+    company_b = _make_company(sqlite_session, domain="scope-b.example")
+    sqlite_session.add(TitleMatchRule(rule_type="include", keywords="marketing, vice president"))
+    sqlite_session.commit()
+
+    shared_email = "shared@example.com"
+    # Seed company B first with shared email.
+    job_b = ContactFetchJob(company_id=company_b.id, provider="snov")
+    sqlite_session.add(job_b)
+    sqlite_session.commit()
+    sqlite_session.refresh(job_b)
+    contact_b = ProspectContact(
+        company_id=company_b.id,
+        contact_fetch_job_id=job_b.id,
+        source="snov",
+        first_name="Alex",
+        last_name="Smith",
+        title="VP Marketing",
+        title_match=True,
+        linkedin_url=None,
+        email=shared_email,
+        provider_email_status="verified",
+        verification_status="unverified",
+        snov_confidence=None,
+        snov_prospect_raw={"seed": "b"},
+        apollo_prospect_raw=None,
+        snov_email_raw=None,
+    )
+    sqlite_session.add(contact_b)
+    sqlite_session.commit()
+    sqlite_session.refresh(contact_b)
+    sqlite_session.add(
+        ProspectContactEmail(
+            contact_id=contact_b.id,
+            source="snov",
+            email=shared_email,
+            email_normalized=shared_email,
+            provider_email_status="verified",
+            is_primary=True,
+        )
+    )
+
+    # Seed company A with same email to ensure lookup merges in correct company.
+    job_a_seed = ContactFetchJob(company_id=company_a.id, provider="snov")
+    sqlite_session.add(job_a_seed)
+    sqlite_session.commit()
+    sqlite_session.refresh(job_a_seed)
+    contact_a = ProspectContact(
+        company_id=company_a.id,
+        contact_fetch_job_id=job_a_seed.id,
+        source="snov",
+        first_name="Alex",
+        last_name="Smith",
+        title="VP Marketing",
+        title_match=True,
+        linkedin_url=None,
+        email=shared_email,
+        provider_email_status="verified",
+        verification_status="unverified",
+        snov_confidence=None,
+        snov_prospect_raw={"seed": "a"},
+        apollo_prospect_raw=None,
+        snov_email_raw=None,
+    )
+    sqlite_session.add(contact_a)
+    sqlite_session.commit()
+    sqlite_session.refresh(contact_a)
+    sqlite_session.add(
+        ProspectContactEmail(
+            contact_id=contact_a.id,
+            source="snov",
+            email=shared_email,
+            email_normalized=shared_email,
+            provider_email_status="verified",
+            is_primary=True,
+        )
+    )
+    sqlite_session.commit()
+
+    apollo_job = ContactFetchJob(company_id=company_a.id, provider="apollo")
+    sqlite_session.add(apollo_job)
+    sqlite_session.commit()
+    sqlite_session.refresh(apollo_job)
+
+    def fake_search_people(domain: str, page: int = 1, person_titles: list[str] | None = None) -> list[dict]:
+        _apollo.last_error_code = ""
+        if page != 1:
+            return []
+        return [
+            {
+                "id": "apollo-scope",
+                "first_name": "Alex",
+                "last_name_obfuscated": "Smith",
+                "title": "VP Marketing",
+                "linkedin_url": "",
+                "has_email": True,
+            }
+        ]
+
+    def fake_reveal_email(person_id: str) -> dict | None:
+        _apollo.last_error_code = ""
+        if person_id != "apollo-scope":
+            return None
+        return {
+            "id": person_id,
+            "first_name": "Alex",
+            "last_name": "Smith",
+            "title": "VP Marketing",
+            "linkedin_url": "",
+            "email": shared_email,
+            "email_status": "verified",
+        }
+
+    with patch.object(_apollo, "search_people", side_effect=fake_search_people), patch.object(
+        _apollo, "reveal_email", side_effect=fake_reveal_email
+    ):
+        result = ContactService().run_apollo_fetch(engine=sqlite_engine, job_id=apollo_job.id)
+
+    assert result is not None
+    rows_a = list(sqlite_session.exec(select(ProspectContact).where(col(ProspectContact.company_id) == company_a.id)).all())
+    rows_b = list(sqlite_session.exec(select(ProspectContact).where(col(ProspectContact.company_id) == company_b.id)).all())
+    assert len(rows_a) == 1
+    assert len(rows_b) == 1
+
+
+def test_apollo_fetch_name_fallback_requires_exact_title_match(sqlite_engine, sqlite_session: Session) -> None:
+    company = _make_company(sqlite_session, domain="name-fallback.example")
+    sqlite_session.add(TitleMatchRule(rule_type="include", keywords="marketing, vice president"))
+    sqlite_session.commit()
+
+    snov_job = ContactFetchJob(company_id=company.id, provider="snov")
+    sqlite_session.add(snov_job)
+    sqlite_session.commit()
+    sqlite_session.refresh(snov_job)
+    seeded = ProspectContact(
+        company_id=company.id,
+        contact_fetch_job_id=snov_job.id,
+        source="snov",
+        first_name="Jordan",
+        last_name="Lee",
+        title="VP Marketing",
+        title_match=True,
+        linkedin_url=None,
+        email="jordan@snov.example",
+        provider_email_status="verified",
+        verification_status="unverified",
+        snov_confidence=None,
+        snov_prospect_raw={"seed": "snov"},
+        apollo_prospect_raw=None,
+        snov_email_raw=None,
+    )
+    sqlite_session.add(seeded)
+    sqlite_session.commit()
+
+    apollo_job = ContactFetchJob(company_id=company.id, provider="apollo")
+    sqlite_session.add(apollo_job)
+    sqlite_session.commit()
+    sqlite_session.refresh(apollo_job)
+
+    def fake_search_people(domain: str, page: int = 1, person_titles: list[str] | None = None) -> list[dict]:
+        _apollo.last_error_code = ""
+        if page != 1:
+            return []
+        return [
+            {
+                "id": "apollo-jordan",
+                "first_name": "Jordan",
+                "last_name_obfuscated": "Lee",
+                "title": "VP Marketing",
+                "linkedin_url": "",
+                "has_email": True,
+            }
+        ]
+
+    def fake_reveal_email(person_id: str) -> dict | None:
+        _apollo.last_error_code = ""
+        if person_id != "apollo-jordan":
+            return None
+        return {
+            "id": person_id,
+            "first_name": "Jordan",
+            "last_name": "Lee",
+            "title": "Chief Technology Officer",
+            "linkedin_url": "",
+            "email": "jordan@apollo.example",
+            "email_status": "verified",
+        }
+
+    with patch.object(_apollo, "search_people", side_effect=fake_search_people), patch.object(
+        _apollo, "reveal_email", side_effect=fake_reveal_email
+    ):
+        result = ContactService().run_apollo_fetch(engine=sqlite_engine, job_id=apollo_job.id)
+
+    assert result is not None
+    rows = list(sqlite_session.exec(select(ProspectContact).where(col(ProspectContact.company_id) == company.id)).all())
+    assert len(rows) == 2
+
+
+def test_snov_chain_enqueues_apollo_followup_and_defers_s4(sqlite_engine, sqlite_session: Session) -> None:
+    company = _make_company(sqlite_session, domain="chain-followup.example")
+    snov_job = ContactFetchJob(company_id=company.id, provider="snov", next_provider="apollo")
+    sqlite_session.add(snov_job)
+    sqlite_session.commit()
+    sqlite_session.refresh(snov_job)
+
+    with (
+        patch.object(_snov, "get_domain_email_count", return_value=(0, None)),
+        patch("app.services.contact_service.enqueue_s4_for_contact_success") as s4_enqueue,
+        patch("app.tasks.contacts.fetch_contacts_apollo.delay") as apollo_delay,
+    ):
+        result = ContactService().run_contact_fetch(engine=sqlite_engine, job_id=snov_job.id)
+
+    assert result is not None
+    assert result.terminal_state is True
+    assert result.provider == "snov"
+    s4_enqueue.assert_not_called()
+    apollo_delay.assert_called_once()
+
+    followups = list(
+        sqlite_session.exec(
+            select(ContactFetchJob)
+            .where(col(ContactFetchJob.company_id) == company.id, col(ContactFetchJob.provider) == "apollo")
+            .order_by(col(ContactFetchJob.created_at))
+        ).all()
+    )
+    assert len(followups) == 1
+    assert followups[0].next_provider is None
+    assert followups[0].terminal_state is False
 
 
 def test_reconciler_routes_apollo_jobs_to_apollo_task(sqlite_engine, sqlite_session: Session) -> None:

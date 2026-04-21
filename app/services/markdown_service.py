@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 
 import html2text
 
+from app.services import credentials_resolver
 from app.services.llm_client import LLMClient
 from app.services.redis_client import get_redis
 from app.services.url_utils import clean_text
@@ -33,8 +33,10 @@ class MarkdownService:
     def __init__(self) -> None:
         self._client = None
         self._init_error = ""
-        self._openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self._openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        # Presence check only — actual LLM calls go through LLMClient which
+        # resolves the key dynamically from the DB-first/env-fallback store.
+        self._openai_key = ""
+        self._openrouter_key = credentials_resolver.resolve("openrouter", "api_key")
         self._cache_enabled = True
         self._init_openai_client()
 
@@ -77,7 +79,8 @@ class MarkdownService:
     def _llm_unavailable_error(self) -> str:
         if getattr(self, "_init_error", ""):
             return str(self._init_error)
-        if not getattr(self, "_openai_key", "") and not getattr(self, "_openrouter_key", ""):
+        openrouter_key = credentials_resolver.resolve("openrouter", "api_key") or getattr(self, "_openrouter_key", "")
+        if not getattr(self, "_openai_key", "") and not openrouter_key:
             return "llm_api_key_missing"
         return ""
 

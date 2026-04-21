@@ -1,5 +1,7 @@
 from app.models.scrape import ScrapeJob, ScrapePage
+from app.models.settings import IntegrationProvider, IntegrationSecret
 from app.models.pipeline import (
+    AiUsageEvent,
     AnalysisJob,
     Campaign,
     ClassificationResult,
@@ -10,9 +12,12 @@ from app.models.pipeline import (
     CrawlArtifact,
     CrawlJob,
     JobEvent,
+    PipelineRun,
+    PipelineRunEvent,
     Prompt,
     ScrapePrompt,
     ProspectContact,
+    ProspectContactEmail,
     Run,
     TitleMatchRule,
     Upload,
@@ -22,6 +27,9 @@ __all__ = [
     "ScrapeJob",
     "ScrapePage",
     "Campaign",
+    "PipelineRun",
+    "PipelineRunEvent",
+    "AiUsageEvent",
     "Upload",
     "Company",
     "CompanyFeedback",
@@ -36,5 +44,8 @@ __all__ = [
     "ContactFetchJob",
     "ContactVerifyJob",
     "ProspectContact",
+    "ProspectContactEmail",
     "TitleMatchRule",
+    "IntegrationProvider",
+    "IntegrationSecret",
 ]

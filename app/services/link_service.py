@@ -182,6 +182,8 @@ async def discover_focus_targets(
         candidates.extend(await fetch_sitemap_urls(domain))
 
     home_fetch = await fetch_with_fallback(home, use_js=use_js_fallback)
+    if home_fetch.final_url:
+        home = canonical_internal_url(home_fetch.final_url, domain) or home
     if home_fetch.selector is not None:
         candidates.extend(discover_internal_links(home_fetch.selector, str(home_fetch.selector.url or home), domain))
 

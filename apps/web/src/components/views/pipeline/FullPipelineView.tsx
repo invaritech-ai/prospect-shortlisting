@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CompanyList, CompanyListItem } from '../../../lib/types'
+import type { CompanyList, CompanyListItem, CostStatsResponse, PipelineCostSummaryRead, PipelineRunProgressRead } from '../../../lib/types'
 import {
   companyListBrowseUrl,
   matchesFullPipelineFilters,
@@ -8,6 +8,8 @@ import {
 import { getResumeStageForCompany } from '../../../lib/pipelineMappings'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { Pager } from '../../ui/Pager'
+import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
+import { SortableHeader } from '../../ui/SortableHeader'
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -109,6 +111,7 @@ const STATUS_FILTERS: Array<{ value: FullPipelineStatusFilter; label: string }> 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface FullPipelineViewProps {
+  activeCampaignName: string | null
   companies: CompanyList | null
   letterCounts: Record<string, number>
   activeLetter: string | null
@@ -122,18 +125,27 @@ interface FullPipelineViewProps {
   onToggleAll: (ids: string[]) => void
   onClearSelection: () => void
   onScrapeSelected: () => void
+  onStartCampaignPipeline: () => void
   onResumeCompany: (company: CompanyListItem) => void
   isScraping: boolean
+  isStartingCampaignPipeline: boolean
   onPagePrev: () => void
   onPageNext: () => void
   onPageSizeChange: (size: number) => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
   isSelectingAllMatching: boolean
   onSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
+  latestRunProgress: PipelineRunProgressRead | null
+  campaignCostSummary: PipelineCostSummaryRead | null
+  campaignCostBreakdown: CostStatsResponse | null
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function FullPipelineView({
+  activeCampaignName,
   companies,
   letterCounts,
   activeLetter,
@@ -147,13 +159,21 @@ export function FullPipelineView({
   onToggleAll,
   onClearSelection,
   onScrapeSelected,
+  onStartCampaignPipeline,
   onResumeCompany,
   isScraping,
+  isStartingCampaignPipeline,
   onPagePrev,
   onPageNext,
   onPageSizeChange,
+  sortBy,
+  sortDir,
+  onSort,
   isSelectingAllMatching,
   onSelectAllMatching,
+  latestRunProgress,
+  campaignCostSummary,
+  campaignCostBreakdown,
 }: FullPipelineViewProps) {
   const [statusFilter, setStatusFilter] = useState<FullPipelineStatusFilter>('all')
   const [search, setSearch] = useState('')
@@ -171,11 +191,19 @@ export function FullPipelineView({
       <div
         className="sticky top-0 z-20 shrink-0 space-y-2 border-b border-(--oc-border) bg-(--oc-bg)/95 pb-2 backdrop-blur-sm"
       >
+      <p className="px-1 pt-1 text-[11px] text-(--oc-muted)">
+        Cross-stage control center. For detailed stage work, use the dedicated S1-S4 views.
+      </p>
       {/* Topbar */}
       <div className="flex items-center gap-2 px-1 pt-1">
         <span className="text-sm font-extrabold tracking-tight text-(--oc-accent-ink)">
           Full Pipeline
         </span>
+        {activeCampaignName && (
+          <span className="rounded-full border border-(--oc-border) bg-white px-2 py-0.5 text-[11px] font-semibold text-(--oc-muted)">
+            {activeCampaignName}
+          </span>
+        )}
         {companies?.total != null && (
           <span className="text-xs text-(--oc-muted)">{companies.total.toLocaleString()} domains</span>
         )}
@@ -189,6 +217,15 @@ export function FullPipelineView({
             className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--oc-accent) focus:bg-white"
           />
         </div>
+        <button
+          type="button"
+          onClick={onStartCampaignPipeline}
+          disabled={isStartingCampaignPipeline}
+          title="Starts a chained campaign pipeline run (S1→S4)."
+          className="rounded-lg border border-(--oc-accent) bg-(--oc-accent-soft) px-3 py-1.5 text-xs font-semibold text-(--oc-accent-ink) transition hover:bg-(--oc-accent-soft)/80 disabled:opacity-60"
+        >
+          {isStartingCampaignPipeline ? 'Starting run…' : 'Start campaign pipeline'}
+        </button>
       </div>
 
       {/* Filter bar */}
@@ -233,7 +270,47 @@ export function FullPipelineView({
         >
           {isSelectingAllMatching ? 'Selecting…' : 'Select all matching filters'}
         </button>
+        {campaignCostSummary && (
+          <span className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-muted)">
+            Campaign spend: ${Number(campaignCostSummary.total_cost_usd || 0).toFixed(4)}
+          </span>
+        )}
+        {campaignCostBreakdown && (
+          <span className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-muted)">
+            Domains with spend: {campaignCostBreakdown.total}
+          </span>
+        )}
       </div>
+      {latestRunProgress && (
+        <div className="space-y-2 rounded-lg border border-(--oc-border) bg-white px-3 py-2">
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="font-semibold text-(--oc-text)">
+              Live run status: {latestRunProgress.status}
+            </span>
+            <span className="text-(--oc-muted)">
+              queued {latestRunProgress.queued_count} · reused {latestRunProgress.reused_count} · failed {latestRunProgress.failed_count}
+            </span>
+          </div>
+          {Object.entries(latestRunProgress.stages).map(([stage, counts]) => {
+            const total = Math.max(1, counts.total)
+            const done = counts.completed + counts.failed
+            const pct = Math.min(100, Math.round((done / total) * 100))
+            return (
+              <div key={stage} className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] text-(--oc-muted)">
+                  <span>{stage}</span>
+                  <span>
+                    {counts.running} running · {counts.completed} done · {counts.failed} failed
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-surface)">
+                  <div className="h-full rounded-full bg-(--oc-accent)" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
       </div>
 
       {/* Selection bar */}
@@ -249,10 +326,10 @@ export function FullPipelineView({
             type="button"
             onClick={onScrapeSelected}
             disabled={isScraping}
-            title="Queues scrape jobs (S1) for the selected domains. Use per-row Resume or S2–S4 when you are ready for later stages."
+            title="Starts a chained run for selected rows (S1→S4)."
             className="rounded-lg bg-(--oc-accent) px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-60"
           >
-            {isScraping ? 'Starting…' : 'Run pipeline'}
+            {isScraping ? 'Starting run…' : 'Start pipeline'}
           </button>
           <button
             type="button"
@@ -282,6 +359,14 @@ export function FullPipelineView({
                 <th className="min-w-52 p-3 text-left text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)">
                   Domain
                 </th>
+                <SortableHeader
+                  label="Last activity"
+                  field="last_activity"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSort={onSort}
+                  className="min-w-28 text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)"
+                />
                 {STAGES.map((s) => (
                   <th
                     key={s.num}
@@ -309,12 +394,12 @@ export function FullPipelineView({
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
+                  <td colSpan={8} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
                 </tr>
               )}
               {!isLoading && visible.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-sm text-(--oc-muted)">
+                  <td colSpan={8} className="p-8 text-center text-sm text-(--oc-muted)">
                     No companies match this filter.
                   </td>
                 </tr>
@@ -359,6 +444,9 @@ export function FullPipelineView({
                           </p>
                         </div>
                       </div>
+                    </td>
+                    <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                      <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
                     </td>
                     <td className="p-3"><StatusBadge {...s1Status(c)} /></td>
                     <td className="p-3"><StatusBadge {...s2Status(c)} /></td>

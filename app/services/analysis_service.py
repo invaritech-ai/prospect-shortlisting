@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,11 +15,13 @@ from sqlmodel import Session, col, select
 
 from app.core.logging import log_event
 from app.models import (
+    AiUsageEvent,
     AnalysisJob,
     ClassificationResult,
     Company,
     Prompt,
     Run,
+    Upload,
 )
 from app.models.pipeline import AnalysisJobState, PredictedLabel
 from app.services.context_service import (
@@ -29,6 +32,7 @@ from app.services.context_service import (
 )
 from app.services.llm_client import ERR_API_KEY_MISSING, ERR_RATE_LIMITED, LLMClient
 from app.services.pipeline_service import recompute_company_stages
+from app.services.pipeline_run_orchestrator import enqueue_s3_for_analysis_success
 from app.services.run_service import RunService
 
 
@@ -151,6 +155,7 @@ class AnalysisService:
             run = session.get(Run, analysis_job.run_id)
             prompt = session.get(Prompt, run.prompt_id) if run else None
             company = session.get(Company, analysis_job.company_id)
+            upload = session.get(Upload, company.upload_id) if company else None
             if not run or not prompt or not company:
                 analysis_job.state = AnalysisJobState.FAILED
                 analysis_job.terminal_state = True
@@ -167,6 +172,7 @@ class AnalysisService:
             run_id = run.id
             attempt_count = analysis_job.attempt_count
             max_attempts = analysis_job.max_attempts
+            campaign_id = upload.campaign_id if upload else None
             early_fail: tuple[str, str] | None = None
 
             if latest_scrape is None:
@@ -234,6 +240,7 @@ class AnalysisService:
                         log_event(logger, "analysis_cache_hit", analysis_job_id=str(analysis_job_id))
                         self._run_service.refresh_run_status(session=session, run_id=run_id)
                         session.refresh(analysis_job)
+                        enqueue_s3_for_analysis_success(engine=engine, analysis_job_id=analysis_job.id)
                         return analysis_job
         # ── session closed; connection returned to pool ──────────────────────
 
@@ -250,13 +257,22 @@ class AnalysisService:
             )
 
         # ── Phase 2: LLM call (no DB session held) ───────────────────────────
-        raw_response, llm_error = _analysis_llm.chat(
+        raw_response, llm_error, usage_meta = _analysis_llm.chat_with_usage(
             model=classify_model,
             messages=[
                 {"role": "system", "content": "Return strict JSON only. Follow the provided rubric exactly."},
                 {"role": "user", "content": rendered_prompt},
             ],
             response_format={"type": "json_object"},
+        )
+        self._record_ai_usage_event(
+            engine=engine,
+            pipeline_run_id=analysis_job.pipeline_run_id if analysis_job else None,
+            campaign_id=campaign_id,
+            company_id=analysis_job.company_id if analysis_job else None,
+            attempt_number=attempt_count,
+            usage_meta=usage_meta,
+            error_type=llm_error or ("analysis_llm_failed" if not raw_response else None),
         )
 
         if llm_error or not raw_response:
@@ -322,6 +338,7 @@ class AnalysisService:
             session.commit()
             self._run_service.refresh_run_status(session=session, run_id=run_id)
             session.refresh(analysis_job)
+            enqueue_s3_for_analysis_success(engine=engine, analysis_job_id=analysis_job.id)
             return analysis_job
 
     def _fail_job(
@@ -366,3 +383,44 @@ class AnalysisService:
                 self._run_service.refresh_run_status(session=session, run_id=run_id)
             session.refresh(analysis_job)
             return analysis_job
+
+    def _record_ai_usage_event(
+        self,
+        *,
+        engine: Any,
+        pipeline_run_id: UUID | None,
+        campaign_id: UUID | None,
+        company_id: UUID | None,
+        attempt_number: int,
+        usage_meta: dict | None,
+        error_type: str | None,
+    ) -> None:
+        usage_meta = usage_meta or {}
+        raw_cost = usage_meta.get("billed_cost_usd")
+        billed_cost: Decimal | None = None
+        if raw_cost is not None:
+            try:
+                billed_cost = Decimal(str(raw_cost))
+            except (InvalidOperation, ValueError, TypeError):
+                billed_cost = None
+
+        with Session(engine) as session:
+            session.add(
+                AiUsageEvent(
+                    pipeline_run_id=pipeline_run_id,
+                    campaign_id=campaign_id,
+                    company_id=company_id,
+                    stage="s2_analysis",
+                    attempt_number=max(1, int(attempt_number or 1)),
+                    provider=str(usage_meta.get("provider") or "openrouter"),
+                    model=usage_meta.get("model"),
+                    request_id=usage_meta.get("request_id"),
+                    openrouter_generation_id=usage_meta.get("openrouter_generation_id"),
+                    billed_cost_usd=billed_cost,
+                    input_tokens=int(usage_meta.get("prompt_tokens") or 0),
+                    output_tokens=int(usage_meta.get("completion_tokens") or 0),
+                    error_type=error_type,
+                    reconciliation_status="pending",
+                )
+            )
+            session.commit()

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from sqlmodel import Session, col, delete
 
+from app.api.routes.campaigns import create_campaign
 from app.api.routes.companies import get_company_counts, list_companies
-from app.models import Company, Upload
-from app.models.pipeline import CompanyPipelineStage
+from app.api.schemas.campaign import CampaignCreate
+from app.models import Company, ContactFetchJob, Upload
+from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState, utcnow
 
 
-def _seed_upload(session: Session, filename: str) -> Upload:
-    upload = Upload(filename=filename, checksum=str(uuid4()), valid_count=0, invalid_count=0)
+def _seed_upload(session: Session, filename: str, *, campaign_id) -> Upload:
+    upload = Upload(filename=filename, checksum=str(uuid4()), valid_count=0, invalid_count=0, campaign_id=campaign_id)
     session.add(upload)
     session.flush()
     return upload
@@ -32,7 +35,8 @@ def _seed_company(session: Session, *, upload_id, domain: str) -> Company:
 
 
 def test_list_companies_multi_letters_is_server_filtered(sqlite_session: Session) -> None:
-    upload = _seed_upload(sqlite_session, "letters.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Letters Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "letters.csv", campaign_id=campaign.id)
     try:
         _seed_company(sqlite_session, upload_id=upload.id, domain="wolf.example")
         _seed_company(sqlite_session, upload_id=upload.id, domain="xeno.example")
@@ -41,6 +45,7 @@ def test_list_companies_multi_letters_is_server_filtered(sqlite_session: Session
 
         response = list_companies(
             session=sqlite_session,
+            campaign_id=campaign.id,
             letters="w,x",
             include_total=True,
             limit=25,
@@ -56,16 +61,17 @@ def test_list_companies_multi_letters_is_server_filtered(sqlite_session: Session
 
 
 def test_company_counts_honors_upload_scope(sqlite_session: Session) -> None:
-    upload_a = _seed_upload(sqlite_session, "scope-a.csv")
-    upload_b = _seed_upload(sqlite_session, "scope-b.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Count Scope"), session=sqlite_session)
+    upload_a = _seed_upload(sqlite_session, "scope-a.csv", campaign_id=campaign.id)
+    upload_b = _seed_upload(sqlite_session, "scope-b.csv", campaign_id=campaign.id)
     try:
         _seed_company(sqlite_session, upload_id=upload_a.id, domain="scope-a.example")
         _seed_company(sqlite_session, upload_id=upload_b.id, domain="scope-b.example")
         sqlite_session.commit()
 
-        scoped = get_company_counts(session=sqlite_session, upload_id=upload_a.id)
-        scoped_b = get_company_counts(session=sqlite_session, upload_id=upload_b.id)
-        unscoped = get_company_counts(session=sqlite_session)
+        scoped = get_company_counts(session=sqlite_session, campaign_id=campaign.id, upload_id=upload_a.id)
+        scoped_b = get_company_counts(session=sqlite_session, campaign_id=campaign.id, upload_id=upload_b.id)
+        unscoped = get_company_counts(session=sqlite_session, campaign_id=campaign.id)
 
         assert scoped.total == 1
         assert scoped_b.total == 1
@@ -77,16 +83,17 @@ def test_company_counts_honors_upload_scope(sqlite_session: Session) -> None:
 
 
 def test_list_companies_invalid_sort_by_raises_422(sqlite_session: Session) -> None:
-    upload = _seed_upload(sqlite_session, "sort.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Sort Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "sort.csv", campaign_id=campaign.id)
     try:
         _seed_company(sqlite_session, upload_id=upload.id, domain="sort.example")
         sqlite_session.commit()
 
         with pytest.raises(HTTPException) as excinfo:
-            list_companies(session=sqlite_session, sort_by="not_a_real_field")
+            list_companies(session=sqlite_session, campaign_id=campaign.id, sort_by="not_a_real_field")
         assert excinfo.value.status_code == 422
         with pytest.raises(HTTPException) as excinfo_dir:
-            list_companies(session=sqlite_session, sort_dir="sideways")
+            list_companies(session=sqlite_session, campaign_id=campaign.id, sort_dir="sideways")
         assert excinfo_dir.value.status_code == 422
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
@@ -95,7 +102,8 @@ def test_list_companies_invalid_sort_by_raises_422(sqlite_session: Session) -> N
 
 
 def test_company_counts_stage_buckets_are_exact(sqlite_session: Session) -> None:
-    upload = _seed_upload(sqlite_session, "stages.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Stage Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "stages.csv", campaign_id=campaign.id)
     try:
         for domain, stage in [
             ("up.example", CompanyPipelineStage.UPLOADED),
@@ -108,7 +116,7 @@ def test_company_counts_stage_buckets_are_exact(sqlite_session: Session) -> None
             sqlite_session.add(company)
         sqlite_session.commit()
 
-        counts = get_company_counts(session=sqlite_session, upload_id=upload.id)
+        counts = get_company_counts(session=sqlite_session, campaign_id=campaign.id, upload_id=upload.id)
         assert counts.total == 4
         assert counts.uploaded == 1
         assert counts.scraped == 1
@@ -116,5 +124,40 @@ def test_company_counts_stage_buckets_are_exact(sqlite_session: Session) -> None
         assert counts.contact_ready == 1
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_list_companies_uses_latest_contact_fetch_activity_timestamp(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Activity Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "activity.csv", campaign_id=campaign.id)
+    company = _seed_company(sqlite_session, upload_id=upload.id, domain="activity.example")
+    try:
+        older_but_updated = ContactFetchJob(company_id=company.id, provider="snov", state=ContactFetchJobState.RUNNING)
+        older_but_updated.created_at = utcnow() - timedelta(days=2)
+        older_but_updated.updated_at = utcnow()
+        newer_but_stale = ContactFetchJob(company_id=company.id, provider="apollo", state=ContactFetchJobState.QUEUED)
+        newer_but_stale.created_at = utcnow() - timedelta(days=1)
+        newer_but_stale.updated_at = utcnow() - timedelta(days=1)
+        sqlite_session.add(older_but_updated)
+        sqlite_session.add(newer_but_stale)
+        sqlite_session.commit()
+
+        response = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+
+        assert response.items[0].contact_fetch_status == ContactFetchJobState.RUNNING.value
+        expected_last_activity = older_but_updated.updated_at.replace(
+            tzinfo=response.items[0].last_activity.tzinfo,
+        )
+        assert response.items[0].last_activity == expected_last_activity
+    finally:
+        sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id) == company.id))
+        sqlite_session.exec(delete(Company).where(col(Company.id) == company.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()

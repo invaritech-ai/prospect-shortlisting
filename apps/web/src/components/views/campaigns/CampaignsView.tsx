@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { CampaignRead, UploadRead } from '../../../lib/types'
+import type { CampaignRead, PipelineCostSummaryRead, PipelineRunProgressRead, UploadRead } from '../../../lib/types'
 
 interface CampaignsViewProps {
   campaigns: CampaignRead[]
@@ -11,6 +11,11 @@ interface CampaignsViewProps {
   onCreateCampaign: (name: string, description: string) => void
   onDeleteCampaign: (campaignId: string) => void
   onAssignUploads: (campaignId: string, uploadIds: string[]) => void
+  onStartCampaignPipeline: () => void
+  onOpenFullPipeline: () => void
+  isStartingCampaignPipeline: boolean
+  latestRunProgress: PipelineRunProgressRead | null
+  campaignCostSummary: PipelineCostSummaryRead | null
 }
 
 export function CampaignsView({
@@ -23,10 +28,19 @@ export function CampaignsView({
   onCreateCampaign,
   onDeleteCampaign,
   onAssignUploads,
+  onStartCampaignPipeline,
+  onOpenFullPipeline,
+  isStartingCampaignPipeline,
+  latestRunProgress,
+  campaignCostSummary,
 }: CampaignsViewProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [selectedUploadIds, setSelectedUploadIds] = useState<string[]>([])
+  const selectedCampaign = useMemo(
+    () => campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? null,
+    [campaigns, selectedCampaignId],
+  )
 
   const unassignedUploads = useMemo(
     () => uploads.filter((u) => !u.campaign_id),
@@ -35,6 +49,83 @@ export function CampaignsView({
 
   return (
     <div className="space-y-6">
+      <section className="rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-4">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-(--oc-muted)">Campaign Workspace</h2>
+        <p className="mt-1 text-xs text-(--oc-muted)">
+          Campaign-level controls only. Detailed domain cost breakdown lives in Operations.
+        </p>
+        {!selectedCampaignId ? (
+          <p className="mt-2 text-sm text-(--oc-muted)">Select a campaign to start pipeline and track live progress.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {selectedCampaign && (
+              <div className="rounded-xl border border-(--oc-border) bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-(--oc-muted)">Selected campaign</p>
+                    <p className="text-sm font-semibold text-(--oc-text)">{selectedCampaign.name}</p>
+                    <p className="text-xs text-(--oc-muted)">{selectedCampaign.description || 'No description'}</p>
+                  </div>
+                  {campaignCostSummary && (
+                    <span className="rounded-full border border-(--oc-border) bg-(--oc-surface) px-3 py-1 text-xs font-semibold text-(--oc-muted)">
+                      Campaign spend: ${Number(campaignCostSummary.total_cost_usd || 0).toFixed(4)}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-2.5 py-1 text-(--oc-muted)">
+                    Domains in campaign: {selectedCampaign.company_count.toLocaleString()}
+                  </span>
+                  <span className="rounded-lg border border-(--oc-border) bg-(--oc-surface) px-2.5 py-1 text-(--oc-muted)">
+                    Files attached: {selectedCampaign.upload_count.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={isStartingCampaignPipeline}
+                onClick={onStartCampaignPipeline}
+                className="rounded-xl bg-(--oc-accent) px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
+              >
+                {isStartingCampaignPipeline ? 'Queueing pipeline…' : 'Start pipeline'}
+              </button>
+              <button
+                type="button"
+                onClick={onOpenFullPipeline}
+                className="rounded-xl border border-(--oc-border) bg-white px-4 py-2 text-sm font-semibold text-(--oc-accent-ink) transition hover:border-(--oc-accent)"
+              >
+                Open Full Pipeline
+              </button>
+            </div>
+            {latestRunProgress && (
+              <div className="space-y-2 rounded-xl border border-(--oc-border) bg-white p-3">
+                <p className="text-xs font-semibold text-(--oc-text)">
+                  Latest run status: {latestRunProgress.status}
+                </p>
+                {Object.entries(latestRunProgress.stages).map(([stage, counts]) => {
+                  const total = Math.max(1, counts.total)
+                  const done = counts.completed + counts.failed
+                  const pct = Math.min(100, Math.round((done / total) * 100))
+                  return (
+                    <div key={stage} className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px] text-(--oc-muted)">
+                        <span>{stage}</span>
+                        <span>{counts.running} running · {counts.completed} done · {counts.failed} failed</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-surface)">
+                        <div className="h-full rounded-full bg-(--oc-accent)" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
       <section className="rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-4">
         <h2 className="text-sm font-bold uppercase tracking-wider text-(--oc-muted)">Create Campaign</h2>
         <div className="mt-3 grid gap-3 md:grid-cols-[1fr_2fr_auto]">

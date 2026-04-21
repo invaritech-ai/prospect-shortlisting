@@ -63,6 +63,7 @@ function ScrapePromptListItem({
   onActivate: () => void
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const isSystemDefault = prompt.is_system_default
 
   return (
     <div
@@ -94,7 +95,7 @@ function ScrapePromptListItem({
         <button
           type="button"
           onClick={onToggleEnabled}
-          disabled={isSaving || isDeleting}
+          disabled={isSaving || isDeleting || isSystemDefault}
           className="rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1 text-[11px] font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {prompt.enabled ? 'Disable' : 'Enable'}
@@ -103,7 +104,7 @@ function ScrapePromptListItem({
           <button
             type="button"
             onClick={onActivate}
-            disabled={isSaving || isDeleting || !prompt.enabled || prompt.id === activePromptId}
+            disabled={isSaving || isDeleting || !prompt.enabled || prompt.id === activePromptId || isSystemDefault}
             className="rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1 text-[11px] font-bold text-[var(--oc-text)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Activate
@@ -180,6 +181,7 @@ export function ScrapePromptLibraryPanel({
 
   const selectedPrompt = prompts.find((p) => p.id === selectedPromptId) ?? null
   const editingPrompt = prompts.find((p) => p.id === editingPromptId) ?? null
+  const isEditingSystemDefault = Boolean(editingPrompt?.is_system_default)
   const headerMeta = selectedPrompt ? (
     <div className="flex flex-wrap items-center gap-2">
       {selectedPrompt.id === activePromptId && <Badge variant="success">Active for scraping</Badge>}
@@ -266,6 +268,7 @@ export function ScrapePromptLibraryPanel({
                 type="text"
                 value={promptName}
                 onChange={(e) => onSetPromptName(e.target.value)}
+                readOnly={isEditingSystemDefault}
                 className="w-full rounded-xl border border-[var(--oc-border)] bg-white px-4 py-2.5 text-sm text-[var(--oc-text)] outline-none transition focus:border-[var(--oc-accent)] focus:ring-2 focus:ring-[var(--oc-accent)]/10"
                 placeholder="S1 discovery prompt v2"
               />
@@ -278,6 +281,7 @@ export function ScrapePromptLibraryPanel({
               <textarea
                 value={promptIntentText}
                 onChange={(e) => onSetPromptIntentText(e.target.value)}
+                readOnly={isEditingSystemDefault}
                 rows={6}
                 className="w-full rounded-2xl border border-[var(--oc-border)] bg-white px-4 py-3 text-sm leading-6 text-[var(--oc-text)] outline-none transition focus:border-[var(--oc-accent)] focus:ring-2 focus:ring-[var(--oc-accent)]/10"
                 placeholder="Find pricing, product, services, leadership, and contact pages from official site content."
@@ -300,12 +304,9 @@ export function ScrapePromptLibraryPanel({
               <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
                 Structured rules (read-only)
               </span>
-              <textarea
-                value={formatScrapeRulesPreview(editingPrompt?.scrape_rules_structured)}
-                readOnly
-                rows={8}
-                className="w-full rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] px-4 py-3 font-mono text-xs leading-6 text-[var(--oc-muted)] outline-none"
-              />
+              <pre className="w-full overflow-x-auto whitespace-pre-wrap wrap-break-word rounded-2xl border border-(--oc-border) bg-(--oc-surface) px-4 py-3 font-mono text-xs leading-6 text-(--oc-muted)">
+                {formatScrapeRulesPreview(editingPrompt?.scrape_rules_structured)}
+              </pre>
             </label>
 
             <label className="flex cursor-pointer items-center gap-2.5">
@@ -313,10 +314,16 @@ export function ScrapePromptLibraryPanel({
                 type="checkbox"
                 checked={promptEnabled}
                 onChange={(e) => onSetPromptEnabled(e.target.checked)}
+                disabled={isEditingSystemDefault}
                 className="h-4 w-4 rounded border-[var(--oc-border)] accent-[var(--oc-accent)]"
               />
               <span className="text-sm font-semibold text-[var(--oc-text)]">Enabled</span>
             </label>
+            {isEditingSystemDefault && (
+              <p className="text-xs text-[var(--oc-muted)]">
+                System default scrape prompt is read-only.
+              </p>
+            )}
           </div>
 
           {promptError && (
@@ -333,7 +340,7 @@ export function ScrapePromptLibraryPanel({
               variant="secondary"
               size="md"
               onClick={onUpdateCurrent}
-              disabled={!editingPromptId || isPromptSaving}
+              disabled={!editingPromptId || isPromptSaving || isEditingSystemDefault}
             >
               Update current
             </Button>
@@ -342,7 +349,7 @@ export function ScrapePromptLibraryPanel({
                 variant="secondary"
                 size="md"
                 onClick={() => onActivatePrompt(editingPrompt)}
-                disabled={isPromptSaving || !editingPrompt.enabled || editingPrompt.id === activePromptId}
+                disabled={isPromptSaving || !editingPrompt.enabled || editingPrompt.id === activePromptId || isEditingSystemDefault}
               >
                 Set active
               </Button>

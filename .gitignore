@@ -20,3 +20,8 @@ data
 -H
 -d
 .env.local
+.worktrees/
+.playwright-cli
+output
+
+

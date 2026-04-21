@@ -37,6 +37,7 @@ class RunService:
         prompt_id: UUID,
         general_model: str,
         classify_model: str,
+        pipeline_run_id: UUID | None = None,
     ) -> tuple[list[Run], list[AnalysisJob], list[UUID]]:
         prompt = session.get(Prompt, prompt_id)
         if not prompt:
@@ -88,6 +89,7 @@ class RunService:
                     continue
                 queued_jobs.append(AnalysisJob(
                     run_id=run.id,
+                    pipeline_run_id=pipeline_run_id,
                     upload_id=company.upload_id,
                     company_id=company.id,
                     crawl_artifact_id=artifact.id,

@@ -10,6 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 # Import all models so SQLModel metadata is populated before create_all.
 from app.models import (  # noqa: F401
+    AiUsageEvent,
     AnalysisJob,
     ClassificationResult,
     Company,
@@ -19,6 +20,8 @@ from app.models import (  # noqa: F401
     CrawlArtifact,
     CrawlJob,
     JobEvent,
+    PipelineRun,
+    PipelineRunEvent,
     Prompt,
     ProspectContact,
     Run,

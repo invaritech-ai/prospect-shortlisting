@@ -7,14 +7,16 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import Session, col, delete, select
 
+from app.api.routes.campaigns import create_campaign
 from app.api.routes.contacts import list_all_contacts
 from app.api.routes.stats import get_stats
+from app.api.schemas.campaign import CampaignCreate
 from app.models import Company, ContactFetchJob, ContactVerifyJob, ProspectContact, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactVerifyJobState, utcnow
 
 
-def _seed_upload(session: Session, filename: str) -> Upload:
-    upload = Upload(filename=filename, checksum=str(uuid4()), valid_count=0, invalid_count=0)
+def _seed_upload(session: Session, filename: str, *, campaign_id) -> Upload:
+    upload = Upload(filename=filename, checksum=str(uuid4()), valid_count=0, invalid_count=0, campaign_id=campaign_id)
     session.add(upload)
     session.flush()
     return upload
@@ -56,7 +58,8 @@ def _seed_contact(session: Session, *, company: Company, email: str, days_old: i
 
 
 def test_list_contacts_supports_letters_filter(sqlite_session: Session) -> None:
-    upload = _seed_upload(sqlite_session, "letters-contacts.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Contacts Letters"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "letters-contacts.csv", campaign_id=campaign.id)
     try:
         company_a = _seed_company(sqlite_session, upload_id=upload.id, domain="wolf.example")
         company_b = _seed_company(sqlite_session, upload_id=upload.id, domain="apple.example")
@@ -64,7 +67,7 @@ def test_list_contacts_supports_letters_filter(sqlite_session: Session) -> None:
         _seed_contact(sqlite_session, company=company_b, email="a@example.com")
         sqlite_session.commit()
 
-        response = list_all_contacts(session=sqlite_session, letters="w", limit=50, offset=0)
+        response = list_all_contacts(session=sqlite_session, campaign_id=campaign.id, letters="w", limit=50, offset=0)
 
         assert response.total == 1
         assert len(response.items) == 1
@@ -82,17 +85,18 @@ def test_list_contacts_supports_letters_filter(sqlite_session: Session) -> None:
 
 
 def test_list_contacts_invalid_sort_by_raises_422(sqlite_session: Session) -> None:
-    upload = _seed_upload(sqlite_session, "contacts-sort.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Contacts Sort"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "contacts-sort.csv", campaign_id=campaign.id)
     try:
         company = _seed_company(sqlite_session, upload_id=upload.id, domain="sort.example")
         _seed_contact(sqlite_session, company=company, email="sort@example.com")
         sqlite_session.commit()
 
         with pytest.raises(HTTPException) as excinfo:
-            list_all_contacts(session=sqlite_session, sort_by="not_real")
+            list_all_contacts(session=sqlite_session, campaign_id=campaign.id, sort_by="not_real")
         assert excinfo.value.status_code == 422
         with pytest.raises(HTTPException) as excinfo_dir:
-            list_all_contacts(session=sqlite_session, sort_dir="sideways")
+            list_all_contacts(session=sqlite_session, campaign_id=campaign.id, sort_dir="sideways")
         assert excinfo_dir.value.status_code == 422
     finally:
         sqlite_session.exec(delete(ProspectContact).where(col(ProspectContact.company_id).in_(
@@ -107,8 +111,9 @@ def test_list_contacts_invalid_sort_by_raises_422(sqlite_session: Session) -> No
 
 
 def test_stats_validation_scope_honors_upload(sqlite_session: Session) -> None:
-    upload_a = _seed_upload(sqlite_session, "stats-a.csv")
-    upload_b = _seed_upload(sqlite_session, "stats-b.csv")
+    campaign = create_campaign(payload=CampaignCreate(name="Stats Upload Scope"), session=sqlite_session)
+    upload_a = _seed_upload(sqlite_session, "stats-a.csv", campaign_id=campaign.id)
+    upload_b = _seed_upload(sqlite_session, "stats-b.csv", campaign_id=campaign.id)
     try:
         company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="scope-a.example")
         company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="scope-b.example")
@@ -137,8 +142,8 @@ def test_stats_validation_scope_honors_upload(sqlite_session: Session) -> None:
         )
         sqlite_session.commit()
 
-        scoped = get_stats(session=sqlite_session, upload_id=upload_a.id)
-        unscoped = get_stats(session=sqlite_session, upload_id=None)
+        scoped = get_stats(session=sqlite_session, campaign_id=campaign.id, upload_id=upload_a.id)
+        unscoped = get_stats(session=sqlite_session, campaign_id=campaign.id, upload_id=None)
 
         assert scoped.validation.total == 1
         assert unscoped.validation.total >= 2

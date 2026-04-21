@@ -8,6 +8,7 @@ import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
 import { QuickLabelPicker } from '../../ui/QuickLabelPicker'
+import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
 interface S2AIDecisionViewProps {
   companies: CompanyList | null
@@ -143,6 +144,9 @@ export function S2AIDecisionView({
             </div>
             <span className="text-[11px] text-(--oc-muted)">{aCompleted.toLocaleString()} / {aTotal.toLocaleString()}</span>
           </div>
+          <p className="mb-2 text-[11px] text-(--oc-muted)">
+            <RelativeTimeLabel timestamp={stats?.as_of} />
+          </p>
           <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
             <div
               className="h-full rounded-full transition-all duration-500"
@@ -263,6 +267,7 @@ export function S2AIDecisionView({
                 />
               </th>
               <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Confidence" field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <th className="p-3 text-left font-semibold">Actions</th>
@@ -273,6 +278,7 @@ export function S2AIDecisionView({
               <tr key={i} className="border-b border-(--oc-border)">
                 <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-14 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-5 w-16 rounded-full" /></td>
                 <td className="p-3"><div className="oc-skeleton h-4 w-10 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-6 w-24 rounded-lg" /></td>
@@ -280,7 +286,7 @@ export function S2AIDecisionView({
             ))}
             {!isLoading && visibleCompanies.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center">
+                <td colSpan={6} className="px-6 py-10 text-center">
                   {decisionFilter === 'unlabeled' && companies != null ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-emerald-700">All companies have been classified ✓</p>
@@ -325,6 +331,9 @@ export function S2AIDecisionView({
                   >
                     {c.domain}
                   </a>
+                </td>
+                <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                  <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
                 </td>
                 <td className="p-3">
                   <div className="flex items-center gap-2">

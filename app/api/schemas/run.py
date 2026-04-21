@@ -10,6 +10,7 @@ from app.api.schemas.base import UTCReadModel
 
 
 class RunCreateRequest(BaseModel):
+    campaign_id: UUID
     prompt_id: UUID
     scope: Literal["all", "selected"] = "selected"
     company_ids: list[UUID] | None = None

@@ -4,8 +4,11 @@ import {
   IconGlobe,
   IconChart,
   IconPulse,
+  IconCog,
   IconUsers,
   IconTimeline,
+  IconSliders,
+  IconCheck,
   IconChevronLeft,
   IconChevronRight,
 } from '../ui/icons'
@@ -25,12 +28,14 @@ const NAV_ITEMS: Array<{
   Icon: React.FC<{ className?: string; size?: number }>
 }> = [
   { value: 'dashboard', label: 'Dashboard', Icon: IconPulse },
+  { value: 'operations', label: 'Operations', Icon: IconTimeline },
   { value: 'campaigns', label: 'Campaigns', Icon: IconBuilding },
-  { value: 'full-pipeline', label: 'Full Pipeline', Icon: IconTimeline },
+  { value: 'settings', label: 'Settings', Icon: IconCog },
+  { value: 'full-pipeline', label: 'Full Pipeline', Icon: IconSliders },
   { value: 's1-scraping', label: 'S1 · Scraping', stageColor: 'var(--s1)', Icon: IconGlobe },
   { value: 's2-ai', label: 'S2 · AI Decision', stageColor: 'var(--s2)', Icon: IconChart },
   { value: 's3-contacts', label: 'S3 · Contacts', stageColor: 'var(--s3)', Icon: IconUsers },
-  { value: 's4-validation', label: 'S4 · Validation', stageColor: 'var(--s4)', Icon: IconBuilding },
+  { value: 's4-validation', label: 'S4 · Validation', stageColor: 'var(--s4)', Icon: IconCheck },
 ]
 
 export function Sidebar({
@@ -42,7 +47,7 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <aside
-      className="hidden md:flex flex-col flex-shrink-0 overflow-hidden border-r border-[var(--oc-border)] bg-[var(--oc-surface-strong)]"
+      className="hidden shrink-0 overflow-hidden border-r border-(--oc-border) bg-(--oc-surface-strong) md:flex md:flex-col"
       style={{
         width: collapsed ? '56px' : 'var(--oc-sidebar-w)',
         transition: 'width 220ms cubic-bezier(0.4,0,0.2,1)',
@@ -57,7 +62,7 @@ export function Sidebar({
           <img
             src="/prospect-console-mark.svg"
             alt="Prospect Console"
-            className="h-8 w-8 flex-shrink-0 rounded-lg"
+            className="h-8 w-8 shrink-0 rounded-lg"
           />
           <div
             className="overflow-hidden transition-all duration-200"
@@ -104,7 +109,7 @@ export function Sidebar({
                     : { justifyContent: collapsed ? 'center' : undefined }
                 }
               >
-                <Icon size={18} className="flex-shrink-0" />
+                <Icon size={18} className="shrink-0" />
                 <span
                   className="overflow-hidden whitespace-nowrap transition-all duration-200"
                   style={{ maxWidth: collapsed ? 0 : 200, opacity: collapsed ? 0 : 1 }}
@@ -117,7 +122,7 @@ export function Sidebar({
         </nav>
 
         {/* Collapse toggle */}
-        <div className="mt-3 border-t border-[var(--oc-border)] px-2 pt-3">
+        <div className="mt-3 border-t border-(--oc-border) px-2 pt-3">
           <button
             type="button"
             onClick={onToggleCollapsed}
@@ -126,11 +131,11 @@ export function Sidebar({
             style={{ justifyContent: collapsed ? 'center' : 'flex-end' }}
           >
             {collapsed ? (
-              <IconChevronRight size={16} className="flex-shrink-0" />
+              <IconChevronRight size={16} className="shrink-0" />
             ) : (
               <>
                 <span className="text-xs opacity-70">Collapse</span>
-                <IconChevronLeft size={16} className="flex-shrink-0" />
+                <IconChevronLeft size={16} className="shrink-0" />
               </>
             )}
           </button>

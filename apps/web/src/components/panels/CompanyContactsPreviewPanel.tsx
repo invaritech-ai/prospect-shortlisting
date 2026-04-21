@@ -7,6 +7,7 @@ import { Drawer } from '../ui/Drawer'
 import { IconDownload } from '../ui/icons'
 
 interface CompanyContactsPreviewPanelProps {
+  campaignId: string | null
   company: CompanyListItem | null
   contacts: ProspectContactRead[]
   summary: ContactCompanySummary | null
@@ -18,6 +19,7 @@ interface CompanyContactsPreviewPanelProps {
 }
 
 export function CompanyContactsPreviewPanel({
+  campaignId,
   company,
   contacts,
   summary: summaryFromApi,
@@ -48,7 +50,7 @@ export function CompanyContactsPreviewPanel({
 
   if (!company) return null
 
-  const exportUrl = getContactsExportUrl({ companyId: company.id })
+  const exportUrl = campaignId ? getContactsExportUrl({ campaignId, companyId: company.id }) : '#'
 
   return (
     <Drawer

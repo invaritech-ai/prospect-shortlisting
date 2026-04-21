@@ -5,8 +5,8 @@ from typing import Any
 
 import httpx
 
-from app.core.config import settings
 from app.core.logging import log_event
+from app.services import credentials_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -18,18 +18,22 @@ ERR_ZEROBOUNCE_FAILED = "zerobounce_failed"
 
 class ZeroBounceClient:
     def __init__(self) -> None:
-        self._api_key = (settings.zerobounce_api_key or "").strip()
+        self._api_key = ""
         self._base_url = "https://api.zerobounce.net"
         self.last_error_code = ""
 
+    def _resolve_api_key(self) -> str:
+        return credentials_resolver.resolve("zerobounce", "api_key") or (self._api_key or "").strip()
+
     def validate_batch(self, emails: list[str], *, timeout_sec: int = 45) -> tuple[list[dict[str, Any]], str]:
         self.last_error_code = ""
-        if not self._api_key:
+        api_key = self._resolve_api_key()
+        if not api_key:
             self.last_error_code = ERR_ZEROBOUNCE_KEY_MISSING
             return [], self.last_error_code
 
         payload = {
-            "api_key": self._api_key,
+            "api_key": api_key,
             "email_batch": [{"email_address": email} for email in emails],
             "timeout": timeout_sec,
         }
@@ -67,6 +71,18 @@ class ZeroBounceClient:
             log_event(logger, "zerobounce_invalid_json", error=str(exc), body=response.text[:500])
             return [], self.last_error_code
 
+        if isinstance(body, dict):
+            errors = body.get("errors")
+            if isinstance(errors, list) and errors:
+                first_error_text = str(errors[0].get("error") or "").lower() if isinstance(errors[0], dict) else ""
+                if "invalid api key" in first_error_text or "credits" in first_error_text:
+                    self.last_error_code = ERR_ZEROBOUNCE_AUTH_FAILED
+                    log_event(
+                        logger,
+                        "zerobounce_auth_or_credits_error",
+                        body=str(body)[:500],
+                    )
+                    return [], self.last_error_code
         if not isinstance(body, list):
             self.last_error_code = ERR_ZEROBOUNCE_FAILED
             log_event(logger, "zerobounce_unexpected_body", body=str(body)[:500])

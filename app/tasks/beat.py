@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.celery_app import app
 from app.core.logging import log_event
 from app.db.session import get_engine
-from app.models import AnalysisJob, ContactFetchJob, ContactVerifyJob, ScrapeJob
+from app.models import AiUsageEvent, AnalysisJob, ContactFetchJob, ContactVerifyJob, ScrapeJob
 from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState
 
 logger = logging.getLogger(__name__)
@@ -232,4 +233,51 @@ def reconcile_stuck_jobs() -> None:
         never_started_verify=len(ns_verify_ids),
         stuck_verify=len(stuck_verify_ids),
         total_requeued=total_scrape + total_analysis + total_contacts + total_verify,
+    )
+
+
+@app.task(
+    name="app.tasks.beat.reconcile_openrouter_costs",
+    queue="beat",
+)
+def reconcile_openrouter_costs() -> None:
+    """Placeholder reconciler: mark billable OpenRouter events as reconciled."""
+    engine = get_engine()
+    with Session(engine) as session:
+        rows = list(
+            session.exec(
+                select(AiUsageEvent).where(
+                    col(AiUsageEvent.provider) == "openrouter",
+                    col(AiUsageEvent.billed_cost_usd).is_not(None),
+                )
+            )
+        )
+        updated = 0
+        for row in rows:
+            if row.reconciliation_status != "reconciled":
+                row.reconciliation_status = "reconciled"
+                session.add(row)
+                updated += 1
+        session.commit()
+
+        pending_count = session.exec(
+            select(func.count(AiUsageEvent.id)).where(
+                col(AiUsageEvent.provider) == "openrouter",
+                col(AiUsageEvent.reconciliation_status) == "pending",
+            )
+        ).one()
+        reconciled_count = session.exec(
+            select(func.count(AiUsageEvent.id)).where(
+                col(AiUsageEvent.provider) == "openrouter",
+                col(AiUsageEvent.reconciliation_status) == "reconciled",
+            )
+        ).one()
+
+    log_event(
+        logger,
+        "openrouter_cost_reconciliation_done",
+        scanned=len(rows),
+        updated=updated,
+        pending_count=int(pending_count or 0),
+        reconciled_count=int(reconciled_count or 0),
     )

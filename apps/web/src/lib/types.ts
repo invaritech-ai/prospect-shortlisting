@@ -80,6 +80,7 @@ export type CompanyListItem = {
   domain: string
   pipeline_stage: CompanyStage
   created_at: string
+  last_activity: string
   latest_decision: string | null
   latest_confidence: number | null
   latest_scrape_job_id: string | null
@@ -295,6 +296,7 @@ export type RunRead = {
 }
 
 export type RunCreateRequest = {
+  campaign_id: string
   prompt_id: string
   scope: 'all' | 'selected'
   company_ids?: string[]
@@ -307,6 +309,66 @@ export type RunCreateResult = {
   queued_count: number
   skipped_company_ids: string[]
   runs: RunRead[]
+}
+
+export type PipelineRunStartRequest = {
+  campaign_id: string
+  company_ids?: string[]
+  scrape_rules_snapshot?: Record<string, unknown> | null
+  analysis_prompt_snapshot?: Record<string, unknown> | null
+  contact_rules_snapshot?: Record<string, unknown> | null
+  validation_policy_snapshot?: Record<string, unknown> | null
+  force_rerun?: Record<string, boolean> | null
+}
+
+export type PipelineRunStartResponse = {
+  pipeline_run_id: string
+  requested_count: number
+  reused_count: number
+  queued_count: number
+  skipped_count: number
+  failed_count: number
+}
+
+export type PipelineStageProgressRead = {
+  queued: number
+  running: number
+  completed: number
+  failed: number
+  total: number
+}
+
+export type PipelineRunProgressRead = {
+  pipeline_run_id: string
+  campaign_id: string
+  status: string
+  requested_count: number
+  reused_count: number
+  queued_count: number
+  skipped_count: number
+  failed_count: number
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  stages: Record<string, PipelineStageProgressRead>
+}
+
+export type PipelineStageCostRead = {
+  cost_usd: number | string
+  event_count: number
+  input_tokens: number
+  output_tokens: number
+}
+
+export type PipelineCostSummaryRead = {
+  pipeline_run_id: string | null
+  campaign_id: string | null
+  company_id: string | null
+  total_cost_usd: number | string
+  event_count: number
+  input_tokens: number
+  output_tokens: number
+  by_stage: Record<string, PipelineStageCostRead>
 }
 
 export type AnalysisRunJobRead = {
@@ -457,6 +519,7 @@ export type ProspectContactRead = {
   title_match: boolean
   linkedin_url: string | null
   email: string | null
+  emails?: string[] | null
   pipeline_stage: ContactStage
   provider_email_status: string | null
   verification_status: string
@@ -518,6 +581,7 @@ export type ContactCountsResponse = {
 }
 
 export type ContactVerifyRequest = {
+  campaign_id: string
   contact_ids?: string[]
   company_ids?: string[]
   title_match?: boolean
@@ -570,6 +634,20 @@ export type TitleRuleStatsResponse = {
   total_matched: number
 }
 
+export type TitleRuleImpactPreview = {
+  campaign_id: string
+  source: 'snov' | 'apollo' | 'both'
+  include_stale: boolean
+  stale_days: number | null
+  stale_days_override?: number | null
+  provider_default_days?: Record<string, number> | null
+  force_refresh: boolean
+  affected_company_count: number
+  affected_contact_count: number
+  stale_contact_count: number
+  affected_company_ids: string[]
+}
+
 export type TitleRuleSeedResult = {
   inserted: number
   message: string
@@ -587,4 +665,44 @@ export type AnalyticsSnapshot = {
   possible_ratio_pct: number | null
   scrape_failure_pct: number | null
   analysis_failure_pct: number | null
+}
+
+export type IntegrationProviderId = 'openrouter' | 'snov' | 'apollo' | 'zerobounce'
+export type CredentialSource = 'db' | 'env' | ''
+
+export type IntegrationFieldStatus = {
+  field: string
+  is_set: boolean
+  source: CredentialSource
+  last4: string | null
+  updated_at: string | null
+}
+
+export type IntegrationProviderStatus = {
+  provider: IntegrationProviderId
+  label: string
+  description: string
+  fields: IntegrationFieldStatus[]
+}
+
+export type IntegrationsStatusResponse = {
+  store_available: boolean
+  providers: IntegrationProviderStatus[]
+}
+
+export type IntegrationFieldUpdate = {
+  field: string
+  value: string
+}
+
+export type IntegrationProviderUpdateRequest = {
+  fields: IntegrationFieldUpdate[]
+}
+
+export type IntegrationTestResponse = {
+  provider: IntegrationProviderId
+  ok: boolean
+  source: CredentialSource
+  error_code: string
+  message: string
 }

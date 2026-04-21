@@ -77,6 +77,20 @@ class ContactVerifyJobState(StrEnum):
     FAILED = "failed"
 
 
+class PipelineRunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PipelineStage(StrEnum):
+    S1_SCRAPE = "s1_scrape"
+    S2_ANALYSIS = "s2_analysis"
+    S3_CONTACTS = "s3_contacts"
+    S4_VALIDATION = "s4_validation"
+
+
 class Campaign(SQLModel, table=True):
     __tablename__ = "campaigns"
 
@@ -220,6 +234,7 @@ class AnalysisJob(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     run_id: UUID = Field(foreign_key="runs.id", index=True)
+    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     upload_id: UUID = Field(foreign_key="uploads.id", index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     crawl_artifact_id: UUID = Field(foreign_key="crawl_artifacts.id", index=True)
@@ -287,6 +302,61 @@ class JobEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class PipelineRun(SQLModel, table=True):
+    __tablename__ = "pipeline_runs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    campaign_id: UUID = Field(foreign_key="campaigns.id", index=True)
+    status: PipelineRunStatus = Field(default=PipelineRunStatus.QUEUED, sa_column=Column(Text, nullable=False, index=True))
+    company_ids_snapshot: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    scrape_rules_snapshot: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    analysis_prompt_snapshot: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    contact_rules_snapshot: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    validation_policy_snapshot: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    requested_count: int = Field(default=0, ge=0)
+    reused_count: int = Field(default=0, ge=0)
+    queued_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class PipelineRunEvent(SQLModel, table=True):
+    __tablename__ = "pipeline_run_events"
+
+    id: int | None = Field(default=None, primary_key=True)
+    pipeline_run_id: UUID = Field(foreign_key="pipeline_runs.id", index=True)
+    company_id: UUID | None = Field(default=None, foreign_key="companies.id", index=True)
+    stage: str = Field(max_length=64, index=True)
+    event_type: str = Field(max_length=128)
+    payload_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class AiUsageEvent(SQLModel, table=True):
+    __tablename__ = "ai_usage_events"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
+    campaign_id: UUID | None = Field(default=None, foreign_key="campaigns.id", index=True)
+    company_id: UUID | None = Field(default=None, foreign_key="companies.id", index=True)
+    stage: str = Field(max_length=64, index=True)
+    attempt_number: int = Field(default=1, ge=1)
+    provider: str = Field(default="openrouter", max_length=64)
+    model: str | None = Field(default=None, max_length=255)
+    request_id: str | None = Field(default=None, max_length=255)
+    openrouter_generation_id: str | None = Field(default=None, max_length=255, index=True)
+    billed_cost_usd: Decimal | None = Field(default=None, sa_column=Column(Numeric(12, 6), nullable=True))
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    error_type: str | None = Field(default=None, max_length=128)
+    reconciliation_status: str = Field(default="pending", max_length=32, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class ContactFetchJob(SQLModel, table=True):
     """One contact-fetch task per company. CAS-locked, same pattern as AnalysisJob."""
 
@@ -294,7 +364,9 @@ class ContactFetchJob(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
+    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     provider: str = Field(default="snov", max_length=32, index=True)
+    next_provider: str | None = Field(default=None, max_length=32, index=True)
 
     state: ContactFetchJobState = Field(
         default=ContactFetchJobState.QUEUED,
@@ -335,6 +407,7 @@ class ContactVerifyJob(SQLModel, table=True):
     __tablename__ = "contact_verify_jobs"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     state: ContactVerifyJobState = Field(
         default=ContactVerifyJobState.QUEUED,
         sa_column=Column(Text, nullable=False, index=True),
@@ -409,6 +482,29 @@ class ProspectContact(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ProspectContactEmail(SQLModel, table=True):
+    """Normalized email records attached to a prospect contact."""
+
+    __tablename__ = "prospect_contact_emails"
+    __table_args__ = (
+        UniqueConstraint(
+            "contact_id",
+            "email_normalized",
+            name="uq_prospect_contact_emails_contact_email",
+        ),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    contact_id: UUID = Field(foreign_key="prospect_contacts.id", index=True)
+    source: str = Field(default="snov", max_length=32, index=True)
+    email: str = Field(max_length=512)
+    email_normalized: str = Field(max_length=512, index=True)
+    provider_email_status: str | None = Field(default=None, max_length=32, index=True)
+    is_primary: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class TitleMatchRule(SQLModel, table=True):

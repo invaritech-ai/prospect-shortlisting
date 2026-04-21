@@ -57,10 +57,11 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
   const stage = contactStageMeta(contact.pipeline_stage)
   const verification = verificationMeta(contact.verification_status)
   const provider = providerStatusMeta(contact.provider_email_status)
+  const emailList = (contact.emails && contact.emails.length > 0 ? contact.emails : contact.email ? [contact.email] : []) as string[]
 
   return (
-    <tr className={`border-b border-[var(--oc-border)] transition-colors hover:bg-[var(--oc-surface)] ${isMatch ? 'bg-emerald-50/40' : ''}`}>
-      <td className="px-3 py-2.5 text-xs font-medium text-[var(--oc-text)]">
+    <tr className={`border-b border-(--oc-border) transition-colors hover:bg-(--oc-surface) ${isMatch ? 'bg-emerald-50/40' : ''}`}>
+      <td className="px-3 py-2.5 text-xs font-medium text-(--oc-text)">
         <span>{contact.first_name} {contact.last_name}</span>
         {isMatch ? (
           <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
@@ -68,17 +69,25 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
           </span>
         ) : null}
       </td>
-      <td className="max-w-[180px] truncate px-3 py-2.5 text-xs text-[var(--oc-muted)]" title={contact.title ?? ''}>
+      <td className="max-w-[180px] truncate px-3 py-2.5 text-xs text-(--oc-muted)" title={contact.title ?? ''}>
         {contact.title ?? <span className="opacity-30">—</span>}
       </td>
       <td className="px-3 py-2.5 text-xs">
-        {contact.email ? (
-          <a
-            href={`mailto:${contact.email}`}
-            className="text-[var(--oc-accent-ink)] underline decoration-dotted hover:no-underline"
-          >
-            {contact.email}
-          </a>
+        {emailList.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            {emailList.slice(0, 2).map((email) => (
+              <a
+                key={email}
+                href={`mailto:${email}`}
+                className="text-(--oc-accent-ink) underline decoration-dotted hover:no-underline"
+              >
+                {email}
+              </a>
+            ))}
+            {emailList.length > 2 ? (
+              <span className="text-[10px] text-(--oc-muted)">+{emailList.length - 2} more</span>
+            ) : null}
+          </div>
         ) : isMatch ? (
           <span className="text-[11px] text-amber-500/70">not found</span>
         ) : (
@@ -100,7 +109,7 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
             href={contact.linkedin_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[var(--oc-accent-ink)] underline hover:no-underline"
+            className="text-(--oc-accent-ink) underline hover:no-underline"
           >
             LinkedIn
           </a>
@@ -127,14 +136,14 @@ export function ContactPreviewTable({ contacts }: ContactPreviewTableProps) {
         <col style={{ width: '16%' }} />
         <col style={{ width: '8%' }} />
       </colgroup>
-      <thead className="sticky top-0 bg-[var(--oc-surface-strong)]">
-        <tr className="border-b border-[var(--oc-border)]">
-          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Name</th>
-          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Title</th>
-          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Email</th>
-          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Stage</th>
-          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">Verification</th>
-          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-[var(--oc-muted)]">LinkedIn</th>
+      <thead className="sticky top-0 bg-(--oc-surface-strong)">
+        <tr className="border-b border-(--oc-border)">
+          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Name</th>
+          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Title</th>
+          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Email</th>
+          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Stage</th>
+          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">Verification</th>
+          <th className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-(--oc-muted)">LinkedIn</th>
         </tr>
       </thead>
       <tbody>
