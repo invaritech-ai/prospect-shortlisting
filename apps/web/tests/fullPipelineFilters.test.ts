@@ -17,6 +17,7 @@ function row(partial: Partial<CompanyListItem>): CompanyListItem {
     domain: 'example.com',
     pipeline_stage: 'uploaded',
     created_at: '2026-01-01T00:00:00Z',
+    last_activity: '2026-01-01T00:00:00Z',
     latest_decision: null,
     latest_confidence: null,
     latest_scrape_job_id: null,

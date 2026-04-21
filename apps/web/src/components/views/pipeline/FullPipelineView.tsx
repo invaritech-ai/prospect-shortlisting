@@ -8,6 +8,8 @@ import {
 import { getResumeStageForCompany } from '../../../lib/pipelineMappings'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { Pager } from '../../ui/Pager'
+import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
+import { SortableHeader } from '../../ui/SortableHeader'
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -130,6 +132,9 @@ interface FullPipelineViewProps {
   onPagePrev: () => void
   onPageNext: () => void
   onPageSizeChange: (size: number) => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
   isSelectingAllMatching: boolean
   onSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
   latestRunProgress: PipelineRunProgressRead | null
@@ -161,6 +166,9 @@ export function FullPipelineView({
   onPagePrev,
   onPageNext,
   onPageSizeChange,
+  sortBy,
+  sortDir,
+  onSort,
   isSelectingAllMatching,
   onSelectAllMatching,
   latestRunProgress,
@@ -351,6 +359,14 @@ export function FullPipelineView({
                 <th className="min-w-52 p-3 text-left text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)">
                   Domain
                 </th>
+                <SortableHeader
+                  label="Last activity"
+                  field="last_activity"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSort={onSort}
+                  className="min-w-28 text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)"
+                />
                 {STAGES.map((s) => (
                   <th
                     key={s.num}
@@ -378,12 +394,12 @@ export function FullPipelineView({
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
+                  <td colSpan={8} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
                 </tr>
               )}
               {!isLoading && visible.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-sm text-(--oc-muted)">
+                  <td colSpan={8} className="p-8 text-center text-sm text-(--oc-muted)">
                     No companies match this filter.
                   </td>
                 </tr>
@@ -428,6 +444,9 @@ export function FullPipelineView({
                           </p>
                         </div>
                       </div>
+                    </td>
+                    <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                      <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
                     </td>
                     <td className="p-3"><StatusBadge {...s1Status(c)} /></td>
                     <td className="p-3"><StatusBadge {...s2Status(c)} /></td>

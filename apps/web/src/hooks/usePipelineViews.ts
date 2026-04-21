@@ -14,6 +14,9 @@ import type {
   ScrapeSubFilter,
 } from '../lib/types'
 import {
+  consumeCompanyListLegacySortFallback,
+  consumeContactsListLegacySortFallback,
+  consumeSortCompatUserNotice,
   createRuns,
   fetchContactsSelected,
   getLetterCounts,
@@ -31,6 +34,9 @@ import { getDefaultPipelineScrapeSubFilter } from '../lib/pipelineDefaults'
 import { getResumeStageForCompany, scrapeSubToFilter, verifFilterToParams } from '../lib/pipelineMappings'
 import { getPipelineCompanyQuery } from '../lib/pipelineQuery'
 import { parseApiError } from '../lib/utils'
+
+/** New sort on these fields defaults to descending (most recent first). */
+const SORT_DESC_FIRST = new Set(['last_activity', 'updated_at', 'created_at'])
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
 export const DEFAULT_PAGE_SIZE = 50
@@ -57,6 +63,9 @@ export interface UsePipelineViewsResult {
   onFullPipelinePageNext: () => void
   onFullPipelinePageSizeChange: (size: number) => void
   onFullPipelineSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
+  fullPipelineSortBy: string
+  fullPipelineSortDir: 'asc' | 'desc'
+  onFullPipelineSort: (field: string) => void
   // S1–S3 company list
   pipelineCompanies: CompanyList | null
   pipelineLetterCounts: Record<string, number>
@@ -141,8 +150,8 @@ export function usePipelineViews(
   const [pipelineScrapeSubFilter, setPipelineScrapeSubFilter] = useState<ScrapeSubFilter>(() => getDefaultPipelineScrapeSubFilter(activeView))
   const [pipelineOffset, setPipelineOffset] = useState(0)
   const [pipelinePageSize, setPipelinePageSize] = useState(DEFAULT_PAGE_SIZE)
-  const [pipelineSortBy, setPipelineSortBy] = useState('domain')
-  const [pipelineSortDir, setPipelineSortDir] = useState<'asc' | 'desc'>('asc')
+  const [pipelineSortBy, setPipelineSortBy] = useState('last_activity')
+  const [pipelineSortDir, setPipelineSortDir] = useState<'asc' | 'desc'>('desc')
 
   // Full pipeline state
   const [fullPipelineCompanies, setFullPipelineCompanies] = useState<CompanyList | null>(null)
@@ -152,6 +161,8 @@ export function usePipelineViews(
   const [fullPipelineResumeState, setFullPipelineResumeState] = useState<Record<string, string>>({})
   const [fullPipelineOffset, setFullPipelineOffset] = useState(0)
   const [fullPipelinePageSize, setFullPipelinePageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [fullPipelineSortBy, setFullPipelineSortBy] = useState('last_activity')
+  const [fullPipelineSortDir, setFullPipelineSortDir] = useState<'asc' | 'desc'>('desc')
   const [isFullPipelineLoading, setIsFullPipelineLoading] = useState(false)
   const [isFullPipelineSelectingAllMatching, setIsFullPipelineSelectingAllMatching] = useState(false)
   const [isFullPipelineScraping, setIsFullPipelineScraping] = useState(false)
@@ -166,8 +177,8 @@ export function usePipelineViews(
   const [s4PageSize, setS4PageSize] = useState(DEFAULT_PAGE_SIZE)
   const [isS4Loading, setIsS4Loading] = useState(false)
   const [isS4Validating, setIsS4Validating] = useState(false)
-  const [s4SortBy, setS4SortBy] = useState('domain')
-  const [s4SortDir, setS4SortDir] = useState<'asc' | 'desc'>('asc')
+  const [s4SortBy, setS4SortBy] = useState('updated_at')
+  const [s4SortDir, setS4SortDir] = useState<'asc' | 'desc'>('desc')
   const pipelineRequestRef = useRef(0)
   const pipelineForegroundRequestRef = useRef(0)
   const s4RequestRef = useRef(0)
@@ -211,6 +222,12 @@ export function usePipelineViews(
         if (pipelineRequestRef.current !== requestId) return
         setPipelineCompanies(companies)
         setPipelineLetterCounts(letterCountsData.counts)
+        if (consumeCompanyListLegacySortFallback()) {
+          setPipelineSortBy('domain')
+          setPipelineSortDir('asc')
+        }
+        const sortNotice = consumeSortCompatUserNotice()
+        if (sortNotice) setNotice(sortNotice)
       } catch (err) {
         if (pipelineRequestRef.current !== requestId) return
         setError(parseApiError(err))
@@ -220,7 +237,7 @@ export function usePipelineViews(
         }
       }
     },
-    [selectedCampaignId, setError],
+    [selectedCampaignId, setError, setNotice],
   )
 
   const loadS4View = useCallback(async (
@@ -262,6 +279,12 @@ export function usePipelineViews(
       if (s4RequestRef.current !== requestId) return
       setS4Contacts(data)
       setS4LetterCounts(letterCountsData.letter_counts ?? {})
+      if (consumeContactsListLegacySortFallback()) {
+        setS4SortBy('domain')
+        setS4SortDir('asc')
+      }
+      const sortNotice = consumeSortCompatUserNotice()
+      if (sortNotice) setNotice(sortNotice)
     } catch (err) {
       if (s4RequestRef.current !== requestId) return
       setError(parseApiError(err))
@@ -270,10 +293,17 @@ export function usePipelineViews(
         setIsS4Loading(false)
       }
     }
-  }, [selectedCampaignId, setError])
+  }, [selectedCampaignId, setError, setNotice])
 
   const loadFullPipelineView = useCallback(
-    async (letter: string | null, pageSize: number, offset: number, options?: { background?: boolean }) => {
+    async (
+      letter: string | null,
+      pageSize: number,
+      offset: number,
+      sortBy: string,
+      sortDir: 'asc' | 'desc',
+      options?: { background?: boolean },
+    ) => {
       if (!selectedCampaignId) {
         setFullPipelineCompanies(null)
         setFullPipelineLetterCounts({})
@@ -288,12 +318,18 @@ export function usePipelineViews(
       }
       try {
         const [companies, letterCountsData] = await Promise.all([
-          listCompanies(selectedCampaignId, pageSize, offset, 'all', true, 'all', 'all', letter),
+          listCompanies(selectedCampaignId, pageSize, offset, 'all', true, 'all', 'all', letter, sortBy, sortDir),
           getLetterCounts(selectedCampaignId, 'all', 'all', 'all'),
         ])
         if (fullPipelineRequestRef.current !== requestId) return
         setFullPipelineCompanies(companies)
         setFullPipelineLetterCounts(letterCountsData.counts)
+        if (consumeCompanyListLegacySortFallback()) {
+          setFullPipelineSortBy('domain')
+          setFullPipelineSortDir('asc')
+        }
+        const sortNotice = consumeSortCompatUserNotice()
+        if (sortNotice) setNotice(sortNotice)
       } catch (err) {
         if (fullPipelineRequestRef.current !== requestId) return
         setError(parseApiError(err))
@@ -303,7 +339,7 @@ export function usePipelineViews(
         }
       }
     },
-    [selectedCampaignId, setError],
+    [selectedCampaignId, setError, setNotice],
   )
 
   // ── Load on view change ────────────────────────────────────────────────────
@@ -321,15 +357,17 @@ export function usePipelineViews(
       setPipelineScrapeSubFilter(defaultScrapeSubFilter)
       setPipelineOffset(0)
       setPipelinePageSize(DEFAULT_PAGE_SIZE)
-      setPipelineSortBy('domain')
-      setPipelineSortDir('asc')
-      void loadPipelineView(query.stageFilter, query.decisionFilter, defaultScrapeFilter, 'domain', 'asc', DEFAULT_PAGE_SIZE, 0, [])
+      setPipelineSortBy('last_activity')
+      setPipelineSortDir('desc')
+      void loadPipelineView(query.stageFilter, query.decisionFilter, defaultScrapeFilter, 'last_activity', 'desc', DEFAULT_PAGE_SIZE, 0, [])
     } else if (activeView === 'full-pipeline') {
       setFullPipelineSelectedIds([])
       setFullPipelineActiveLetter(null)
       setFullPipelineOffset(0)
       setFullPipelinePageSize(DEFAULT_PAGE_SIZE)
-      void loadFullPipelineView(null, DEFAULT_PAGE_SIZE, 0)
+      setFullPipelineSortBy('last_activity')
+      setFullPipelineSortDir('desc')
+      void loadFullPipelineView(null, DEFAULT_PAGE_SIZE, 0, 'last_activity', 'desc')
     } else if (activeView === 's4-validation') {
       setS4SelectedContactIds([])
       skipNextS4LetterReloadRef.current = true
@@ -337,9 +375,9 @@ export function usePipelineViews(
       setS4VerifFilter('valid')
       setS4Offset(0)
       setS4PageSize(DEFAULT_PAGE_SIZE)
-      setS4SortBy('domain')
-      setS4SortDir('asc')
-      void loadS4View('domain', 'asc', 'valid', DEFAULT_PAGE_SIZE, 0, [])
+      setS4SortBy('updated_at')
+      setS4SortDir('desc')
+      void loadS4View('updated_at', 'desc', 'valid', DEFAULT_PAGE_SIZE, 0, [])
     }
   }, [activeView, loadPipelineView, loadFullPipelineView, loadS4View])
 
@@ -462,7 +500,13 @@ export function usePipelineViews(
       const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
       if (query === null) return
       const newDir: 'asc' | 'desc' =
-        pipelineSortBy === field ? (pipelineSortDir === 'asc' ? 'desc' : 'asc') : 'asc'
+        pipelineSortBy === field
+          ? pipelineSortDir === 'asc'
+            ? 'desc'
+            : 'asc'
+          : SORT_DESC_FIRST.has(field)
+            ? 'desc'
+            : 'asc'
       setPipelineSortBy(field)
       setPipelineSortDir(newDir)
       setPipelineOffset(0)
@@ -627,7 +671,14 @@ export function usePipelineViews(
         options,
       )
     } else if (activeView === 'full-pipeline') {
-      void loadFullPipelineView(fullPipelineActiveLetter, fullPipelinePageSize, fullPipelineOffset, options)
+      void loadFullPipelineView(
+        fullPipelineActiveLetter,
+        fullPipelinePageSize,
+        fullPipelineOffset,
+        fullPipelineSortBy,
+        fullPipelineSortDir,
+        options,
+      )
     } else if (activeView === 's4-validation') {
       void loadS4View(
         s4SortBy,
@@ -651,6 +702,8 @@ export function usePipelineViews(
     fullPipelineActiveLetter,
     fullPipelineOffset,
     fullPipelinePageSize,
+    fullPipelineSortBy,
+    fullPipelineSortDir,
     loadS4View,
     pipelineSortBy,
     pipelineSortDir,
@@ -703,8 +756,8 @@ export function usePipelineViews(
     setFullPipelineActiveLetter(letter)
     setFullPipelineSelectedIds([])
     setFullPipelineOffset(0)
-    void loadFullPipelineView(letter, fullPipelinePageSize, 0)
-  }, [fullPipelinePageSize, loadFullPipelineView])
+    void loadFullPipelineView(letter, fullPipelinePageSize, 0, fullPipelineSortBy, fullPipelineSortDir)
+  }, [fullPipelinePageSize, fullPipelineSortBy, fullPipelineSortDir, loadFullPipelineView])
 
   const onFullPipelineToggleRow = useCallback((id: string) => {
     setFullPipelineSelectedIds((prev) =>
@@ -721,20 +774,70 @@ export function usePipelineViews(
   const onFullPipelinePagePrev = useCallback(() => {
     const nextOffset = Math.max(0, fullPipelineOffset - fullPipelinePageSize)
     setFullPipelineOffset(nextOffset)
-    void loadFullPipelineView(fullPipelineActiveLetter, fullPipelinePageSize, nextOffset)
-  }, [fullPipelineActiveLetter, fullPipelineOffset, fullPipelinePageSize, loadFullPipelineView])
+    void loadFullPipelineView(
+      fullPipelineActiveLetter,
+      fullPipelinePageSize,
+      nextOffset,
+      fullPipelineSortBy,
+      fullPipelineSortDir,
+    )
+  }, [
+    fullPipelineActiveLetter,
+    fullPipelineOffset,
+    fullPipelinePageSize,
+    fullPipelineSortBy,
+    fullPipelineSortDir,
+    loadFullPipelineView,
+  ])
 
   const onFullPipelinePageNext = useCallback(() => {
     const nextOffset = fullPipelineOffset + fullPipelinePageSize
     setFullPipelineOffset(nextOffset)
-    void loadFullPipelineView(fullPipelineActiveLetter, fullPipelinePageSize, nextOffset)
-  }, [fullPipelineActiveLetter, fullPipelineOffset, fullPipelinePageSize, loadFullPipelineView])
+    void loadFullPipelineView(
+      fullPipelineActiveLetter,
+      fullPipelinePageSize,
+      nextOffset,
+      fullPipelineSortBy,
+      fullPipelineSortDir,
+    )
+  }, [
+    fullPipelineActiveLetter,
+    fullPipelineOffset,
+    fullPipelinePageSize,
+    fullPipelineSortBy,
+    fullPipelineSortDir,
+    loadFullPipelineView,
+  ])
 
   const onFullPipelinePageSizeChange = useCallback((size: number) => {
     setFullPipelinePageSize(size)
     setFullPipelineOffset(0)
-    void loadFullPipelineView(fullPipelineActiveLetter, size, 0)
-  }, [fullPipelineActiveLetter, loadFullPipelineView])
+    void loadFullPipelineView(fullPipelineActiveLetter, size, 0, fullPipelineSortBy, fullPipelineSortDir)
+  }, [fullPipelineActiveLetter, fullPipelineSortBy, fullPipelineSortDir, loadFullPipelineView])
+
+  const onFullPipelineSort = useCallback(
+    (field: string) => {
+      const newDir: 'asc' | 'desc' =
+        fullPipelineSortBy === field
+          ? fullPipelineSortDir === 'asc'
+            ? 'desc'
+            : 'asc'
+          : SORT_DESC_FIRST.has(field)
+            ? 'desc'
+            : 'asc'
+      setFullPipelineSortBy(field)
+      setFullPipelineSortDir(newDir)
+      setFullPipelineOffset(0)
+      void loadFullPipelineView(fullPipelineActiveLetter, fullPipelinePageSize, 0, field, newDir)
+    },
+    [
+      fullPipelineActiveLetter,
+      fullPipelinePageSize,
+      fullPipelineSortBy,
+      fullPipelineSortDir,
+      loadFullPipelineView,
+    ],
+  )
 
   const fullPipelineScrapeAsync = useCallback(async () => {
     if (!fullPipelineSelectedIds.length) return
@@ -951,7 +1054,13 @@ export function usePipelineViews(
   const onS4Sort = useCallback(
     (field: string) => {
       const newDir: 'asc' | 'desc' =
-        s4SortBy === field ? (s4SortDir === 'asc' ? 'desc' : 'asc') : 'asc'
+        s4SortBy === field
+          ? s4SortDir === 'asc'
+            ? 'desc'
+            : 'asc'
+          : SORT_DESC_FIRST.has(field)
+            ? 'desc'
+            : 'asc'
       setS4SortBy(field)
       setS4SortDir(newDir)
       setS4Offset(0)
@@ -1005,6 +1114,9 @@ export function usePipelineViews(
     onFullPipelinePageNext,
     onFullPipelinePageSizeChange,
     onFullPipelineSelectAllMatching,
+    fullPipelineSortBy,
+    fullPipelineSortDir,
+    onFullPipelineSort,
     pipelineCompanies,
     pipelineLetterCounts,
     pipelineActiveLetters,

@@ -72,6 +72,7 @@ def _latest_scrape_subquery():
             ScrapeJob.status.label("status"),
             ScrapeJob.terminal_state.label("terminal_state"),
             ScrapeJob.last_error_code.label("last_error_code"),
+            ScrapeJob.updated_at.label("scrape_updated_at"),
         )
         .distinct(ScrapeJob.normalized_url)
         .order_by(ScrapeJob.normalized_url, ScrapeJob.created_at.desc())
@@ -87,6 +88,7 @@ def _latest_analysis_subquery():
             AnalysisJob.run_id.label("run_id"),
             cast(AnalysisJob.state, String()).label("state"),
             AnalysisJob.terminal_state.label("terminal_state"),
+            AnalysisJob.updated_at.label("analysis_updated_at"),
         )
         .distinct(AnalysisJob.company_id)
         .order_by(AnalysisJob.company_id, AnalysisJob.created_at.desc())
@@ -110,6 +112,7 @@ def _latest_contact_fetch_subquery():
         select(
             ContactFetchJob.company_id.label("company_id"),
             cast(ContactFetchJob.state, String()).label("state"),
+            ContactFetchJob.updated_at.label("contact_fetch_updated_at"),
         )
         .distinct(ContactFetchJob.company_id)
         .order_by(ContactFetchJob.company_id, ContactFetchJob.created_at.desc())
@@ -236,8 +239,26 @@ def upsert_company_feedback(
 # ---------------------------------------------------------------------------
 
 _COMPANY_SORT_FIELDS = frozenset(
-    {"domain", "created_at", "decision", "confidence", "scrape_status", "contact_count"}
+    {
+        "domain",
+        "created_at",
+        "last_activity",
+        "decision",
+        "confidence",
+        "scrape_status",
+        "contact_count",
+    }
 )
+
+_ACTIVITY_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _greatest_datetime(*parts):
+    """Row-wise max over coalesced datetimes (SQLite has no GREATEST; PG does)."""
+    acc = parts[0]
+    for p in parts[1:]:
+        acc = case((acc >= p, acc), else_=p)
+    return acc
 
 
 @router.get("/companies", response_model=CompanyList)
@@ -252,8 +273,8 @@ def list_companies(
     letter: str | None = Query(default=None, min_length=1, max_length=1),
     letters: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
-    sort_by: str = Query(default="domain"),
-    sort_dir: str = Query(default="asc"),
+    sort_by: str = Query(default="last_activity"),
+    sort_dir: str = Query(default="desc"),
     upload_id: UUID | None = Query(default=None),
 ) -> CompanyList:
     if not isinstance(limit, int):
@@ -267,9 +288,9 @@ def list_companies(
     if not isinstance(letters, str):
         letters = getattr(letters, "default", None)
     if not isinstance(sort_by, str):
-        sort_by = getattr(sort_by, "default", "domain")
+        sort_by = getattr(sort_by, "default", "last_activity")
     if not isinstance(sort_dir, str):
-        sort_dir = getattr(sort_dir, "default", "asc")
+        sort_dir = getattr(sort_dir, "default", "desc")
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
     _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
@@ -286,6 +307,13 @@ def list_companies(
     latest_contact_fetch = _latest_contact_fetch_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     latest_confidence = latest_classification.c.confidence
+    last_activity_expr = _greatest_datetime(
+        col(Company.created_at),
+        func.coalesce(latest_scrape.c.scrape_updated_at, _ACTIVITY_EPOCH),
+        func.coalesce(latest_analysis.c.analysis_updated_at, _ACTIVITY_EPOCH),
+        func.coalesce(latest_contact_fetch.c.contact_fetch_updated_at, _ACTIVITY_EPOCH),
+        func.coalesce(CompanyFeedback.updated_at, _ACTIVITY_EPOCH),
+    )
     # manual_label overrides LLM decision for filtering and ordering
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
@@ -324,6 +352,7 @@ def list_companies(
             latest_scrape.c.last_error_code,
             func.coalesce(contact_counts.c.contact_count, 0),
             latest_contact_fetch.c.state,
+            last_activity_expr.label("last_activity"),
         )
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
@@ -356,6 +385,7 @@ def list_companies(
     _sort_col_map = {
         "domain": col(Company.domain),
         "created_at": col(Company.created_at),
+        "last_activity": last_activity_expr,
         "decision": decision_rank,
         "confidence": latest_confidence,
         "scrape_status": latest_scrape.c.status,
@@ -414,6 +444,7 @@ def list_companies(
             latest_scrape_error_code=str(row[20]) if row[20] is not None else None,
             contact_count=int(row[21]) if row[21] is not None else 0,
             contact_fetch_status=str(row[22]) if row[22] is not None else None,
+            last_activity=row[23],
         )
         for row in page_rows
     ]

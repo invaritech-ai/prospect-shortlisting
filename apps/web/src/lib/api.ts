@@ -104,6 +104,56 @@ export class ApiError extends Error {
   }
 }
 
+/** Older API builds reject `last_activity` / `updated_at` sort — retry with these. */
+const LEGACY_COMPANY_SORT = { sortBy: 'domain' as const, sortDir: 'asc' as const }
+const LEGACY_CONTACT_SORT = { sortBy: 'domain' as const, sortDir: 'asc' as const }
+
+let companyListLegacySortFallback = false
+let contactsListLegacySortFallback = false
+let sortCompatUserNotice: string | null = null
+
+function is422InvalidSortBy(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 422) return false
+  const d = err.detail
+  const text =
+    typeof d === 'string'
+      ? d
+      : Array.isArray(d)
+        ? JSON.stringify(d)
+        : d != null && typeof d === 'object'
+          ? JSON.stringify(d)
+          : ''
+  return /invalid sort_by|sort_by/i.test(text)
+}
+
+/** Call after a successful `listCompanies` if you need to sync UI sort to legacy fields. */
+export function consumeCompanyListLegacySortFallback(): boolean {
+  const v = companyListLegacySortFallback
+  companyListLegacySortFallback = false
+  return v
+}
+
+/** Call after a successful `listContacts` if you need to sync UI sort to legacy fields. */
+export function consumeContactsListLegacySortFallback(): boolean {
+  const v = contactsListLegacySortFallback
+  contactsListLegacySortFallback = false
+  return v
+}
+
+/** One-line notice when we had to fall back (older backend). */
+export function consumeSortCompatUserNotice(): string | null {
+  const m = sortCompatUserNotice
+  sortCompatUserNotice = null
+  return m
+}
+
+function recordSortCompatFallback(kind: 'companies' | 'contacts'): void {
+  sortCompatUserNotice =
+    kind === 'companies'
+      ? 'This API build does not support activity-based company sort; using domain order until the backend is redeployed.'
+      : 'This API build does not support contact “modified” sort; using domain order until the backend is redeployed.'
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = apiSessionConfig.getAccessToken?.() ?? null
   const headers = new Headers(init?.headers)
@@ -193,16 +243,32 @@ export async function listCompanies(
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
   letter: string | null = null,
-  sortBy = 'domain',
-  sortDir: 'asc' | 'desc' = 'asc',
+  sortBy = 'last_activity',
+  sortDir: 'asc' | 'desc' = 'desc',
   uploadId?: string,
   letters?: string[],
 ): Promise<CompanyList> {
-  let url = `/v1/companies?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sortBy)}&sort_dir=${sortDir}`
-  if (letter) url += `&letter=${encodeURIComponent(letter)}`
-  if (letters && letters.length > 0) url += `&letters=${encodeURIComponent(letters.join(','))}`
-  if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
-  return request<CompanyList>(url)
+  const buildUrl = (sb: string, sd: string) => {
+    let u = `/v1/companies?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sb)}&sort_dir=${sd}`
+    if (letter) u += `&letter=${encodeURIComponent(letter)}`
+    if (letters && letters.length > 0) u += `&letters=${encodeURIComponent(letters.join(','))}`
+    if (uploadId) u += `&upload_id=${encodeURIComponent(uploadId)}`
+    return u
+  }
+
+  companyListLegacySortFallback = false
+  try {
+    return await request<CompanyList>(buildUrl(sortBy, sortDir))
+  } catch (err) {
+    const alreadyLegacy =
+      sortBy === LEGACY_COMPANY_SORT.sortBy && sortDir === LEGACY_COMPANY_SORT.sortDir
+    if (is422InvalidSortBy(err) && !alreadyLegacy) {
+      companyListLegacySortFallback = true
+      recordSortCompatFallback('companies')
+      return await request<CompanyList>(buildUrl(LEGACY_COMPANY_SORT.sortBy, LEGACY_COMPANY_SORT.sortDir))
+    }
+    throw err
+  }
 }
 
 export async function deleteCompanies(companyIds: string[]): Promise<CompanyDeleteResult> {
@@ -499,21 +565,46 @@ export async function listContacts(
     countByLetters?: boolean
   },
 ): Promise<ContactListResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', options.campaignId)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
-  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
-  if (options.staleDays) params.set('stale_days', String(options.staleDays))
-  if (options.search) params.set('search', options.search)
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  if (options.sortBy) params.set('sort_by', options.sortBy)
-  if (options.sortDir) params.set('sort_dir', options.sortDir)
-  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
-  if (options.uploadId) params.set('upload_id', options.uploadId)
-  if (options.countByLetters) params.set('count_by_letters', 'true')
-  return request<ContactListResponse>(`/v1/contacts?${params.toString()}`)
+  const buildQuery = (sortBy: string | undefined, sortDir: 'asc' | 'desc' | undefined) => {
+    const params = new URLSearchParams()
+    params.set('campaign_id', options.campaignId)
+    if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+    if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
+    if (options.stageFilter) params.set('stage_filter', options.stageFilter)
+    if (options.staleDays) params.set('stale_days', String(options.staleDays))
+    if (options.search) params.set('search', options.search)
+    if (options.limit) params.set('limit', String(options.limit))
+    if (options.offset) params.set('offset', String(options.offset))
+    if (sortBy) params.set('sort_by', sortBy)
+    if (sortDir) params.set('sort_dir', sortDir)
+    if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
+    if (options.uploadId) params.set('upload_id', options.uploadId)
+    if (options.countByLetters) params.set('count_by_letters', 'true')
+    return params.toString()
+  }
+
+  const primarySortBy = options.sortBy
+  const primarySortDir = options.sortDir
+  const path = (sortBy: string | undefined, sortDir: 'asc' | 'desc' | undefined) =>
+    `/v1/contacts?${buildQuery(sortBy, sortDir)}`
+
+  contactsListLegacySortFallback = false
+  try {
+    return await request<ContactListResponse>(path(primarySortBy, primarySortDir))
+  } catch (err) {
+    const alreadyLegacy =
+      primarySortBy === LEGACY_CONTACT_SORT.sortBy &&
+      primarySortDir === LEGACY_CONTACT_SORT.sortDir
+    const hadExplicitSort = Boolean(primarySortBy || primarySortDir)
+    if (is422InvalidSortBy(err) && hadExplicitSort && !alreadyLegacy) {
+      contactsListLegacySortFallback = true
+      recordSortCompatFallback('contacts')
+      return await request<ContactListResponse>(
+        path(LEGACY_CONTACT_SORT.sortBy, LEGACY_CONTACT_SORT.sortDir),
+      )
+    }
+    throw err
+  }
 }
 
 export async function listCompanyContacts(

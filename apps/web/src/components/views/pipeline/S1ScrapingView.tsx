@@ -297,6 +297,7 @@ export function S1ScrapingView({
                 />
               </th>
               <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Scrape status" field="scrape_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
@@ -306,13 +307,14 @@ export function S1ScrapingView({
               <tr key={i} className="border-b border-(--oc-border)">
                 <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-14 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-5 w-20 rounded-full" /></td>
                 <td className="p-3"><div className="oc-skeleton h-6 w-16 rounded-lg" /></td>
               </tr>
             ))}
             {!isLoading && visibleCompanies.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-6 py-10 text-center">
+                <td colSpan={5} className="px-6 py-10 text-center">
                   {scrapeSubFilter === 'pending' && companies != null ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-emerald-700">All companies have been scraped ✓</p>
@@ -353,6 +355,9 @@ export function S1ScrapingView({
                   >
                     {c.domain}
                   </a>
+                </td>
+                <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                  <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
                 </td>
                 <td className="p-3">
                   {c.latest_scrape_status ? (

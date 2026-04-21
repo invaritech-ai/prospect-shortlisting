@@ -80,6 +80,7 @@ export type CompanyListItem = {
   domain: string
   pipeline_stage: CompanyStage
   created_at: string
+  last_activity: string
   latest_decision: string | null
   latest_confidence: number | null
   latest_scrape_job_id: string | null

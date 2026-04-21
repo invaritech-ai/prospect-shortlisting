@@ -1,10 +1,14 @@
 """HTTP fetch utilities: static fetch, stealth fetch, DNS resolution, HTML detection.
 
-Fetch strategy (two tiers):
-  1. Static (httpx): fast GET, no JS — works for sites without bot protection.
-  2. Stealth (StealthyFetcher): Playwright + Cloudflare bypass — for JS-heavy / protected sites.
+Fetch strategy (three tiers):
+  1. Static (httpx)           — fast GET, no JS. Works for sites without bot protection.
+  2. Impersonating (curl_cffi) — real-browser TLS + HTTP/2 fingerprint, still no JS.
+                                 Handles servers that reject plain httpx (e.g. Cloudflare
+                                 shields, stricter WAFs) at essentially static cost.
+  3. Stealth (StealthyFetcher) — Playwright + Cloudflare bypass. For JS-heavy /
+                                 protected pages. Reserved for policy-driven escalation.
 
-Stealth mode is **deterministic per worker** — no cross-fallback:
+Stealth mode is **deterministic per worker** — no cross-fallback between modes:
   - Workers with PS_BROWSERLESS_URL set → Browserless CDP only.
   - Workers without PS_BROWSERLESS_URL  → local headless Chromium only.
 
@@ -27,7 +31,58 @@ from scrapling import Selector, StealthyFetcher
 from scrapling.engines._browsers._stealth import AsyncStealthySession
 
 from app.core.config import settings
-from app.services.url_utils import absolute_url, canonical_internal_url, clean_text
+from app.core.logging import log_event
+from app.services.url_utils import absolute_url, canonical_internal_url, clean_text, domain_from_url
+
+
+# ── Canonical fetch error codes ─────────────────────────────────────────────
+# Shared across all fetch tiers so downstream routers/policy can make
+# deterministic escalation decisions. Kept as string constants (not an Enum)
+# to preserve JSON logging/ORM field compatibility.
+
+
+class FetchErrorCode:
+    """Canonical error codes emitted by every fetch tier."""
+
+    OK = ""  # selector present, content usable
+    DNS_NOT_RESOLVED = "dns_not_resolved"
+    TLS_ERROR = "tls_error"
+    TIMEOUT = "timeout"
+    NON_HTML = "non_html"
+    TOO_THIN = "too_thin"
+    BOT_PROTECTION = "bot_protection"
+    PARKED_DOMAIN = "parked_domain"
+    NOT_FOUND = "not_found"          # HTTP 404 / gone
+    ACCESS_DENIED = "access_denied"  # HTTP 403 / forbidden
+    RATE_LIMITED = "rate_limited"    # HTTP 429
+    PARSER_ERROR = "parser_error"    # response received but HTML parse failed
+    FETCH_FAILED = "fetch_failed"    # generic / unknown transport failure
+
+
+# Error codes that indicate a benign *recoverable* failure — i.e. the next tier
+# (impersonating or stealth) has a realistic chance of succeeding. Everything
+# not in this set is considered either permanent or a transport failure that
+# should propagate up to the domain policy.
+ESCALATABLE_ERROR_CODES: frozenset[str] = frozenset({
+    FetchErrorCode.BOT_PROTECTION,
+    FetchErrorCode.ACCESS_DENIED,
+    FetchErrorCode.RATE_LIMITED,
+    FetchErrorCode.TOO_THIN,
+    FetchErrorCode.TIMEOUT,
+    FetchErrorCode.PARSER_ERROR,
+    FetchErrorCode.FETCH_FAILED,
+    FetchErrorCode.TLS_ERROR,
+    FetchErrorCode.NON_HTML,
+})
+
+# Error codes that, when seen for a given domain, should feed the adaptive
+# backoff/circuit-breaker machinery. These indicate active pushback from the
+# target site (not our own bugs or transient network glitches we cannot infer).
+HOSTILE_ERROR_CODES: frozenset[str] = frozenset({
+    FetchErrorCode.BOT_PROTECTION,
+    FetchErrorCode.ACCESS_DENIED,
+    FetchErrorCode.RATE_LIMITED,
+})
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +187,30 @@ def is_parked_domain(text: str) -> bool:
 
 
 def classify_fetch_error(message: str) -> str:
+    """Classify a transport-level error message into a canonical `FetchErrorCode`."""
     lowered = (message or "").lower()
     if "dns" in lowered or "resolve host" in lowered or "name_not_resolved" in lowered:
-        return "dns_not_resolved"
-    if "timeout" in lowered:
-        return "timeout"
+        return FetchErrorCode.DNS_NOT_RESOLVED
+    if "timeout" in lowered or "timed out" in lowered:
+        return FetchErrorCode.TIMEOUT
     if "ssl" in lowered or "tls" in lowered or "certificate" in lowered:
-        return "tls_error"
+        return FetchErrorCode.TLS_ERROR
     if "non_html" in lowered:
-        return "non_html"
-    return "fetch_failed"
+        return FetchErrorCode.NON_HTML
+    return FetchErrorCode.FETCH_FAILED
+
+
+def classify_http_status(status_code: int) -> str:
+    """Map an HTTP status code to a canonical `FetchErrorCode` when it's an error."""
+    if status_code == 404:
+        return FetchErrorCode.NOT_FOUND
+    if status_code == 403:
+        return FetchErrorCode.ACCESS_DENIED
+    if status_code == 429:
+        return FetchErrorCode.RATE_LIMITED
+    if status_code >= 400:
+        return FetchErrorCode.FETCH_FAILED
+    return FetchErrorCode.OK
 
 
 def should_skip_url(url: str) -> bool:
@@ -211,6 +280,10 @@ def _selector_text(selector: object) -> str:
 
 # ── Static fetch (httpx) ─────────────────────────────────────────────────────
 
+# NOTE: Do NOT advertise `br` in Accept-Encoding unless the `brotli` package
+# is installed. Otherwise httpx returns compressed bytes decoded as latin-1,
+# which breaks `Selector(text=...)` construction downstream with the misleading
+# error "Selector class needs HTML content, or root arguments to work".
 _STATIC_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -218,8 +291,92 @@ _STATIC_HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
 }
+
+# Minimum size of clean text we consider "meaningful" HTML content. Below this
+# threshold we flag `too_thin` and let the router decide whether to escalate.
+_MIN_TEXT_LEN = 250
+
+
+def _build_selector(text: str, url: str, status: int) -> Selector | None:
+    """Build a Scrapling Selector defensively — returns None on parse error.
+
+    Scrapling's current API uses `content=`, not `text=`. Calling with `text=`
+    triggers `ValueError: Selector class needs HTML content, or root arguments
+    to work` and was a silent bug in the previous static tier.
+    """
+    if not text or not text.strip():
+        return None
+    try:
+        selector = Selector(content=text, url=url)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("selector_build_failed url=%s error=%.200s", url, str(exc))
+        return None
+    try:
+        selector.status = status  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+    return selector
+
+
+def _classify_html_response(
+    *,
+    url: str,
+    final_url: str,
+    status_code: int,
+    html_text: str,
+    fetch_mode: str,
+) -> FetchResult:
+    """Unified validation: turn an HTML response into a FetchResult.
+
+    Applies identical semantics across every fetch tier so the domain policy
+    engine can compare outcomes apples-to-apples.
+    """
+    if status_code >= 400:
+        return FetchResult(
+            final_url=final_url, status_code=status_code,
+            selector=None, fetch_mode=fetch_mode,
+            error_code=classify_http_status(status_code),
+            error_message=f"HTTP {status_code}",
+        )
+
+    text = clean_text(html_text)
+
+    if is_bot_wall(text):
+        return FetchResult(
+            final_url=final_url, status_code=status_code,
+            selector=None, fetch_mode=fetch_mode,
+            error_code=FetchErrorCode.BOT_PROTECTION, error_message="bot_wall",
+        )
+
+    if len(text) < _MIN_TEXT_LEN:
+        return FetchResult(
+            final_url=final_url, status_code=status_code,
+            selector=None, fetch_mode=fetch_mode,
+            error_code=FetchErrorCode.TOO_THIN, error_message="too_thin",
+        )
+
+    selector = _build_selector(html_text, final_url, status_code)
+    if selector is None:
+        return FetchResult(
+            final_url=final_url, status_code=status_code,
+            selector=None, fetch_mode=fetch_mode,
+            error_code=FetchErrorCode.PARSER_ERROR, error_message="selector_build_failed",
+        )
+
+    logger.info("fetch_%s_success url=%s status=%d text_len=%d",
+                fetch_mode, url, status_code, len(text))
+    return FetchResult(
+        final_url=final_url, status_code=status_code,
+        selector=selector, fetch_mode=fetch_mode,
+        error_code=FetchErrorCode.OK, error_message="",
+    )
+
+
+def _is_html_content_type(ctype: str) -> bool:
+    lowered = (ctype or "").lower()
+    return "text/html" in lowered or "application/xhtml+xml" in lowered
 
 
 async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
@@ -233,52 +390,28 @@ async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
         ) as client:
             resp = await client.get(url)
 
-        ctype = resp.headers.get("content-type", "").lower()
-        if "text/html" not in ctype and "application/xhtml+xml" not in ctype:
+        ctype = resp.headers.get("content-type", "")
+        if not _is_html_content_type(ctype):
             return FetchResult(
                 final_url=str(resp.url), status_code=resp.status_code,
                 selector=None, fetch_mode="static",
-                error_code="non_html", error_message="non_html response",
+                error_code=FetchErrorCode.NON_HTML, error_message="non_html response",
             )
 
-        text = clean_text(resp.text)
-
-        if resp.status_code >= 400:
-            return FetchResult(
-                final_url=str(resp.url), status_code=resp.status_code,
-                selector=None, fetch_mode="static",
-                error_code="fetch_failed", error_message=f"HTTP {resp.status_code}",
-            )
-
-        if is_bot_wall(text):
-            return FetchResult(
-                final_url=str(resp.url), status_code=resp.status_code,
-                selector=None, fetch_mode="static",
-                error_code="bot_protection", error_message="bot_wall",
-            )
-
-        if len(text) < 250:
-            return FetchResult(
-                final_url=str(resp.url), status_code=resp.status_code,
-                selector=None, fetch_mode="static",
-                error_code="too_thin", error_message="too_thin",
-            )
-
-        selector = Selector(text=resp.text)
-        selector.url = str(resp.url)  # type: ignore[attr-defined]
-        selector.status = resp.status_code  # type: ignore[attr-defined]
-        logger.info("fetch_static_success url=%s status=%d text_len=%d", url, resp.status_code, len(text))
-        return FetchResult(
-            final_url=str(resp.url), status_code=resp.status_code,
-            selector=selector, fetch_mode="static",
-            error_code="", error_message="",
+        return _classify_html_response(
+            url=url,
+            final_url=str(resp.url),
+            status_code=resp.status_code,
+            html_text=resp.text,
+            fetch_mode="static",
         )
 
     except httpx.TimeoutException:
         logger.info("fetch_static_timeout url=%s", url)
         return FetchResult(
             final_url=url, status_code=0, selector=None,
-            fetch_mode="static", error_code="timeout", error_message="static_timeout",
+            fetch_mode="static", error_code=FetchErrorCode.TIMEOUT,
+            error_message="static_timeout",
         )
     except Exception as exc:  # noqa: BLE001
         logger.info("fetch_static_error url=%s error=%.200s", url, str(exc))
@@ -287,6 +420,135 @@ async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
             fetch_mode="static", error_code=classify_fetch_error(str(exc)),
             error_message=str(exc)[:500],
         )
+
+
+# ── Impersonating fetch (curl_cffi) ──────────────────────────────────────────
+#
+# curl_cffi mimics a real browser's TLS/HTTP-2 fingerprint. This unlocks a
+# large class of sites that reject plain httpx (generic Cloudflare shields,
+# stricter WAFs) without paying the cost of spinning up a full browser.
+#
+# We keep a small pool of long-lived sessions *per domain* so cookies and the
+# TLS fingerprint persist across requests — this is Scrapling's "FetcherSession"
+# pattern applied at our pipeline's granularity. Sessions are fully
+# thread/async-safe because curl_cffi releases the GIL during network I/O.
+
+try:  # pragma: no cover - import guarded for optional dep paths
+    from curl_cffi import requests as _curl_requests  # type: ignore[import]
+    _CURL_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    _curl_requests = None  # type: ignore[assignment]
+    _CURL_AVAILABLE = False
+
+
+_IMPERSONATE_PROFILE = "chrome"  # generic Chrome fingerprint — works everywhere
+
+_impersonate_session_cache: dict[str, object] = {}
+_impersonate_lock = asyncio.Lock()
+
+
+def _impersonate_session_key(domain: str) -> str:
+    return (domain or "").lower() or "__default__"
+
+
+async def _get_impersonate_session(domain: str):
+    """Return a domain-scoped curl_cffi Session (lazily created, thread-safe)."""
+    if not _CURL_AVAILABLE:
+        return None
+    key = _impersonate_session_key(domain)
+    async with _impersonate_lock:
+        sess = _impersonate_session_cache.get(key)
+        if sess is None:
+            sess = _curl_requests.Session()  # type: ignore[union-attr]
+            _impersonate_session_cache[key] = sess
+        return sess
+
+
+async def close_impersonate_sessions() -> None:
+    """Close all cached curl_cffi sessions. Safe to call on worker shutdown."""
+    async with _impersonate_lock:
+        for sess in _impersonate_session_cache.values():
+            try:
+                close = getattr(sess, "close", None)
+                if callable(close):
+                    close()
+            except Exception:  # noqa: BLE001
+                pass
+        _impersonate_session_cache.clear()
+
+
+async def _impersonate_fetch(
+    url: str,
+    *,
+    domain: str = "",
+    timeout_sec: float = 15.0,
+) -> FetchResult:
+    """Domain-sessioned fetch using curl_cffi's browser-grade TLS/HTTP fingerprint.
+
+    Falls through with `FetchErrorCode.FETCH_FAILED` when curl_cffi isn't
+    installed; callers can safely chain this tier after `_static_fetch` and
+    treat it as a no-op when unavailable.
+    """
+    if not _CURL_AVAILABLE:
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="impersonate", error_code=FetchErrorCode.FETCH_FAILED,
+            error_message="curl_cffi_not_installed",
+        )
+
+    session = await _get_impersonate_session(domain)
+    if session is None:
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="impersonate", error_code=FetchErrorCode.FETCH_FAILED,
+            error_message="impersonate_session_unavailable",
+        )
+
+    def _do_request():
+        return session.get(  # type: ignore[union-attr]
+            url,
+            impersonate=_IMPERSONATE_PROFILE,
+            timeout=timeout_sec,
+            allow_redirects=True,
+        )
+
+    try:
+        resp = await asyncio.to_thread(_do_request)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("fetch_impersonate_error url=%s error=%.200s", url, str(exc))
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="impersonate",
+            error_code=classify_fetch_error(str(exc)),
+            error_message=str(exc)[:500],
+        )
+
+    ctype = ""
+    try:
+        ctype = str(resp.headers.get("content-type", "") or "")  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001
+        ctype = ""
+    if not _is_html_content_type(ctype):
+        return FetchResult(
+            final_url=str(getattr(resp, "url", url)),
+            status_code=int(getattr(resp, "status_code", 0) or 0),
+            selector=None, fetch_mode="impersonate",
+            error_code=FetchErrorCode.NON_HTML, error_message="non_html response",
+        )
+
+    html_text = ""
+    try:
+        html_text = resp.text or ""  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001
+        html_text = ""
+
+    return _classify_html_response(
+        url=url,
+        final_url=str(getattr(resp, "url", url)),
+        status_code=int(getattr(resp, "status_code", 0) or 0),
+        html_text=html_text,
+        fetch_mode="impersonate",
+    )
 
 
 async def _recover_https_tls_error(url: str) -> FetchResult | None:
@@ -349,18 +611,18 @@ async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
 
 
 def _validate_stealth_response(url: str, response: Selector | None) -> FetchResult:
-    """Validate a stealth response and return a FetchResult."""
+    """Validate a stealth response and return a FetchResult with canonical error codes."""
     if response is None:
         return FetchResult(
             final_url=url, status_code=0, selector=None,
-            fetch_mode="stealth", error_code="fetch_failed",
+            fetch_mode="stealth", error_code=FetchErrorCode.FETCH_FAILED,
             error_message="stealth_fetch_failed",
         )
 
     if not is_html_selector_response(response):
         return FetchResult(
             final_url=str(response.url), status_code=0, selector=None,
-            fetch_mode="stealth", error_code="non_html",
+            fetch_mode="stealth", error_code=FetchErrorCode.NON_HTML,
             error_message="non_html",
         )
 
@@ -371,21 +633,21 @@ def _validate_stealth_response(url: str, response: Selector | None) -> FetchResu
         logger.info("fetch_stealth_bot_wall url=%s preview=%.150s", url, t)
         return FetchResult(
             final_url=str(response.url), status_code=status, selector=None,
-            fetch_mode="stealth", error_code="bot_protection",
+            fetch_mode="stealth", error_code=FetchErrorCode.BOT_PROTECTION,
             error_message="bot_wall",
         )
 
-    if len(t) < 250:
+    if len(t) < _MIN_TEXT_LEN:
         return FetchResult(
             final_url=str(response.url), status_code=status, selector=None,
-            fetch_mode="stealth", error_code="too_thin",
+            fetch_mode="stealth", error_code=FetchErrorCode.TOO_THIN,
             error_message="too_thin",
         )
 
     logger.info("fetch_success url=%s mode=stealth text_len=%d", url, len(t))
     return FetchResult(
         final_url=str(response.url), status_code=status, selector=response,
-        fetch_mode="stealth", error_code="", error_message="",
+        fetch_mode="stealth", error_code=FetchErrorCode.OK, error_message="",
     )
 
 
@@ -447,7 +709,7 @@ async def stealth_fetch_many(
                     logger.warning("fetch_stealth_session_timeout url=%s", url)
                     result = FetchResult(
                         final_url=url, status_code=0, selector=None,
-                        fetch_mode="stealth", error_code="timeout",
+                        fetch_mode="stealth", error_code=FetchErrorCode.TIMEOUT,
                         error_message="stealth_session_timeout",
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -474,24 +736,149 @@ async def stealth_fetch_many(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
+def should_try_impersonate_after_static(fr: FetchResult) -> bool:
+    """Whether the impersonating tier is worth attempting after static failed."""
+    if fr.selector is not None:
+        return False
+    if fr.error_code in (
+        FetchErrorCode.DNS_NOT_RESOLVED,
+    ):
+        return False
+    return fr.error_code in ESCALATABLE_ERROR_CODES
+
+
+def needs_stealth_after_static_and_impersonate(fr: FetchResult) -> bool:
+    """Whether the scrape pipeline should still try the stealth tier."""
+    if fr.selector is not None:
+        return False
+    if fr.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
+        return False
+    if fr.fetch_mode == "circuit_open":
+        return False
+    if fr.error_code == FetchErrorCode.NOT_FOUND:
+        return False
+    return fr.error_code in ESCALATABLE_ERROR_CODES or fr.error_code == FetchErrorCode.FETCH_FAILED
+
+
+async def scrape_page_fetch(
+    url: str,
+    domain: str,
+    *,
+    job_id: str,
+    policy: object | None = None,
+) -> FetchResult:
+    """Pipeline fetch for one page: cadence → static → TLS recovery → impersonate.
+
+    Used by `ScrapeService` so UI-triggered jobs exercise the same tiers as
+    benchmarks, with per-domain policy (not ad-hoc scripts).
+    """
+    from app.services.domain_policy import CircuitOpenError, get_default_manager
+
+    pm = policy or get_default_manager()
+    try:
+        cadence_wait = await pm.acquire(domain)
+    except CircuitOpenError as e:
+        log_event(
+            logger, "scrape_fetch_circuit_open",
+            job_id=str(job_id), domain=domain, cooldown_remaining=e.cooldown_remaining,
+        )
+        return FetchResult(
+            final_url=url, status_code=0, selector=None,
+            fetch_mode="circuit_open",
+            error_code=FetchErrorCode.FETCH_FAILED,
+            error_message=f"circuit_open:{e.cooldown_remaining:.0f}s",
+        )
+
+    try:
+        static_result = await _static_fetch(url, timeout_sec=settings.scrape_static_timeout_sec)
+        if static_result.error_code == FetchErrorCode.TLS_ERROR:
+            recovered = await _recover_https_tls_error(url)
+            if recovered is not None:
+                static_result = recovered
+
+        if static_result.selector is not None:
+            await pm.record_result(domain, FetchErrorCode.OK, tier="static")
+            await pm.maybe_demote(domain)
+            log_event(
+                logger, "scrape_fetch_tier",
+                job_id=str(job_id), domain=domain, url=url,
+                tier="static", fetch_mode=static_result.fetch_mode,
+                cadence_wait_ms=round(cadence_wait * 1000, 1),
+            )
+            return static_result
+
+        code = static_result.error_code or FetchErrorCode.FETCH_FAILED
+        await pm.record_result(domain, code, tier="static")
+
+        if code == FetchErrorCode.DNS_NOT_RESOLVED:
+            return static_result
+
+        if not should_try_impersonate_after_static(static_result):
+            log_event(
+                logger, "scrape_fetch_tier",
+                job_id=str(job_id), domain=domain, url=url,
+                tier="static", fetch_mode=static_result.fetch_mode, error_code=code,
+            )
+            return static_result
+
+        imp = await _impersonate_fetch(
+            url, domain=domain, timeout_sec=settings.scrape_impersonate_timeout_sec,
+        )
+        if imp.selector is not None:
+            await pm.record_result(domain, FetchErrorCode.OK, tier="static")
+            await pm.maybe_demote(domain)
+            log_event(
+                logger, "scrape_fetch_tier",
+                job_id=str(job_id), domain=domain, url=url,
+                tier="impersonate", fetch_mode=imp.fetch_mode,
+            )
+            return imp
+
+        icode = imp.error_code or FetchErrorCode.FETCH_FAILED
+        await pm.record_result(domain, icode, tier="static")
+        log_event(
+            logger, "scrape_fetch_tier",
+            job_id=str(job_id), domain=domain, url=url,
+            tier="impersonate", fetch_mode=imp.fetch_mode, error_code=icode,
+        )
+        return imp
+    finally:
+        await pm.release(domain)
+
+
 async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str = "") -> FetchResult:
-    """Fetch a single URL: try static first, fall back to stealth if needed."""
-    # Tier 1: static fetch (fast, ~1-2s)
+    """Fetch a single URL: static → impersonate → optional stealth (discovery / misc)."""
+    del classify_model  # reserved for future routing hints
     static_result = await _static_fetch(url, timeout_sec=settings.scrape_static_timeout_sec)
     if static_result.selector is not None:
         return static_result
 
-    if static_result.error_code == "tls_error":
+    if static_result.error_code == FetchErrorCode.TLS_ERROR:
         recovered = await _recover_https_tls_error(url)
         if recovered is not None:
             return recovered
+        static_result = recovered or static_result
+
+    if static_result.selector is not None:
         return static_result
 
-    # Static failed — if it's a permanent error (DNS), don't bother with stealth
-    if static_result.error_code == "dns_not_resolved":
+    if static_result.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
         return static_result
 
-    # Tier 2: stealth fetch (browser, ~30-60s)
+    last = static_result
+    if should_try_impersonate_after_static(static_result):
+        dom = domain_from_url(url)
+        imp = await _impersonate_fetch(
+            url, domain=dom, timeout_sec=settings.scrape_impersonate_timeout_sec,
+        )
+        last = imp
+        if imp.selector is not None:
+            return imp
+
+    if not use_js:
+        return last
+
     timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
     logger.info(
         "fetch_stealth_attempt url=%s timeout_sec=%.1f browserless=%s",

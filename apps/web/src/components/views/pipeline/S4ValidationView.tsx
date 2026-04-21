@@ -337,6 +337,7 @@ export function S4ValidationView({
                 </th>
                 <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <th className="p-3 text-left font-semibold">Email</th>
                 <th className="p-3 text-left font-semibold">Source</th>
                 <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
@@ -380,6 +381,9 @@ export function S4ValidationView({
                       >
                         {contact.domain}
                       </a>
+                    </td>
+                    <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                      <RelativeTimeLabel timestamp={contact.updated_at} prefix="" />
                     </td>
                     <td className="p-3">
                       {contact.email ? (

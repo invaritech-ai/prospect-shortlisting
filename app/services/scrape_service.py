@@ -17,13 +17,15 @@ from sqlmodel import Session, col, delete, select
 from app.core.logging import log_event
 from sqlalchemy import update as sa_update
 from app.models import AnalysisJob, ClassificationResult, Company, ScrapeJob, ScrapePage
+from app.services.domain_policy import get_default_manager
 from app.services.fetch_service import (
+    FetchErrorCode,
     FetchResult,  # re-exported for backwards compat
-    _recover_https_tls_error,
-    _static_fetch,
     fetch_with_fallback,
     is_parked_domain,
+    needs_stealth_after_static_and_impersonate,
     resolve_domain,
+    scrape_page_fetch,
     should_skip_url,
     stealth_fetch_many,
 )
@@ -307,24 +309,29 @@ class ScrapeService:
             random.shuffle(rest)
             page_plan = ([home_entry] if home_entry else []) + rest
 
-        # 5a. Try static fetch first for all pages (fast, parallel-safe, ~1-2s each)
+        # 5a. Per-page fetch: static → impersonate (curl_cffi) under domain policy,
+        # then optional stealth batch for pages that still need a browser.
         from app.core.config import settings as _settings
+        policy = get_default_manager()
         static_results: dict[str, FetchResult] = {}
         stealth_needed: list[tuple[str, str, int]] = []  # pages that need stealth
 
         for kind, canonical, depth in page_plan:
-            static_result = await _static_fetch(canonical, timeout_sec=_settings.scrape_static_timeout_sec)
-            if static_result.selector is not None:
-                static_results[canonical] = static_result
-                logger.info("scrape_static_hit kind=%s url=%s", kind, canonical)
-            elif static_result.error_code == "tls_error":
-                recovered = await _recover_https_tls_error(canonical)
-                static_results[canonical] = recovered or static_result
-            elif static_result.error_code == "dns_not_resolved":
-                # Permanent error — don't bother with stealth
-                static_results[canonical] = static_result
-            else:
+            tier_result = await scrape_page_fetch(
+                canonical, domain, job_id=str(job_id), policy=policy,
+            )
+            if tier_result.selector is not None:
+                static_results[canonical] = tier_result
+                logger.info(
+                    "scrape_tier_hit kind=%s url=%s mode=%s",
+                    kind, canonical, tier_result.fetch_mode,
+                )
+            elif tier_result.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
+                static_results[canonical] = tier_result
+            elif needs_stealth_after_static_and_impersonate(tier_result) and js_fallback:
                 stealth_needed.append((kind, canonical, depth))
+            else:
+                static_results[canonical] = tier_result
 
         # 5b. Stealth fetch remaining pages in a single browser session
         stealth_results: dict[str, FetchResult] = {}
@@ -332,6 +339,7 @@ class ScrapeService:
             stealth_urls = [canonical for _, canonical, _ in stealth_needed]
             logger.info("scrape_stealth_batch job_id=%s count=%d urls=%s",
                         str(job_id), len(stealth_urls), stealth_urls)
+            await policy.mark_escalated(domain)
             batch_results = await stealth_fetch_many(
                 stealth_urls,
                 delay_range=(1.5, 3.5),
@@ -339,9 +347,20 @@ class ScrapeService:
             )
             for url, result in zip(stealth_urls, batch_results):
                 stealth_results[url] = result
+                ec = result.error_code or (
+                    FetchErrorCode.OK if result.selector else FetchErrorCode.FETCH_FAILED
+                )
+                await policy.record_result(domain, ec, tier="stealth")
+                if result.selector is not None:
+                    await policy.maybe_demote(domain)
 
         # 5c. Process results and apply per-page retry for transient failures
-        _RETRY_ERROR_CODES = {"fetch_failed", "timeout", "too_thin"}
+        _RETRY_ERROR_CODES = frozenset({
+            FetchErrorCode.FETCH_FAILED,
+            FetchErrorCode.TIMEOUT,
+            FetchErrorCode.TOO_THIN,
+            FetchErrorCode.PARSER_ERROR,
+        })
 
         for kind, canonical, depth in page_plan:
             fetch = static_results.get(canonical) or stealth_results.get(canonical)

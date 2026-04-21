@@ -33,6 +33,7 @@ function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
     domain: summary.domain,
     pipeline_stage: 'contact_ready',
     created_at: '',
+    last_activity: '',
     latest_decision: null,
     latest_confidence: null,
     latest_scrape_job_id: null,
@@ -554,6 +555,7 @@ export function S3ContactFetchView({
                 />
               </th>
               <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Contacts" field="contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               <th className="p-3 text-left font-semibold">Actions</th>
@@ -564,6 +566,7 @@ export function S3ContactFetchView({
               <tr key={i} className="border-b border-(--oc-border)">
                 <td className="p-3"><div className="oc-skeleton h-4 w-4 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
+                <td className="p-3"><div className="oc-skeleton h-4 w-14 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-5 w-16 rounded-full" /></td>
                 <td className="p-3"><div className="oc-skeleton h-4 w-8 rounded" /></td>
                 <td className="p-3"><div className="oc-skeleton h-6 w-20 rounded-lg" /></td>
@@ -571,7 +574,7 @@ export function S3ContactFetchView({
             ))}
             {!isLoading && visibleCompanies.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center">
+                <td colSpan={6} className="px-6 py-10 text-center">
                   <div className="space-y-1">
                     <p className="text-sm font-semibold text-(--oc-text)">
                       {decisionFilter === 'all'
@@ -611,6 +614,9 @@ export function S3ContactFetchView({
                   >
                     {c.domain}
                   </a>
+                </td>
+                <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                  <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
                 </td>
                 <td className="p-3">
                   {(c.feedback_manual_label ?? c.latest_decision) ? (

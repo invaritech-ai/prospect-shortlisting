@@ -907,7 +907,16 @@ def list_contacts_by_company(
 
 
 _CONTACT_SORT_FIELDS = frozenset(
-    {"domain", "created_at", "first_name", "last_name", "title", "verification_status", "pipeline_stage"}
+    {
+        "domain",
+        "created_at",
+        "updated_at",
+        "first_name",
+        "last_name",
+        "title",
+        "verification_status",
+        "pipeline_stage",
+    }
 )
 
 
@@ -934,8 +943,8 @@ def list_all_contacts(
     search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    sort_by: str = Query(default="domain"),
-    sort_dir: str = Query(default="asc"),
+    sort_by: str = Query(default="updated_at"),
+    sort_dir: str = Query(default="desc"),
     letters: str | None = Query(default=None),
     count_by_letters: bool = Query(default=False),
     upload_id: UUID | None = Query(default=None),
@@ -957,9 +966,9 @@ def list_all_contacts(
     if not isinstance(offset, int):
         offset = int(getattr(offset, "default", 0))
     if not isinstance(sort_by, str):
-        sort_by = getattr(sort_by, "default", "domain")
+        sort_by = getattr(sort_by, "default", "updated_at")
     if not isinstance(sort_dir, str):
-        sort_dir = getattr(sort_dir, "default", "asc")
+        sort_dir = getattr(sort_dir, "default", "desc")
     if not isinstance(count_by_letters, bool):
         count_by_letters = bool(getattr(count_by_letters, "default", False))
     if not isinstance(upload_id, UUID):
@@ -995,6 +1004,7 @@ def list_all_contacts(
     _contact_sort_map = {
         "domain": col(Company.domain),
         "created_at": col(ProspectContact.created_at),
+        "updated_at": col(ProspectContact.updated_at),
         "first_name": col(ProspectContact.first_name),
         "last_name": col(ProspectContact.last_name),
         "title": col(ProspectContact.title),

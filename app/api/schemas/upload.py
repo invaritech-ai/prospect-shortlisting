@@ -72,6 +72,7 @@ class CompanyListItem(UTCReadModel):
     domain: str
     pipeline_stage: str
     created_at: datetime
+    last_activity: datetime
     latest_decision: str | None = None
     latest_confidence: Decimal | None = None
     latest_scrape_job_id: UUID | None = None

@@ -912,6 +912,9 @@ function App() {
             onPagePrev={pipeline.onFullPipelinePagePrev}
             onPageNext={pipeline.onFullPipelinePageNext}
             onPageSizeChange={pipeline.onFullPipelinePageSizeChange}
+            sortBy={pipeline.fullPipelineSortBy}
+            sortDir={pipeline.fullPipelineSortDir}
+            onSort={pipeline.onFullPipelineSort}
             isStartingCampaignPipeline={isStartingCampaignPipeline}
             latestRunProgress={latestPipelineRunProgress}
             campaignCostSummary={campaignCostSummary}
