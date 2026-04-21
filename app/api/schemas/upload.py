@@ -99,6 +99,7 @@ class CompanyList(BaseModel):
 
 
 class CompanyDeleteRequest(BaseModel):
+    campaign_id: UUID
     company_ids: list[UUID] = Field(min_length=1)
 
 
@@ -110,6 +111,7 @@ class CompanyDeleteResult(BaseModel):
 
 
 class CompanyScrapeRequest(BaseModel):
+    campaign_id: UUID
     company_ids: list[UUID] = Field(min_length=1)
     scrape_rules: ScrapeRules | None = None
     upload_id: UUID | None = None

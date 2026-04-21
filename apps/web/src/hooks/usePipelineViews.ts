@@ -132,6 +132,7 @@ export function usePipelineViews(
   selectedCampaignId: string | null,
   selectedPrompt: PromptRead | null,
   selectedScrapePrompt: ScrapePromptRead | null,
+  requestsEnabled: boolean,
   setError: (e: string) => void,
   setNotice: (n: string) => void,
 ): UsePipelineViewsResult {
@@ -202,9 +203,11 @@ export function usePipelineViews(
       letters: string[] = [],
       options?: { background?: boolean },
     ) => {
-      if (!selectedCampaignId) {
+      if (!requestsEnabled || !selectedCampaignId) {
+        pipelineRequestRef.current += 1
         setPipelineCompanies(null)
         setPipelineLetterCounts({})
+        setIsPipelineLoading(false)
         return
       }
       const requestId = pipelineRequestRef.current + 1
@@ -237,7 +240,7 @@ export function usePipelineViews(
         }
       }
     },
-    [selectedCampaignId, setError, setNotice],
+    [requestsEnabled, selectedCampaignId, setError, setNotice],
   )
 
   const loadS4View = useCallback(async (
@@ -249,9 +252,11 @@ export function usePipelineViews(
     letters: string[] = [],
     options?: { background?: boolean },
   ) => {
-    if (!selectedCampaignId) {
+    if (!requestsEnabled || !selectedCampaignId) {
+      s4RequestRef.current += 1
       setS4Contacts(null)
       setS4LetterCounts({})
+      setIsS4Loading(false)
       return
     }
     const requestId = s4RequestRef.current + 1
@@ -293,7 +298,7 @@ export function usePipelineViews(
         setIsS4Loading(false)
       }
     }
-  }, [selectedCampaignId, setError, setNotice])
+  }, [requestsEnabled, selectedCampaignId, setError, setNotice])
 
   const loadFullPipelineView = useCallback(
     async (
@@ -304,9 +309,11 @@ export function usePipelineViews(
       sortDir: 'asc' | 'desc',
       options?: { background?: boolean },
     ) => {
-      if (!selectedCampaignId) {
+      if (!requestsEnabled || !selectedCampaignId) {
+        fullPipelineRequestRef.current += 1
         setFullPipelineCompanies(null)
         setFullPipelineLetterCounts({})
+        setIsFullPipelineLoading(false)
         return
       }
       const requestId = fullPipelineRequestRef.current + 1
@@ -339,7 +346,7 @@ export function usePipelineViews(
         }
       }
     },
-    [selectedCampaignId, setError, setNotice],
+    [requestsEnabled, selectedCampaignId, setError, setNotice],
   )
 
   // ── Load on view change ────────────────────────────────────────────────────
@@ -518,11 +525,15 @@ export function usePipelineViews(
 
   const scrapeSelectedAsync = useCallback(async () => {
     if (!pipelineSelectedIds.length) return
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     setError('')
     setNotice('')
     setIsPipelineScraping(true)
     try {
-      const result = await scrapeSelectedCompanies(pipelineSelectedIds, {
+      const result = await scrapeSelectedCompanies(selectedCampaignId, pipelineSelectedIds, {
         scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
       })
       setNotice(`Queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'}.`)
@@ -532,13 +543,17 @@ export function usePipelineViews(
     } finally {
       setIsPipelineScraping(false)
     }
-  }, [pipelineSelectedIds, selectedScrapePrompt, setError, setNotice])
+  }, [pipelineSelectedIds, selectedCampaignId, selectedScrapePrompt, setError, setNotice])
 
   const onPipelineScrapeSelected = useCallback(() => {
     void scrapeSelectedAsync()
   }, [scrapeSelectedAsync])
 
   const analyzeSelectedAsync = useCallback(async () => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     if (!pipelineSelectedIds.length || !selectedPrompt?.enabled) {
       setError('Select an enabled prompt before running analysis.')
       return
@@ -548,6 +563,7 @@ export function usePipelineViews(
     setIsPipelineAnalyzing(true)
     try {
       const result = await createRuns({
+        campaign_id: selectedCampaignId,
         prompt_id: selectedPrompt.id,
         scope: 'selected',
         company_ids: pipelineSelectedIds,
@@ -561,7 +577,7 @@ export function usePipelineViews(
     } finally {
       setIsPipelineAnalyzing(false)
     }
-  }, [pipelineSelectedIds, selectedPrompt, setError, setNotice])
+  }, [pipelineSelectedIds, selectedCampaignId, selectedPrompt, setError, setNotice])
 
   const onPipelineAnalyzeSelected = useCallback(() => {
     void analyzeSelectedAsync()
@@ -943,9 +959,13 @@ export function usePipelineViews(
     setError('')
     setNotice('')
     try {
+      if (!selectedCampaignId) {
+        setError('Select a campaign first.')
+        return
+      }
       if (resumeStage === 'S1') {
         setAction('Resuming S1…')
-        const result = await scrapeSelectedCompanies([company.id], {
+        const result = await scrapeSelectedCompanies(selectedCampaignId, [company.id], {
           scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
         })
         setNotice(`Resumed S1 for ${company.domain}. Queued ${result.queued_count} scrape job(s).`)
@@ -958,6 +978,7 @@ export function usePipelineViews(
         }
         setAction('Resuming S2…')
         const result = await createRuns({
+          campaign_id: selectedCampaignId,
           prompt_id: selectedPrompt.id,
           scope: 'selected',
           company_ids: [company.id],
@@ -966,10 +987,6 @@ export function usePipelineViews(
         return
       }
       if (resumeStage === 'S3') {
-        if (!selectedCampaignId) {
-          setError('Select a campaign first.')
-          return
-        }
         setAction('Resuming S3…')
         const result = await fetchContactsSelected(selectedCampaignId, [company.id], 'both')
         setNotice(`Resumed S3 for ${company.domain}. Queued ${result.queued_count} contact fetch job(s).`)

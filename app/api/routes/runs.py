@@ -8,7 +8,7 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.db.session import get_session
-from app.models import Company, Prompt, Run
+from app.models import Company, Prompt, Run, Upload
 from app.models.pipeline import CompanyPipelineStage
 from app.services.run_service import RunService
 from app.tasks.analysis import run_analysis_job
@@ -48,14 +48,34 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
         companies = list(
             session.exec(
                 select(Company)
-                .where(col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED)
+                .join(Upload, col(Upload.id) == col(Company.upload_id))
+                .where(
+                    col(Upload.campaign_id) == payload.campaign_id,
+                    col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED,
+                )
                 .order_by(col(Company.created_at).asc(), col(Company.domain).asc())
             )
         )
         requested_count = len(companies)
     else:
         requested_ids = list(dict.fromkeys(payload.company_ids or []))
-        selected = list(session.exec(select(Company).where(col(Company.id).in_(requested_ids))))
+        selected = list(
+            session.exec(
+                select(Company)
+                .join(Upload, col(Upload.id) == col(Company.upload_id))
+                .where(
+                    col(Upload.campaign_id) == payload.campaign_id,
+                    col(Company.id).in_(requested_ids),
+                )
+            )
+        )
+        found_ids = {company.id for company in selected}
+        invalid_ids = [company_id for company_id in requested_ids if company_id not in found_ids]
+        if invalid_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="One or more company_ids are not assigned to the selected campaign.",
+            )
         companies = [company for company in selected if company.pipeline_stage == CompanyPipelineStage.SCRAPED]
         pre_skipped_ids = [company.id for company in selected if company.pipeline_stage != CompanyPipelineStage.SCRAPED]
         requested_count = len(requested_ids)

@@ -24,9 +24,12 @@ const COST_TABLE_ROW_ESTIMATE_PX = 48
 
 function useMediaMinMd(): boolean {
   const [matches, setMatches] = useState(() =>
-    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(min-width: 768px)').matches
+      : true
   )
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
     const mq = window.matchMedia('(min-width: 768px)')
     setMatches(mq.matches)
     const onChange = () => setMatches(mq.matches)

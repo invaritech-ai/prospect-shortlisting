@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -9,8 +10,8 @@ from sqlmodel import Session, col, delete
 from app.api.routes.campaigns import create_campaign
 from app.api.routes.companies import get_company_counts, list_companies
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, Upload
-from app.models.pipeline import CompanyPipelineStage
+from app.models import Company, ContactFetchJob, Upload
+from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState, utcnow
 
 
 def _seed_upload(session: Session, filename: str, *, campaign_id) -> Upload:
@@ -123,5 +124,40 @@ def test_company_counts_stage_buckets_are_exact(sqlite_session: Session) -> None
         assert counts.contact_ready == 1
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_list_companies_uses_latest_contact_fetch_activity_timestamp(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Activity Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "activity.csv", campaign_id=campaign.id)
+    company = _seed_company(sqlite_session, upload_id=upload.id, domain="activity.example")
+    try:
+        older_but_updated = ContactFetchJob(company_id=company.id, provider="snov", state=ContactFetchJobState.RUNNING)
+        older_but_updated.created_at = utcnow() - timedelta(days=2)
+        older_but_updated.updated_at = utcnow()
+        newer_but_stale = ContactFetchJob(company_id=company.id, provider="apollo", state=ContactFetchJobState.QUEUED)
+        newer_but_stale.created_at = utcnow() - timedelta(days=1)
+        newer_but_stale.updated_at = utcnow() - timedelta(days=1)
+        sqlite_session.add(older_but_updated)
+        sqlite_session.add(newer_but_stale)
+        sqlite_session.commit()
+
+        response = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+
+        assert response.items[0].contact_fetch_status == ContactFetchJobState.RUNNING.value
+        expected_last_activity = older_but_updated.updated_at.replace(
+            tzinfo=response.items[0].last_activity.tzinfo,
+        )
+        assert response.items[0].last_activity == expected_last_activity
+    finally:
+        sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id) == company.id))
+        sqlite_session.exec(delete(Company).where(col(Company.id) == company.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()

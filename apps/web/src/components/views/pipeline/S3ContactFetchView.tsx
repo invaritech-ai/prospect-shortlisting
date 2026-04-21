@@ -151,13 +151,17 @@ export function S3ContactFetchView({
 
   useEffect(() => {
     if (!campaignId) {
+      auditRequestRef.current += 1
       setAuditData(null)
       setAuditError('')
+      setIsAuditLoading(false)
       return
     }
     if (auditMode === 'off') {
+      auditRequestRef.current += 1
       setAuditData(null)
       setAuditError('')
+      setIsAuditLoading(false)
       return
     }
     const reqId = auditRequestRef.current + 1

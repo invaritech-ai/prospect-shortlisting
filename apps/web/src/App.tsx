@@ -100,6 +100,7 @@ function App() {
   const [isAuthBootstrapping, setIsAuthBootstrapping] = useState(AUTH_REQUIRED)
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [authError, setAuthError] = useState('')
+  const authRequestsEnabled = !AUTH_REQUIRED || (!isAuthBootstrapping && authSession !== null)
 
   // ── Toasts ────────────────────────────────────────────────────────────────
   const [error, setError] = useState('')
@@ -177,6 +178,7 @@ function App() {
     selectedCampaignId,
     promptMgmt.selectedPrompt,
     scrapePromptMgmt.activeScrapePrompt,
+    authRequestsEnabled,
     setError,
     setNotice,
   )
@@ -187,6 +189,10 @@ function App() {
   // ── Load functions ────────────────────────────────────────────────────────
 
   const loadStats = useCallback(async () => {
+    if (!authRequestsEnabled) {
+      setStats(null)
+      return
+    }
     if (!selectedCampaignId) {
       setStats(null)
       return
@@ -202,9 +208,13 @@ function App() {
       if (selectedCampaignIdRef.current !== campaignId) return
       pollFailuresRef.current += 1
     }
-  }, [selectedCampaignId])
+  }, [authRequestsEnabled, selectedCampaignId])
 
   const loadCompanyCounts = useCallback(async () => {
+    if (!authRequestsEnabled) {
+      setCompanyCounts(null)
+      return
+    }
     if (!selectedCampaignId) {
       setCompanyCounts(null)
       return
@@ -213,9 +223,13 @@ function App() {
       const data = await getCompanyCounts(selectedCampaignId)
       setCompanyCounts(data)
     } catch { /* non-critical */ }
-  }, [selectedCampaignId])
+  }, [authRequestsEnabled, selectedCampaignId])
 
   const loadContactCounts = useCallback(async () => {
+    if (!authRequestsEnabled) {
+      setContactCounts(null)
+      return
+    }
     if (!selectedCampaignId) {
       setContactCounts(null)
       return
@@ -224,9 +238,14 @@ function App() {
       const data = await getContactCounts(selectedCampaignId)
       setContactCounts(data)
     } catch { /* non-critical */ }
-  }, [selectedCampaignId])
+  }, [authRequestsEnabled, selectedCampaignId])
 
   const loadRecentActivity = useCallback(async () => {
+    if (!authRequestsEnabled) {
+      setRecentScrapeJobs([])
+      setRecentRuns([])
+      return
+    }
     if (!selectedCampaignId) {
       setRecentScrapeJobs([])
       setRecentRuns([])
@@ -247,9 +266,15 @@ function App() {
       setRecentScrapeJobs([])
       setRecentRuns(runRows.filter((run) => scopedUploadIds.has(run.upload_id)).slice(0, 50))
     } catch { /* non-critical */ }
-  }, [selectedCampaignId, uploads])
+  }, [authRequestsEnabled, selectedCampaignId, uploads])
 
   const loadCampaignData = useCallback(async () => {
+    if (!authRequestsEnabled) {
+      setCampaigns([])
+      setUploads([])
+      setIsCampaignLoading(false)
+      return
+    }
     setIsCampaignLoading(true)
     try {
       const [campaignRows, uploadRows] = await Promise.all([
@@ -273,10 +298,10 @@ function App() {
     } finally {
       setIsCampaignLoading(false)
     }
-  }, [selectedCampaignId])
+  }, [authRequestsEnabled, selectedCampaignId])
 
   const loadCampaignCostSummary = useCallback(async (campaignId: string | null) => {
-    if (!campaignId) {
+    if (!authRequestsEnabled || !campaignId) {
       setCampaignCostSummary(null)
       return
     }
@@ -294,10 +319,10 @@ function App() {
       setCampaignCostSummary(null)
       // non-critical telemetry path
     }
-  }, [])
+  }, [authRequestsEnabled])
 
   const loadCampaignCostBreakdown = useCallback(async (campaignId: string | null) => {
-    if (!campaignId) {
+    if (!authRequestsEnabled || !campaignId) {
       setCampaignCostBreakdown(null)
       return
     }
@@ -307,7 +332,7 @@ function App() {
     } catch {
       setCampaignCostBreakdown(null)
     }
-  }, [])
+  }, [authRequestsEnabled])
 
   // ── Effects ───────────────────────────────────────────────────────────────
 
@@ -315,12 +340,12 @@ function App() {
     configureApiSession({
       getAccessToken: () => authSession?.accessToken ?? null,
       onUnauthorized: () => {
-        if (!AUTH_REQUIRED) return
+        if (!AUTH_REQUIRED || isAuthBootstrapping) return
         setAuthSession(null)
         setAuthError('Your session expired. Please sign in again.')
       },
     })
-  }, [authSession])
+  }, [authSession, isAuthBootstrapping])
 
   useEffect(() => {
     if (!AUTH_REQUIRED) {
@@ -350,20 +375,23 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!authRequestsEnabled) return
     void promptMgmt.loadPrompts()
     void scrapePromptMgmt.loadScrapePrompts()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [authRequestsEnabled])
 
   useEffect(() => {
     selectedCampaignIdRef.current = selectedCampaignId
   }, [selectedCampaignId])
 
   useEffect(() => {
+    if (!authRequestsEnabled) return
     void loadCampaignData()
-  }, [loadCampaignData])
+  }, [authRequestsEnabled, loadCampaignData])
 
   useEffect(() => {
+    if (!authRequestsEnabled) return
     void loadStats()
     void loadCompanyCounts()
     void loadContactCounts()
@@ -376,9 +404,10 @@ function App() {
       void loadCampaignCostBreakdown(selectedCampaignId)
     }, 10000)
     return () => window.clearInterval(timer)
-  }, [loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
+  }, [authRequestsEnabled, loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
 
   useEffect(() => {
+    if (!authRequestsEnabled) return
     if (!selectedCampaignId) return
     const livePipelineViews: ActiveView[] = [
       'full-pipeline',
@@ -392,41 +421,56 @@ function App() {
       refreshPipelineView({ background: true })
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [activeView, refreshPipelineView, selectedCampaignId])
+  }, [activeView, authRequestsEnabled, refreshPipelineView, selectedCampaignId])
 
   useEffect(() => {
     setCampaignCostSummary(null)
     setCampaignCostBreakdown(null)
+    if (!authRequestsEnabled) {
+      setLatestPipelineRunId(null)
+      setLatestPipelineRunProgress(null)
+      return
+    }
     void loadCampaignCostSummary(selectedCampaignId)
     void loadCampaignCostBreakdown(selectedCampaignId)
     setLatestPipelineRunId(null)
     setLatestPipelineRunProgress(null)
-  }, [loadCampaignCostBreakdown, loadCampaignCostSummary, selectedCampaignId])
+  }, [authRequestsEnabled, loadCampaignCostBreakdown, loadCampaignCostSummary, selectedCampaignId])
 
   useEffect(() => {
-    if (!latestPipelineRunId) return
+    if (!authRequestsEnabled || !latestPipelineRunId) return
     let cancelled = false
+    let timer: number | null = null
+    const stopPolling = () => {
+      cancelled = true
+      if (timer !== null) {
+        window.clearInterval(timer)
+        timer = null
+      }
+    }
     const loadProgress = async () => {
       try {
         const progress = await getPipelineRunProgress(latestPipelineRunId)
-        if (!cancelled) setLatestPipelineRunProgress(progress)
-        if (!cancelled) {
-          void loadCampaignCostSummary(progress.campaign_id)
-          void loadCampaignCostBreakdown(progress.campaign_id)
+        if (cancelled) return
+        setLatestPipelineRunProgress(progress)
+        void loadCampaignCostSummary(progress.campaign_id)
+        void loadCampaignCostBreakdown(progress.campaign_id)
+        if (progress.status === 'completed' || progress.status === 'failed') {
+          setLatestPipelineRunId(null)
+          stopPolling()
         }
       } catch {
         // non-critical telemetry path
       }
     }
     void loadProgress()
-    const timer = window.setInterval(() => {
+    timer = window.setInterval(() => {
       void loadProgress()
     }, 5000)
     return () => {
-      cancelled = true
-      window.clearInterval(timer)
+      stopPolling()
     }
-  }, [latestPipelineRunId, loadCampaignCostSummary, loadCampaignCostBreakdown])
+  }, [authRequestsEnabled, latestPipelineRunId, loadCampaignCostSummary, loadCampaignCostBreakdown])
 
   useEffect(() => {
     if (!error) return
@@ -544,6 +588,10 @@ function App() {
   // ── Per-row classify (S2) ─────────────────────────────────────────────────
 
   const onClassify = async (company: CompanyListItem) => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
     if (!promptMgmt.selectedPrompt?.enabled) {
       setError('Select an enabled prompt before running analysis.'); return
     }
@@ -551,6 +599,7 @@ function App() {
     setError(''); setNotice('')
     try {
       const result = await createRuns({
+        campaign_id: selectedCampaignId,
         prompt_id: promptMgmt.selectedPrompt.id,
         scope: 'selected',
         company_ids: [company.id],
@@ -645,13 +694,14 @@ function App() {
       setError('Select a campaign before starting a pipeline run.')
       return
     }
+    const campaignId = selectedCampaignId
     setError('')
     setNotice('')
     setNoticeAction(null)
     setIsStartingCampaignPipeline(true)
     try {
       const result = await startPipelineRun({
-        campaign_id: selectedCampaignId,
+        campaign_id: campaignId,
         scrape_rules_snapshot: {
           scrape_prompt_id: scrapePromptMgmt.activeScrapePrompt?.id ?? null,
           scrape_prompt_name: scrapePromptMgmt.activeScrapePrompt?.name ?? null,
@@ -668,16 +718,18 @@ function App() {
             }
           : null,
       })
-      setNotice(
-        `Pipeline run ${result.pipeline_run_id} queued: requested ${result.requested_count}, reused ${result.reused_count}, queued ${result.queued_count}, skipped ${result.skipped_count}, failed ${result.failed_count}.`,
-      )
-      setLatestPipelineRunId(result.pipeline_run_id)
-      void loadStats()
-      void loadCompanyCounts()
-      void loadRecentActivity()
-      void loadCampaignData()
-      void loadCampaignCostSummary(selectedCampaignId)
-      refreshPipelineView()
+      if (selectedCampaignIdRef.current === campaignId) {
+        setNotice(
+          `Pipeline run ${result.pipeline_run_id} queued: requested ${result.requested_count}, reused ${result.reused_count}, queued ${result.queued_count}, skipped ${result.skipped_count}, failed ${result.failed_count}.`,
+        )
+        setLatestPipelineRunId(result.pipeline_run_id)
+        void loadStats()
+        void loadCompanyCounts()
+        void loadRecentActivity()
+        void loadCampaignData()
+        void loadCampaignCostSummary(campaignId)
+        refreshPipelineView()
+      }
     } catch (err) {
       setError(parseApiError(err))
     } finally {

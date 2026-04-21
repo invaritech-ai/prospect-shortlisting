@@ -7,6 +7,7 @@ Covers:
 """
 from __future__ import annotations
 
+import asyncio
 import httpx
 import pytest
 
@@ -60,6 +61,18 @@ def test_classify_html_response_detects_too_thin() -> None:
     )
     assert result.selector is None
     assert result.error_code == FetchErrorCode.TOO_THIN
+
+
+def test_classify_html_response_detects_parked_domain() -> None:
+    result = _classify_html_response(
+        url="https://example.com/",
+        final_url="https://example.com/",
+        status_code=200,
+        html_text="<html><body>This domain is for sale. Buy this domain today.</body></html>",
+        fetch_mode="static",
+    )
+    assert result.selector is None
+    assert result.error_code == FetchErrorCode.PARKED_DOMAIN
 
 
 def test_classify_html_response_success_returns_selector() -> None:
@@ -179,6 +192,67 @@ async def test_static_fetch_flags_parser_error_when_text_empty(
     result = await _static_fetch("https://example.com/")
     assert result.error_code == FetchErrorCode.PARSER_ERROR
     assert result.selector is None
+
+
+@pytest.mark.asyncio
+async def test_static_fetch_non_html_404_preserves_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeResp:
+        def __init__(self) -> None:
+            self.status_code = 404
+            self.text = "not found"
+            self.headers = {"content-type": "application/json"}
+            self.url = "https://example.com/missing"
+
+    class _FakeClient:
+        def __init__(self, *_, **__):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):  # noqa: ARG002
+            return _FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    result = await _static_fetch("https://example.com/missing")
+    assert result.error_code == FetchErrorCode.NOT_FOUND
+    assert result.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_impersonate_fetch_non_html_403_preserves_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeResp:
+        def __init__(self) -> None:
+            self.status_code = 403
+            self.text = '{"detail":"forbidden"}'
+            self.headers = {"content-type": "application/json"}
+            self.url = "https://example.com/blocked"
+
+    class _FakeSession:
+        def get(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return _FakeResp()
+
+    async def _fake_get_session(domain: str):  # noqa: ARG001
+        return _FakeSession()
+
+    async def _fake_get_lock(domain: str):  # noqa: ARG001
+        return asyncio.Lock()
+
+    monkeypatch.setattr(fetch_service, "_CURL_AVAILABLE", True)
+    monkeypatch.setattr(fetch_service, "_get_impersonate_session", _fake_get_session)
+    monkeypatch.setattr(fetch_service, "_get_impersonate_request_lock", _fake_get_lock)
+
+    result = await fetch_service._impersonate_fetch("https://example.com/blocked", domain="example.com")
+    assert result.error_code == FetchErrorCode.ACCESS_DENIED
+    assert result.status_code == 403
 
 
 def test_static_headers_do_not_advertise_unsupported_brotli() -> None:

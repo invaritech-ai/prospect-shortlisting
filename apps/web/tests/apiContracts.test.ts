@@ -115,13 +115,14 @@ test('scrapeSelectedCompanies sends idempotency header and scrape_rules body', a
     return { requested_count: 1, queued_count: 1, queued_job_ids: ['j1'], failed_company_ids: [] }
   })
 
-  await scrapeSelectedCompanies(['c1'], {
+  await scrapeSelectedCompanies('campaign-1', ['c1'], {
     idempotencyKey: '0123456789abcdef',
     scrapeRules: { page_kinds: ['home', 'contact'], classifier_prompt_text: 'Find the best URL for each of these page types:\n- home\n- contact' },
     uploadId: 'u-1',
   })
 
   assert.equal(sentHeaders?.get('X-Idempotency-Key'), '0123456789abcdef')
+  assert.match(sentBody, /"campaign_id":"campaign-1"/)
   assert.match(sentBody, /"page_kinds":\["home","contact"\]/)
   assert.match(sentBody, /"classifier_prompt_text":"Find the best URL for each of these page types:\\n- home\\n- contact"/)
   assert.match(sentBody, /"upload_id":"u-1"/)

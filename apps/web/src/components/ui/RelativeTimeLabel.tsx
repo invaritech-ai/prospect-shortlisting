@@ -1,8 +1,65 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 interface RelativeTimeLabelProps {
   timestamp: string | null | undefined
   prefix?: string
+}
+
+const RECENT_TICK_MS = 1_000
+const STALE_TICK_MS = 60_000
+const RECENT_THRESHOLD_MS = 60_000
+
+const tickerListeners = new Set<() => void>()
+const trackedTimestamps = new Map<number, number | null>()
+let tickerNowMs = Date.now()
+let tickerTimer: number | null = null
+let nextTickerId = 1
+
+function emitTicker(): void {
+  tickerNowMs = Date.now()
+  for (const listener of tickerListeners) listener()
+}
+
+function scheduleTicker(): void {
+  if (typeof window === 'undefined') return
+  if (tickerTimer !== null) window.clearTimeout(tickerTimer)
+  if (tickerListeners.size === 0) {
+    tickerTimer = null
+    return
+  }
+  const now = Date.now()
+  const hasRecentTimestamp = [...trackedTimestamps.values()].some(
+    (timestampMs) => timestampMs != null && now - timestampMs < RECENT_THRESHOLD_MS,
+  )
+  const delay = hasRecentTimestamp ? RECENT_TICK_MS : STALE_TICK_MS
+  tickerTimer = window.setTimeout(() => {
+    emitTicker()
+    scheduleTicker()
+  }, delay)
+}
+
+function subscribeTicker(listener: () => void): () => void {
+  tickerListeners.add(listener)
+  scheduleTicker()
+  return () => {
+    tickerListeners.delete(listener)
+    scheduleTicker()
+  }
+}
+
+function getTickerSnapshot(): number {
+  return tickerNowMs
+}
+
+function updateTrackedTimestamp(id: number, timestamp: string | null | undefined): void {
+  const ts = timestamp ? Date.parse(timestamp) : Number.NaN
+  trackedTimestamps.set(id, Number.isNaN(ts) ? null : ts)
+  scheduleTicker()
+}
+
+function removeTrackedTimestamp(id: number): void {
+  trackedTimestamps.delete(id)
+  scheduleTicker()
 }
 
 function formatRelativeTime(timestamp: string | null | undefined, nowMs: number, prefix: string): string {
@@ -20,11 +77,17 @@ function formatRelativeTime(timestamp: string | null | undefined, nowMs: number,
 }
 
 export function RelativeTimeLabel({ timestamp, prefix = 'Last updated' }: RelativeTimeLabelProps) {
-  const [nowMs, setNowMs] = useState(() => Date.now())
+  const idRef = useRef(0)
+  if (idRef.current === 0) idRef.current = nextTickerId++
+  const nowMs = useSyncExternalStore(subscribeTicker, getTickerSnapshot, getTickerSnapshot)
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
-    return () => window.clearInterval(timer)
+    updateTrackedTimestamp(idRef.current, timestamp)
+    return () => removeTrackedTimestamp(idRef.current)
+  }, [timestamp])
+
+  useEffect(() => {
+    emitTicker()
   }, [])
 
   return <>{formatRelativeTime(timestamp, nowMs, prefix)}</>

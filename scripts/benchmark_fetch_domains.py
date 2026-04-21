@@ -22,7 +22,6 @@ if str(_ROOT) not in sys.path:
 import argparse
 import asyncio
 import json
-import sys
 import time
 from urllib.parse import urlparse
 

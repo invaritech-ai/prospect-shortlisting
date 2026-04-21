@@ -296,6 +296,7 @@ export type RunRead = {
 }
 
 export type RunCreateRequest = {
+  campaign_id: string
   prompt_id: string
   scope: 'all' | 'selected'
   company_ids?: string[]

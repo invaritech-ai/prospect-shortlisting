@@ -8,6 +8,7 @@ Enable the live network case with:
 from __future__ import annotations
 
 import os
+from typing import Iterator
 
 import pytest
 from sqlmodel import Session, select
@@ -22,7 +23,7 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture(autouse=True)
-def _reset_domain_policy() -> None:
+def _reset_domain_policy() -> Iterator[None]:
     reset_default_manager_for_tests()
     yield
     reset_default_manager_for_tests()

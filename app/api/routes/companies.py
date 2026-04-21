@@ -65,6 +65,7 @@ def _latest_classification_subquery():
 
 
 def _latest_scrape_subquery():
+    activity_ts = func.coalesce(ScrapeJob.updated_at, ScrapeJob.created_at)
     return (
         select(
             ScrapeJob.normalized_url.label("normalized_url"),
@@ -72,15 +73,16 @@ def _latest_scrape_subquery():
             ScrapeJob.status.label("status"),
             ScrapeJob.terminal_state.label("terminal_state"),
             ScrapeJob.last_error_code.label("last_error_code"),
-            ScrapeJob.updated_at.label("scrape_updated_at"),
+            activity_ts.label("scrape_updated_at"),
         )
         .distinct(ScrapeJob.normalized_url)
-        .order_by(ScrapeJob.normalized_url, ScrapeJob.created_at.desc())
+        .order_by(ScrapeJob.normalized_url, activity_ts.desc())
         .subquery()
     )
 
 
 def _latest_analysis_subquery():
+    activity_ts = func.coalesce(AnalysisJob.updated_at, AnalysisJob.created_at)
     return (
         select(
             AnalysisJob.company_id.label("company_id"),
@@ -88,10 +90,10 @@ def _latest_analysis_subquery():
             AnalysisJob.run_id.label("run_id"),
             cast(AnalysisJob.state, String()).label("state"),
             AnalysisJob.terminal_state.label("terminal_state"),
-            AnalysisJob.updated_at.label("analysis_updated_at"),
+            activity_ts.label("analysis_updated_at"),
         )
         .distinct(AnalysisJob.company_id)
-        .order_by(AnalysisJob.company_id, AnalysisJob.created_at.desc())
+        .order_by(AnalysisJob.company_id, activity_ts.desc())
         .subquery()
     )
 
@@ -108,14 +110,15 @@ def _contact_count_subquery():
 
 
 def _latest_contact_fetch_subquery():
+    activity_ts = func.coalesce(ContactFetchJob.updated_at, ContactFetchJob.created_at)
     return (
         select(
             ContactFetchJob.company_id.label("company_id"),
             cast(ContactFetchJob.state, String()).label("state"),
-            ContactFetchJob.updated_at.label("contact_fetch_updated_at"),
+            activity_ts.label("contact_fetch_updated_at"),
         )
         .distinct(ContactFetchJob.company_id)
-        .order_by(ContactFetchJob.company_id, ContactFetchJob.created_at.desc())
+        .order_by(ContactFetchJob.company_id, activity_ts.desc())
         .subquery()
     )
 
@@ -677,7 +680,16 @@ def delete_companies(
     session: Session = Depends(get_session),
 ) -> CompanyDeleteResult:
     requested_ids = list(dict.fromkeys(payload.company_ids))
-    companies = list(session.exec(select(Company).where(col(Company.id).in_(requested_ids))))
+    companies = list(
+        session.exec(
+            select(Company)
+            .join(Upload, col(Upload.id) == col(Company.upload_id))
+            .where(
+                col(Upload.campaign_id) == payload.campaign_id,
+                col(Company.id).in_(requested_ids),
+            )
+        )
+    )
     found_ids = {company.id for company in companies}
     missing_ids = [company_id for company_id in requested_ids if company_id not in found_ids]
 

@@ -314,6 +314,7 @@ class ScrapeService:
         from app.core.config import settings as _settings
         policy = get_default_manager()
         static_results: dict[str, FetchResult] = {}
+        stealth_fallback_results: dict[str, FetchResult] = {}
         stealth_needed: list[tuple[str, str, int]] = []  # pages that need stealth
 
         for kind, canonical, depth in page_plan:
@@ -329,6 +330,7 @@ class ScrapeService:
             elif tier_result.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
                 static_results[canonical] = tier_result
             elif needs_stealth_after_static_and_impersonate(tier_result) and js_fallback:
+                stealth_fallback_results[canonical] = tier_result
                 stealth_needed.append((kind, canonical, depth))
             else:
                 static_results[canonical] = tier_result
@@ -339,20 +341,31 @@ class ScrapeService:
             stealth_urls = [canonical for _, canonical, _ in stealth_needed]
             logger.info("scrape_stealth_batch job_id=%s count=%d urls=%s",
                         str(job_id), len(stealth_urls), stealth_urls)
-            await policy.mark_escalated(domain)
-            batch_results = await stealth_fetch_many(
-                stealth_urls,
-                delay_range=(1.5, 3.5),
-                per_page_timeout_sec=_settings.scrape_stealth_timeout_ms / 1000 + 30,
-            )
-            for url, result in zip(stealth_urls, batch_results):
-                stealth_results[url] = result
-                ec = result.error_code or (
-                    FetchErrorCode.OK if result.selector else FetchErrorCode.FETCH_FAILED
+            if not await policy.mark_escalated(domain):
+                log_event(
+                    logger,
+                    "scrape_stealth_batch_skipped",
+                    job_id=str(job_id),
+                    domain=domain,
+                    reason="stealth_cap_reached",
+                    count=len(stealth_urls),
                 )
-                await policy.record_result(domain, ec, tier="stealth")
-                if result.selector is not None:
-                    await policy.maybe_demote(domain)
+                for _, canonical, _ in stealth_needed:
+                    static_results[canonical] = stealth_fallback_results[canonical]
+            else:
+                batch_results = await stealth_fetch_many(
+                    stealth_urls,
+                    delay_range=(1.5, 3.5),
+                    per_page_timeout_sec=_settings.scrape_stealth_timeout_ms / 1000 + 30,
+                )
+                for url, result in zip(stealth_urls, batch_results, strict=True):
+                    stealth_results[url] = result
+                    ec = result.error_code or (
+                        FetchErrorCode.OK if result.selector else FetchErrorCode.FETCH_FAILED
+                    )
+                    await policy.record_result(domain, ec, tier="stealth")
+                    if result.selector is not None:
+                        await policy.maybe_demote(domain)
 
         # 5c. Process results and apply per-page retry for transient failures
         _RETRY_ERROR_CODES = frozenset({
@@ -372,8 +385,8 @@ class ScrapeService:
                     error_message="no_fetch_result",
                 )
 
-            # Per-page retry: if stealth failed with a transient error, retry once
-            # with a fresh single-page stealth fetch after a short backoff.
+            # Retry only pages that actually entered the stealth tier so pages
+            # skipped by escalation-cap logic do not quietly re-enter a browser path.
             if (fetch.selector is None
                     and fetch.error_code in _RETRY_ERROR_CODES
                     and canonical in stealth_results):

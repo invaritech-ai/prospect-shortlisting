@@ -10,6 +10,7 @@ from sqlmodel import Session
 
 from app.api.routes.campaigns import create_campaign
 from app.api.routes.companies import (
+    delete_companies,
     export_companies_csv,
     get_company_counts,
     get_letter_counts,
@@ -25,10 +26,14 @@ from app.api.routes.contacts import (
     list_all_contacts,
     list_contacts_by_company,
 )
+from app.api.routes.runs import create_runs
+from app.api.routes.scrape_actions import scrape_selected_companies
 from app.api.schemas.contacts import ContactVerifyRequest
+from app.api.schemas.run import RunCreateRequest
+from app.api.schemas.upload import CompanyDeleteRequest, CompanyScrapeRequest
 from app.api.routes.stats import get_cost_stats, get_stats
 from app.api.schemas.campaign import CampaignCreate
-from app.models import AiUsageEvent, Company, ContactFetchJob, ProspectContact, Upload
+from app.models import AiUsageEvent, Company, ContactFetchJob, Prompt, ProspectContact, Upload
 from app.models.pipeline import CompanyPipelineStage
 
 
@@ -282,3 +287,69 @@ def test_verify_selection_is_campaign_scoped(sqlite_session: Session) -> None:
         ContactVerifyRequest(campaign_id=campaign_a.id, search="verify.example"),
     )
     assert len(selected) == 1
+
+
+def test_delete_companies_is_campaign_scoped(sqlite_session: Session) -> None:
+    campaign_a = create_campaign(payload=CampaignCreate(name="Delete A"), session=sqlite_session)
+    campaign_b = create_campaign(payload=CampaignCreate(name="Delete B"), session=sqlite_session)
+    upload_a = _seed_upload(sqlite_session, "delete-a.csv", campaign_id=campaign_a.id)
+    upload_b = _seed_upload(sqlite_session, "delete-b.csv", campaign_id=campaign_b.id)
+    company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="delete-a.example")
+    company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="delete-b.example")
+    sqlite_session.commit()
+
+    result = delete_companies(
+        payload=CompanyDeleteRequest(campaign_id=campaign_a.id, company_ids=[company_a.id, company_b.id]),
+        session=sqlite_session,
+    )
+
+    assert result.deleted_ids == [company_a.id]
+    assert result.missing_ids == [company_b.id]
+    assert sqlite_session.get(Company, company_a.id) is None
+    assert sqlite_session.get(Company, company_b.id) is not None
+
+
+def test_scrape_selected_rejects_company_ids_outside_campaign(sqlite_session: Session) -> None:
+    campaign_a = create_campaign(payload=CampaignCreate(name="Scrape A"), session=sqlite_session)
+    campaign_b = create_campaign(payload=CampaignCreate(name="Scrape B"), session=sqlite_session)
+    upload_a = _seed_upload(sqlite_session, "scrape-a.csv", campaign_id=campaign_a.id)
+    upload_b = _seed_upload(sqlite_session, "scrape-b.csv", campaign_id=campaign_b.id)
+    company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="scrape-a.example")
+    company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="scrape-b.example")
+    sqlite_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        scrape_selected_companies(
+            payload=CompanyScrapeRequest(campaign_id=campaign_a.id, company_ids=[company_a.id, company_b.id]),
+            session=sqlite_session,
+            x_idempotency_key=None,
+        )
+    assert exc.value.status_code == 422
+
+
+def test_create_runs_rejects_company_ids_outside_campaign(sqlite_session: Session) -> None:
+    campaign_a = create_campaign(payload=CampaignCreate(name="Runs A"), session=sqlite_session)
+    campaign_b = create_campaign(payload=CampaignCreate(name="Runs B"), session=sqlite_session)
+    upload_a = _seed_upload(sqlite_session, "runs-a.csv", campaign_id=campaign_a.id)
+    upload_b = _seed_upload(sqlite_session, "runs-b.csv", campaign_id=campaign_b.id)
+    company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="runs-a.example")
+    company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="runs-b.example")
+    company_a.pipeline_stage = CompanyPipelineStage.SCRAPED
+    company_b.pipeline_stage = CompanyPipelineStage.SCRAPED
+    sqlite_session.add(company_a)
+    sqlite_session.add(company_b)
+    prompt = Prompt(name="Scoped Prompt", enabled=True, prompt_text="Classify {domain}")
+    sqlite_session.add(prompt)
+    sqlite_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        create_runs(
+            payload=RunCreateRequest(
+                campaign_id=campaign_a.id,
+                prompt_id=prompt.id,
+                scope="selected",
+                company_ids=[company_a.id, company_b.id],
+            ),
+            session=sqlite_session,
+        )
+    assert exc.value.status_code == 422

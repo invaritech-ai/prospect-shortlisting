@@ -29,6 +29,7 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -116,8 +117,8 @@ class DomainPolicyManager:
         self,
         config: PolicyConfig | None = None,
         *,
-        clock: "callable" = time.monotonic,  # type: ignore[valid-type]
-        jitter: "callable" = random.uniform,  # type: ignore[valid-type]
+        clock: Callable[[], float] = time.monotonic,
+        jitter: Callable[[float, float], float] = random.uniform,
     ) -> None:
         self._config = config or PolicyConfig.from_settings()
         self._clock = clock
@@ -184,7 +185,16 @@ class DomainPolicyManager:
         # Step 2: sleep outside the lock until our reserved start time.
         delay = max(0.0, wait_until - self._clock())
         if delay > 0:
-            await asyncio.sleep(delay)
+            try:
+                await asyncio.sleep(delay)
+            except BaseException:
+                async with self._lock:
+                    state = self.get_state(domain)
+                    if state.in_flight > 0:
+                        state.in_flight -= 1
+                    if state.attempts > 0:
+                        state.attempts -= 1
+                raise
         return self._clock() - start_wait
 
     async def release(self, domain: str) -> None:

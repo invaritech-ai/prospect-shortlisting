@@ -195,3 +195,32 @@ async def test_cadence_enforces_minimum_gap() -> None:
     state = mgr.get_state("slow.com")
     # After first acquire the scheduled next start should be clock + 0.5s.
     assert state.next_request_at == pytest.approx(clock.now + 0.5, abs=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_acquire_releases_reserved_slot() -> None:
+    config = PolicyConfig(
+        min_delay_sec=1.0,
+        max_delay_sec=1.0,
+        max_concurrency=2,
+        backoff_multiplier=2.0,
+        max_backoff_sec=8.0,
+        circuit_threshold=3,
+        cooldown_sec=60.0,
+        stealth_max_domains=2,
+        demotion_streak=2,
+    )
+    clock = _FakeClock()
+    mgr = DomainPolicyManager(config, clock=clock, jitter=lambda lo, hi: lo)
+
+    await mgr.acquire("cancelled.com")
+    blocked = asyncio.create_task(mgr.acquire("cancelled.com"))
+    await asyncio.sleep(0.05)
+    blocked.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await blocked
+
+    state = mgr.get_state("cancelled.com")
+    assert state.in_flight == 1
+    assert state.attempts == 1
+    await mgr.release("cancelled.com")

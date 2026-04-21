@@ -350,6 +350,13 @@ def _classify_html_response(
             error_code=FetchErrorCode.BOT_PROTECTION, error_message="bot_wall",
         )
 
+    if is_parked_domain(text):
+        return FetchResult(
+            final_url=final_url, status_code=status_code,
+            selector=None, fetch_mode=fetch_mode,
+            error_code=FetchErrorCode.PARKED_DOMAIN, error_message="parked_domain",
+        )
+
     if len(text) < _MIN_TEXT_LEN:
         return FetchResult(
             final_url=final_url, status_code=status_code,
@@ -379,6 +386,29 @@ def _is_html_content_type(ctype: str) -> bool:
     return "text/html" in lowered or "application/xhtml+xml" in lowered
 
 
+def _non_html_http_error_result(
+    *,
+    final_url: str,
+    status_code: int,
+    fetch_mode: str,
+) -> FetchResult | None:
+    error_code = classify_http_status(status_code)
+    if error_code not in {
+        FetchErrorCode.ACCESS_DENIED,
+        FetchErrorCode.NOT_FOUND,
+        FetchErrorCode.RATE_LIMITED,
+    }:
+        return None
+    return FetchResult(
+        final_url=final_url,
+        status_code=status_code,
+        selector=None,
+        fetch_mode=fetch_mode,
+        error_code=error_code,
+        error_message=f"HTTP {status_code} non_html",
+    )
+
+
 async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
     """Fast static GET via httpx. No JS execution — works for simple sites."""
     try:
@@ -392,6 +422,13 @@ async def _static_fetch(url: str, timeout_sec: float = 12.0) -> FetchResult:
 
         ctype = resp.headers.get("content-type", "")
         if not _is_html_content_type(ctype):
+            non_html_http_error = _non_html_http_error_result(
+                final_url=str(resp.url),
+                status_code=resp.status_code,
+                fetch_mode="static",
+            )
+            if non_html_http_error is not None:
+                return non_html_http_error
             return FetchResult(
                 final_url=str(resp.url), status_code=resp.status_code,
                 selector=None, fetch_mode="static",
@@ -444,6 +481,7 @@ except Exception:  # noqa: BLE001
 _IMPERSONATE_PROFILE = "chrome"  # generic Chrome fingerprint — works everywhere
 
 _impersonate_session_cache: dict[str, object] = {}
+_impersonate_session_locks: dict[str, asyncio.Lock] = {}
 _impersonate_lock = asyncio.Lock()
 
 
@@ -464,6 +502,16 @@ async def _get_impersonate_session(domain: str):
         return sess
 
 
+async def _get_impersonate_request_lock(domain: str) -> asyncio.Lock:
+    key = _impersonate_session_key(domain)
+    async with _impersonate_lock:
+        lock = _impersonate_session_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _impersonate_session_locks[key] = lock
+        return lock
+
+
 async def close_impersonate_sessions() -> None:
     """Close all cached curl_cffi sessions. Safe to call on worker shutdown."""
     async with _impersonate_lock:
@@ -475,6 +523,7 @@ async def close_impersonate_sessions() -> None:
             except Exception:  # noqa: BLE001
                 pass
         _impersonate_session_cache.clear()
+        _impersonate_session_locks.clear()
 
 
 async def _impersonate_fetch(
@@ -503,6 +552,7 @@ async def _impersonate_fetch(
             fetch_mode="impersonate", error_code=FetchErrorCode.FETCH_FAILED,
             error_message="impersonate_session_unavailable",
         )
+    request_lock = await _get_impersonate_request_lock(domain)
 
     def _do_request():
         return session.get(  # type: ignore[union-attr]
@@ -513,7 +563,8 @@ async def _impersonate_fetch(
         )
 
     try:
-        resp = await asyncio.to_thread(_do_request)
+        async with request_lock:
+            resp = await asyncio.to_thread(_do_request)
     except Exception as exc:  # noqa: BLE001
         logger.info("fetch_impersonate_error url=%s error=%.200s", url, str(exc))
         return FetchResult(
@@ -529,9 +580,18 @@ async def _impersonate_fetch(
     except Exception:  # noqa: BLE001
         ctype = ""
     if not _is_html_content_type(ctype):
+        final_url = str(getattr(resp, "url", url))
+        status_code = int(getattr(resp, "status_code", 0) or 0)
+        non_html_http_error = _non_html_http_error_result(
+            final_url=final_url,
+            status_code=status_code,
+            fetch_mode="impersonate",
+        )
+        if non_html_http_error is not None:
+            return non_html_http_error
         return FetchResult(
-            final_url=str(getattr(resp, "url", url)),
-            status_code=int(getattr(resp, "status_code", 0) or 0),
+            final_url=final_url,
+            status_code=status_code,
             selector=None, fetch_mode="impersonate",
             error_code=FetchErrorCode.NON_HTML, error_message="non_html response",
         )
@@ -551,9 +611,9 @@ async def _impersonate_fetch(
     )
 
 
-async def _recover_https_tls_error(url: str) -> FetchResult | None:
+async def _recover_https_tls_error(url: str, *, use_js: bool = False) -> FetchResult | None:
     parsed = urlparse(url)
-    if parsed.scheme.lower() != "https":
+    if parsed.scheme.lower() != "https" or not use_js:
         return None
 
     fallback_url = urlunparse(parsed._replace(scheme="http"))
@@ -635,6 +695,13 @@ def _validate_stealth_response(url: str, response: Selector | None) -> FetchResu
             final_url=str(response.url), status_code=status, selector=None,
             fetch_mode="stealth", error_code=FetchErrorCode.BOT_PROTECTION,
             error_message="bot_wall",
+        )
+
+    if is_parked_domain(t):
+        return FetchResult(
+            final_url=str(response.url), status_code=status, selector=None,
+            fetch_mode="stealth", error_code=FetchErrorCode.PARKED_DOMAIN,
+            error_message="parked_domain",
         )
 
     if len(t) < _MIN_TEXT_LEN:
@@ -793,7 +860,7 @@ async def scrape_page_fetch(
     try:
         static_result = await _static_fetch(url, timeout_sec=settings.scrape_static_timeout_sec)
         if static_result.error_code == FetchErrorCode.TLS_ERROR:
-            recovered = await _recover_https_tls_error(url)
+            recovered = await _recover_https_tls_error(url, use_js=False)
             if recovered is not None:
                 static_result = recovered
 
@@ -826,7 +893,7 @@ async def scrape_page_fetch(
             url, domain=domain, timeout_sec=settings.scrape_impersonate_timeout_sec,
         )
         if imp.selector is not None:
-            await pm.record_result(domain, FetchErrorCode.OK, tier="static")
+            await pm.record_result(domain, FetchErrorCode.OK, tier="impersonate")
             await pm.maybe_demote(domain)
             log_event(
                 logger, "scrape_fetch_tier",
@@ -836,7 +903,7 @@ async def scrape_page_fetch(
             return imp
 
         icode = imp.error_code or FetchErrorCode.FETCH_FAILED
-        await pm.record_result(domain, icode, tier="static")
+        await pm.record_result(domain, icode, tier="impersonate")
         log_event(
             logger, "scrape_fetch_tier",
             job_id=str(job_id), domain=domain, url=url,
@@ -855,7 +922,7 @@ async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str
         return static_result
 
     if static_result.error_code == FetchErrorCode.TLS_ERROR:
-        recovered = await _recover_https_tls_error(url)
+        recovered = await _recover_https_tls_error(url, use_js=use_js)
         if recovered is not None:
             return recovered
         static_result = recovered or static_result
@@ -875,6 +942,9 @@ async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str
         last = imp
         if imp.selector is not None:
             return imp
+
+    if not needs_stealth_after_static_and_impersonate(last):
+        return last
 
     if not use_js:
         return last

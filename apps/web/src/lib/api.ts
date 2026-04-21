@@ -271,15 +271,16 @@ export async function listCompanies(
   }
 }
 
-export async function deleteCompanies(companyIds: string[]): Promise<CompanyDeleteResult> {
+export async function deleteCompanies(campaignId: string, companyIds: string[]): Promise<CompanyDeleteResult> {
   return request<CompanyDeleteResult>('/v1/companies/delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_ids: companyIds }),
+    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds }),
   })
 }
 
 export async function scrapeSelectedCompanies(
+  campaignId: string,
   companyIds: string[],
   options: { scrapeRules?: ScrapeRules; uploadId?: string; idempotencyKey?: string } = {},
 ): Promise<CompanyScrapeResult> {
@@ -290,6 +291,7 @@ export async function scrapeSelectedCompanies(
       ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
     },
     body: JSON.stringify({
+      campaign_id: campaignId,
       company_ids: companyIds,
       scrape_rules: options.scrapeRules,
       upload_id: options.uploadId,
