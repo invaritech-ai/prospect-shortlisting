@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import String, case, cast, func
+from sqlalchemy import String, and_, case, cast, func, or_
 from sqlmodel import Session, col, delete, select
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
@@ -124,28 +124,78 @@ def _latest_contact_fetch_subquery():
 
 
 _ALLOWED_DECISION_FILTERS = frozenset({"all", "unlabeled", "possible", "unknown", "crap", "labeled"})
-_ALLOWED_SCRAPE_FILTERS = frozenset({"all", "done", "failed", "none"})
+_SCRAPE_FILTER_ALIASES = {
+    "all": "all",
+    "done": "done",
+    "failed": "soft",
+    "none": "not-started",
+    "pending": "not-started",
+    "not-started": "not-started",
+    "active": "in-progress",
+    "in-progress": "in-progress",
+    "cancelled": "cancelled",
+    "permanent": "permanent",
+    "permanent-fail": "permanent",
+    "permanent-failures": "permanent",
+    "soft": "soft",
+    "soft-fail": "soft",
+    "soft-failures": "soft",
+}
+_STATUS_FILTER_ALIASES = {
+    "all": "all",
+    "not-started": "not-started",
+    "in-progress": "in-progress",
+    "cancelled": "cancelled",
+    "complete": "complete",
+    "has-failures": "has-failures",
+    "permanent": "permanent-failures",
+    "permanent-failures": "permanent-failures",
+    "soft": "soft-failures",
+    "soft-failures": "soft-failures",
+}
 _ALLOWED_STAGE_FILTERS = frozenset({"all", "uploaded", "scraped", "classified", "contact_ready", "has_scrape"})
 
 
-def _validate_filters(decision_filter: str, scrape_filter: str, stage_filter: str) -> tuple[str, str, str]:
+def _normalize_filter_input(value, default: str) -> str:
+    if not isinstance(value, str):
+        value = getattr(value, "default", default)
+    return value.strip().lower()
+
+
+def _canonicalize_scrape_filter(scrape_filter: str) -> str:
+    normalized = _normalize_filter_input(scrape_filter, "all")
+    if normalized not in _SCRAPE_FILTER_ALIASES:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=422, detail="Invalid scrape_filter.")
+    return _SCRAPE_FILTER_ALIASES[normalized]
+
+
+def _canonicalize_status_filter(status_filter: str) -> str:
+    normalized = _normalize_filter_input(status_filter, "all")
+    if normalized not in _STATUS_FILTER_ALIASES:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=422, detail="Invalid status_filter.")
+    return _STATUS_FILTER_ALIASES[normalized]
+
+
+def _validate_filters(
+    decision_filter: str,
+    scrape_filter: str,
+    stage_filter: str,
+    status_filter: str,
+) -> tuple[str, str, str, str]:
     if not isinstance(decision_filter, str):
         decision_filter = getattr(decision_filter, "default", "all")
-    if not isinstance(scrape_filter, str):
-        scrape_filter = getattr(scrape_filter, "default", "all")
-    if not isinstance(stage_filter, str):
-        stage_filter = getattr(stage_filter, "default", "all")
     ndf = decision_filter.strip().lower()
-    nsf = scrape_filter.strip().lower()
-    ngf = stage_filter.strip().lower()
+    nsf = _canonicalize_scrape_filter(scrape_filter)
+    ngf = _normalize_filter_input(stage_filter, "all")
+    nsf_pipeline = _canonicalize_status_filter(status_filter)
     from fastapi import HTTPException as _HTTPException
     if ndf not in _ALLOWED_DECISION_FILTERS:
         raise _HTTPException(status_code=422, detail="Invalid decision_filter.")
-    if nsf not in _ALLOWED_SCRAPE_FILTERS:
-        raise _HTTPException(status_code=422, detail="Invalid scrape_filter.")
     if ngf not in _ALLOWED_STAGE_FILTERS:
         raise _HTTPException(status_code=422, detail="Invalid stage_filter.")
-    return ndf, nsf, ngf
+    return ndf, nsf, ngf, nsf_pipeline
 
 
 def _apply_decision_filter(stmt, decision_lower, normalized_filter: str):
@@ -158,13 +208,28 @@ def _apply_decision_filter(stmt, decision_lower, normalized_filter: str):
     return stmt
 
 
+def _apply_search_filter(stmt, search: str | None):
+    if not search:
+        return stmt
+    needle = search.strip().lower()
+    if not needle:
+        return stmt
+    return stmt.where(func.lower(col(Company.domain)).like(f"%{needle}%"))
+
+
 def _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter: str):
+    if normalized_scrape_filter == "not-started":
+        return stmt.where(latest_scrape.c.job_id.is_(None))
+    if normalized_scrape_filter == "in-progress":
+        return stmt.where(latest_scrape.c.status.in_(["created", "running"]))
     if normalized_scrape_filter == "done":
         return stmt.where(latest_scrape.c.status == "completed")
-    if normalized_scrape_filter == "failed":
-        return stmt.where(latest_scrape.c.status.like("%failed%"))
-    if normalized_scrape_filter == "none":
-        return stmt.where(latest_scrape.c.job_id.is_(None))
+    if normalized_scrape_filter == "cancelled":
+        return stmt.where(latest_scrape.c.status == "cancelled")
+    if normalized_scrape_filter == "permanent":
+        return stmt.where(latest_scrape.c.status == "site_unavailable")
+    if normalized_scrape_filter == "soft":
+        return stmt.where(latest_scrape.c.status.in_(["failed", "step1_failed", "dead"]))
     return stmt
 
 
@@ -174,6 +239,56 @@ def _apply_stage_filter(stmt, normalized_stage_filter: str):
     if normalized_stage_filter == "has_scrape":
         return stmt.where(col(Company.pipeline_stage).in_(["scraped", "classified", "contact_ready"]))
     return stmt.where(col(Company.pipeline_stage) == normalized_stage_filter)
+
+
+def _apply_pipeline_status_filter(
+    stmt,
+    latest_scrape,
+    latest_analysis,
+    latest_contact_fetch,
+    latest_decision_text,
+    normalized_status_filter: str,
+):
+    if normalized_status_filter == "all":
+        return stmt
+    scrape_status = func.lower(func.coalesce(latest_scrape.c.status, ""))
+    analysis_status = func.lower(func.coalesce(latest_analysis.c.state, ""))
+    contact_status = func.lower(func.coalesce(latest_contact_fetch.c.state, ""))
+    decision_present = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
+
+    if normalized_status_filter == "not-started":
+        return stmt.where(latest_scrape.c.job_id.is_(None))
+    if normalized_status_filter == "in-progress":
+        return stmt.where(
+            or_(
+                scrape_status.in_(["created", "running"]),
+                analysis_status.in_(["queued", "running"]),
+                contact_status.in_(["queued", "running"]),
+            )
+        )
+    if normalized_status_filter == "cancelled":
+        return stmt.where(scrape_status == "cancelled")
+    if normalized_status_filter == "complete":
+        return stmt.where(and_(scrape_status == "completed", func.coalesce(decision_present, "") != ""))
+    if normalized_status_filter == "has-failures":
+        return stmt.where(
+            or_(
+                scrape_status.in_(["failed", "step1_failed", "site_unavailable", "dead"]),
+                analysis_status.in_(["failed", "dead"]),
+                contact_status == "failed",
+            )
+        )
+    if normalized_status_filter == "permanent-failures":
+        return stmt.where(scrape_status == "site_unavailable")
+    if normalized_status_filter == "soft-failures":
+        return stmt.where(
+            or_(
+                scrape_status.in_(["failed", "step1_failed", "dead"]),
+                analysis_status.in_(["failed", "dead"]),
+                contact_status == "failed",
+            )
+        )
+    return stmt
 
 
 def _validate_campaign_upload_scope(
@@ -276,6 +391,8 @@ def list_companies(
     letter: str | None = Query(default=None, min_length=1, max_length=1),
     letters: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
+    status_filter: str = Query(default="all"),
+    search: str | None = Query(default=None, max_length=200),
     sort_by: str = Query(default="last_activity"),
     sort_dir: str = Query(default="desc"),
     upload_id: UUID | None = Query(default=None),
@@ -290,6 +407,8 @@ def list_companies(
         letter = getattr(letter, "default", None)
     if not isinstance(letters, str):
         letters = getattr(letters, "default", None)
+    if not isinstance(search, str):
+        search = getattr(search, "default", None)
     if not isinstance(sort_by, str):
         sort_by = getattr(sort_by, "default", "last_activity")
     if not isinstance(sort_dir, str):
@@ -327,8 +446,8 @@ def list_companies(
         (decision_lower == "crap", 3),
         else_=4,
     )
-    normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
-        decision_filter, scrape_filter, stage_filter
+    normalized_filter, normalized_scrape_filter, normalized_stage_filter, normalized_status_filter = _validate_filters(
+        decision_filter, scrape_filter, stage_filter, status_filter
     )
     statement = (
         select(
@@ -370,7 +489,16 @@ def list_companies(
         statement = statement.where(col(Company.upload_id) == upload_id)
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
+    statement = _apply_pipeline_status_filter(
+        statement,
+        latest_scrape,
+        latest_analysis,
+        latest_contact_fetch,
+        latest_decision_text,
+        normalized_status_filter,
+    )
     statement = _apply_stage_filter(statement, normalized_stage_filter)
+    statement = _apply_search_filter(statement, search)
     if letter_values:
         statement = statement.where(_domain_first_letter_expr().in_(letter_values))
     elif letter is not None:
@@ -409,6 +537,8 @@ def list_companies(
             .join(Upload, Upload.id == Company.upload_id)
             .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
             .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+            .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
+            .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
             .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         )
         total_stmt = total_stmt.where(col(Upload.campaign_id) == campaign_id)
@@ -416,7 +546,16 @@ def list_companies(
             total_stmt = total_stmt.where(col(Company.upload_id) == upload_id)
         total_stmt = _apply_decision_filter(total_stmt, decision_lower, normalized_filter)
         total_stmt = _apply_scrape_filter(total_stmt, latest_scrape, normalized_scrape_filter)
+        total_stmt = _apply_pipeline_status_filter(
+            total_stmt,
+            latest_scrape,
+            latest_analysis,
+            latest_contact_fetch,
+            latest_decision_text,
+            normalized_status_filter,
+        )
         total_stmt = _apply_stage_filter(total_stmt, normalized_stage_filter)
+        total_stmt = _apply_search_filter(total_stmt, search)
         if letter_values:
             total_stmt = total_stmt.where(_domain_first_letter_expr().in_(letter_values))
         elif letter is not None:
@@ -463,12 +602,16 @@ def list_company_ids(
     letter: str | None = Query(default=None, min_length=1, max_length=1),
     letters: str | None = Query(default=None),
     stage_filter: str = Query(default="all"),
+    status_filter: str = Query(default="all"),
+    search: str | None = Query(default=None, max_length=200),
     upload_id: UUID | None = Query(default=None),
 ) -> CompanyIdsResult:
     if not isinstance(letter, str):
         letter = getattr(letter, "default", None)
     if not isinstance(letters, str):
         letters = getattr(letters, "default", None)
+    if not isinstance(search, str):
+        search = getattr(search, "default", None)
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
     letter_values: list[str] = []
@@ -479,19 +622,23 @@ def list_company_ids(
     """Return all company IDs matching the given filters (no pagination) for bulk selection."""
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
+    latest_analysis = _latest_analysis_subquery()
+    latest_contact_fetch = _latest_contact_fetch_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
     _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
-    normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
-        decision_filter, scrape_filter, stage_filter
+    normalized_filter, normalized_scrape_filter, normalized_stage_filter, normalized_status_filter = _validate_filters(
+        decision_filter, scrape_filter, stage_filter, status_filter
     )
     statement = (
         select(Company.id)
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
+        .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
     )
     statement = statement.where(col(Upload.campaign_id) == campaign_id)
@@ -499,7 +646,16 @@ def list_company_ids(
         statement = statement.where(col(Company.upload_id) == upload_id)
     statement = _apply_decision_filter(statement, decision_lower, normalized_filter)
     statement = _apply_scrape_filter(statement, latest_scrape, normalized_scrape_filter)
+    statement = _apply_pipeline_status_filter(
+        statement,
+        latest_scrape,
+        latest_analysis,
+        latest_contact_fetch,
+        latest_decision_text,
+        normalized_status_filter,
+    )
     statement = _apply_stage_filter(statement, normalized_stage_filter)
+    statement = _apply_search_filter(statement, search)
     if letter_values:
         statement = statement.where(_domain_first_letter_expr().in_(letter_values))
     elif letter is not None:
@@ -516,19 +672,25 @@ def get_letter_counts(
     decision_filter: str = Query(default="all"),
     scrape_filter: str = Query(default="all"),
     stage_filter: str = Query(default="all"),
+    status_filter: str = Query(default="all"),
+    search: str | None = Query(default=None, max_length=200),
     upload_id: UUID | None = Query(default=None),
 ) -> LetterCounts:
     if not isinstance(upload_id, UUID):
         upload_id = getattr(upload_id, "default", None)
+    if not isinstance(search, str):
+        search = getattr(search, "default", None)
     latest_classification = _latest_classification_subquery()
     latest_scrape = _latest_scrape_subquery()
+    latest_analysis = _latest_analysis_subquery()
+    latest_contact_fetch = _latest_contact_fetch_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_decision_text)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
     _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
-    normalized_filter, normalized_scrape_filter, normalized_stage_filter = _validate_filters(
-        decision_filter, scrape_filter, stage_filter
+    normalized_filter, normalized_scrape_filter, normalized_stage_filter, normalized_status_filter = _validate_filters(
+        decision_filter, scrape_filter, stage_filter, status_filter
     )
     letter_expr = _domain_first_letter_expr()
     stmt = (
@@ -537,6 +699,8 @@ def get_letter_counts(
         .join(Upload, Upload.id == Company.upload_id)
         .outerjoin(latest_classification, latest_classification.c.company_id == Company.id)
         .outerjoin(latest_scrape, latest_scrape.c.normalized_url == Company.normalized_url)
+        .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
+        .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         .where(letter_expr.between("a", "z"))
         .group_by(letter_expr)
@@ -546,7 +710,16 @@ def get_letter_counts(
         stmt = stmt.where(col(Company.upload_id) == upload_id)
     stmt = _apply_decision_filter(stmt, decision_lower, normalized_filter)
     stmt = _apply_scrape_filter(stmt, latest_scrape, normalized_scrape_filter)
+    stmt = _apply_pipeline_status_filter(
+        stmt,
+        latest_scrape,
+        latest_analysis,
+        latest_contact_fetch,
+        latest_decision_text,
+        normalized_status_filter,
+    )
     stmt = _apply_stage_filter(stmt, normalized_stage_filter)
+    stmt = _apply_search_filter(stmt, search)
 
     rows = session.exec(stmt).all()
     counts: dict[str, int] = {chr(ord("a") + i): 0 for i in range(26)}
@@ -574,13 +747,18 @@ def get_company_counts(
     counts_stmt = (
         select(
             func.count().label("total"),
+            func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("scrape_not_started"),
+            func.sum(case((scrape_status.in_(["created", "running"]), 1), else_=0)).label("scrape_in_progress"),
+            func.sum(case((scrape_status == "cancelled", 1), else_=0)).label("scrape_cancelled"),
+            func.sum(case((scrape_status == "site_unavailable", 1), else_=0)).label("scrape_permanent_fail"),
+            func.sum(case((scrape_status.in_(["failed", "step1_failed", "dead"]), 1), else_=0)).label("scrape_soft_fail"),
             func.sum(case((decision_lower == "", 1), else_=0)).label("unlabeled"),
             func.sum(case((decision_lower == "possible", 1), else_=0)).label("possible"),
             func.sum(case((decision_lower == "unknown", 1), else_=0)).label("unknown"),
             func.sum(case((decision_lower == "crap", 1), else_=0)).label("crap"),
             func.sum(case((scrape_status == "completed", 1), else_=0)).label("scrape_done"),
-            func.sum(case((scrape_status.like("%failed%"), 1), else_=0)).label("scrape_failed"),
             func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("not_scraped"),
+            func.sum(case((scrape_status.in_(["failed", "step1_failed", "dead"]), 1), else_=0)).label("scrape_failed"),
         )
         .select_from(Company)
         .join(Upload, Upload.id == Company.upload_id)
@@ -610,17 +788,22 @@ def get_company_counts(
 
     return CompanyCounts(
         total=row[0] or 0,
+        scrape_not_started=row[1] or 0,
+        scrape_in_progress=row[2] or 0,
+        scrape_cancelled=row[3] or 0,
+        scrape_permanent_fail=row[4] or 0,
+        scrape_soft_fail=row[5] or 0,
         uploaded=stage_row.uploaded or 0,
         scraped=stage_row.scraped or 0,
         classified=stage_row.classified or 0,
         contact_ready=stage_row.contact_ready or 0,
-        unlabeled=row[1] or 0,
-        possible=row[2] or 0,
-        unknown=row[3] or 0,
-        crap=row[4] or 0,
-        scrape_done=row[5] or 0,
-        scrape_failed=row[6] or 0,
-        not_scraped=row[7] or 0,
+        unlabeled=row[6] or 0,
+        possible=row[7] or 0,
+        unknown=row[8] or 0,
+        crap=row[9] or 0,
+        scrape_done=row[10] or 0,
+        scrape_failed=row[12] or 0,
+        not_scraped=row[11] or 0,
     )
 
 

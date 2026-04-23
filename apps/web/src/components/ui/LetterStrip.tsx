@@ -11,6 +11,7 @@ interface LetterStripProps {
   onClear?: () => void
   // Shared
   counts: Record<string, number>
+  disabled?: boolean
 }
 
 export function LetterStrip({
@@ -21,6 +22,7 @@ export function LetterStrip({
   onToggle,
   onClear,
   counts,
+  disabled = false,
 }: LetterStripProps) {
   const isAllActive = multiSelect
     ? (activeLetters?.size ?? 0) === 0
@@ -33,11 +35,14 @@ export function LetterStrip({
       <div className="flex items-center gap-1 overflow-x-auto py-0.5 px-1 scrollbar-none" style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
         <button
           type="button"
+          disabled={disabled}
           onClick={() => (multiSelect ? onClear?.() : onChange?.(null))}
           className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold transition ${
             isAllActive
               ? 'bg-(--oc-accent) text-white'
-              : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--oc-accent) hover:text-(--oc-accent)'
+              : disabled
+                ? 'border border-(--oc-border) text-(--oc-border) cursor-not-allowed'
+                : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--oc-accent) hover:text-(--oc-accent)'
           }`}
         >
           All
@@ -54,14 +59,14 @@ export function LetterStrip({
             <button
               key={letter}
               type="button"
-              disabled={isEmpty}
+              disabled={disabled || isEmpty}
               onClick={() =>
                 multiSelect ? onToggle?.(letter) : onChange?.(isActive ? null : letter)
               }
               className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase transition ${
                 isActive
                   ? 'bg-(--oc-accent) text-white'
-                  : isEmpty
+                  : disabled || isEmpty
                     ? 'text-(--oc-border) cursor-not-allowed'
                     : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--oc-accent) hover:text-(--oc-accent)'
               }`}

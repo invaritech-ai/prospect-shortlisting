@@ -122,8 +122,27 @@ export type CompanyList = {
 }
 
 export type DecisionFilter = 'all' | 'unlabeled' | 'possible' | 'unknown' | 'crap' | 'labeled'
-export type ScrapeFilter = 'all' | 'done' | 'failed' | 'none'
-export type ScrapeSubFilter = 'all' | 'pending' | 'active' | 'done' | 'failed' | 'permanent' | 'soft'
+export type ScrapeFilter =
+  | 'all'
+  | 'done'
+  | 'failed'
+  | 'none'
+  | 'not-started'
+  | 'in-progress'
+  | 'cancelled'
+  | 'permanent'
+  | 'soft'
+export type ScrapeSubFilter =
+  | 'all'
+  | 'not-started'
+  | 'in-progress'
+  | 'done'
+  | 'cancelled'
+  | 'permanent'
+  | 'soft'
+  | 'pending'
+  | 'active'
+  | 'failed'
 export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match' | 'stale_30d'
 
 export type CompanyIdsResult = {
@@ -450,6 +469,11 @@ export type DrainQueueResult = {
 
 export type CompanyCounts = {
   total: number
+  scrape_not_started: number
+  scrape_in_progress: number
+  scrape_cancelled: number
+  scrape_permanent_fail: number
+  scrape_soft_fail: number
   uploaded: number
   scraped: number
   classified: number

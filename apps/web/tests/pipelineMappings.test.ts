@@ -43,13 +43,16 @@ test('resume stage favors earliest failed stage', () => {
 })
 
 test('scrape sub-filter mapping stays explicit', () => {
-  assert.equal(scrapeSubToFilter('pending'), 'none')
+  assert.equal(scrapeSubToFilter('pending'), 'not-started')
+  assert.equal(scrapeSubToFilter('not-started'), 'not-started')
+  assert.equal(scrapeSubToFilter('active'), 'in-progress')
+  assert.equal(scrapeSubToFilter('in-progress'), 'in-progress')
   assert.equal(scrapeSubToFilter('done'), 'done')
-  assert.equal(scrapeSubToFilter('failed'), 'failed')
+  assert.equal(scrapeSubToFilter('cancelled'), 'cancelled')
+  assert.equal(scrapeSubToFilter('permanent'), 'permanent')
+  assert.equal(scrapeSubToFilter('failed'), 'soft')
+  assert.equal(scrapeSubToFilter('soft'), 'soft')
   assert.equal(scrapeSubToFilter('all'), 'all')
-  assert.equal(scrapeSubToFilter('active'), 'all')
-  assert.equal(scrapeSubToFilter('permanent'), 'all')
-  assert.equal(scrapeSubToFilter('soft'), 'all')
 })
 
 test('verification filters map stale_30d to server parameter', () => {

@@ -138,6 +138,11 @@ class CompanyIdsResult(BaseModel):
 
 class CompanyCounts(BaseModel):
     total: int
+    scrape_not_started: int
+    scrape_in_progress: int
+    scrape_cancelled: int
+    scrape_permanent_fail: int
+    scrape_soft_fail: int
     uploaded: int
     scraped: int
     classified: int

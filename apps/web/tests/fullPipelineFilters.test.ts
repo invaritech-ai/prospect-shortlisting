@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 
 import {
   companyListBrowseUrl,
-  matchesFullPipelineFilters,
 } from '../src/lib/fullPipelineFilters.ts'
 import type { CompanyListItem } from '../src/lib/types.ts'
 
@@ -36,17 +35,6 @@ function row(partial: Partial<CompanyListItem>): CompanyListItem {
     ...partial,
   }
 }
-
-test('matchesFullPipelineFilters respects search on domain', () => {
-  const c = row({ domain: 'acme.io' })
-  assert.equal(matchesFullPipelineFilters(c, 'all', 'acme'), true)
-  assert.equal(matchesFullPipelineFilters(c, 'all', 'zzz'), false)
-})
-
-test('permanent-failures matches site_unavailable scrape', () => {
-  const c = row({ latest_scrape_status: 'site_unavailable' })
-  assert.equal(matchesFullPipelineFilters(c, 'permanent-failures', ''), true)
-})
 
 test('companyListBrowseUrl falls back to https domain', () => {
   assert.equal(companyListBrowseUrl(row({ domain: 'x.com', raw_url: '', normalized_url: '' })), 'https://x.com')

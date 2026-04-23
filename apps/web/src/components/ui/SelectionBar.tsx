@@ -10,6 +10,7 @@ interface SelectionBarProps {
   isSelectingAll: boolean
   onClear: () => void
   children: ReactNode
+  disabled?: boolean
 }
 
 export function SelectionBar({
@@ -22,6 +23,7 @@ export function SelectionBar({
   isSelectingAll,
   onClear,
   children,
+  disabled = false,
 }: SelectionBarProps) {
   if (selectedCount === 0) return null
 
@@ -60,7 +62,7 @@ export function SelectionBar({
         <button
           type="button"
           onClick={onSelectAllMatching}
-          disabled={isSelectingAll}
+          disabled={disabled || isSelectingAll}
           className="text-xs underline underline-offset-2 transition hover:no-underline disabled:opacity-60"
           style={{ color: `var(${stageColor})` }}
         >
@@ -74,7 +76,8 @@ export function SelectionBar({
       <button
         type="button"
         onClick={onClear}
-        className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs leading-none transition hover:bg-black/10"
+        disabled={disabled}
+        className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs leading-none transition hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50"
         aria-label="Clear selection"
       >
         ✕

@@ -1,10 +1,24 @@
 import type { ContactStageFilter, S4VerifFilter, ScrapeFilter, ScrapeSubFilter } from './types'
 
+const SCRAPE_SUB_FILTER_ALIASES: Record<string, ScrapeFilter> = {
+  all: 'all',
+  'not-started': 'not-started',
+  pending: 'not-started',
+  'in-progress': 'in-progress',
+  active: 'in-progress',
+  done: 'done',
+  cancelled: 'cancelled',
+  permanent: 'permanent',
+  'permanent-fail': 'permanent',
+  'permanent-failures': 'permanent',
+  soft: 'soft',
+  'soft-fail': 'soft',
+  'soft-failures': 'soft',
+  failed: 'soft',
+}
+
 export function scrapeSubToFilter(sub: ScrapeSubFilter): ScrapeFilter {
-  if (sub === 'pending') return 'none'
-  if (sub === 'done') return 'done'
-  if (sub === 'failed') return 'failed'
-  return 'all'
+  return SCRAPE_SUB_FILTER_ALIASES[sub] ?? 'all'
 }
 
 export function verifFilterToParams(filter: S4VerifFilter): {

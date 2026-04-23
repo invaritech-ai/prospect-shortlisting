@@ -17,6 +17,7 @@ interface S2AIDecisionViewProps {
   decisionFilter: DecisionFilter
   selectedIds: string[]
   totalMatching: number | null
+  search: string
   isLoading: boolean
   isAnalyzing: boolean
   isSelectingAll: boolean
@@ -29,6 +30,7 @@ interface S2AIDecisionViewProps {
   offset: number
   pageSize: number
   onDecisionFilterChange: (filter: DecisionFilter) => void
+  onSearchChange: (value: string) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -64,6 +66,7 @@ export function S2AIDecisionView({
   decisionFilter,
   selectedIds,
   totalMatching,
+  search,
   isLoading,
   isAnalyzing,
   isSelectingAll,
@@ -76,6 +79,7 @@ export function S2AIDecisionView({
   offset,
   pageSize,
   onDecisionFilterChange,
+  onSearchChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -95,25 +99,19 @@ export function S2AIDecisionView({
   sortDir,
   onSort,
 }: S2AIDecisionViewProps) {
-  const [search, setSearch] = useState('')
   const [dropOpen, setDropOpen] = useState(false)
   const dropRef = useRef<HTMLDivElement>(null)
   const selectedSet = new Set(selectedIds)
 
-  const visibleCompanies = (companies?.items ?? []).filter((c) => {
-    if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
-    const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
-    return letterOk
-  })
+  const visibleCompanies = companies?.items ?? []
 
   const allVisibleSelected =
     visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.id))
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
-  const isSearchFiltered = search !== ''
-  const displayCount = isSearchFiltered ? visibleCompanies.length : (companies?.total ?? 0)
-  const effectiveTotalMatching = isSearchFiltered ? visibleCompanies.length : totalMatching
+  const displayCount = companies?.total ?? 0
+  const effectiveTotalMatching = totalMatching ?? companies?.total ?? null
 
   // Analysis pipeline progress
   const analysis = stats?.analysis
@@ -178,29 +176,39 @@ export function S2AIDecisionView({
             <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search domains…"
-              className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white"
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              disabled={isLoading}
+              placeholder="Search domains…"
+              className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
               style={{ width: 180 }} />
           </div>
           <button type="button" onClick={onOpenPromptLibrary}
-            className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap">
+            disabled={isLoading}
+            className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
             {selectedPrompt ? `Prompt: ${selectedPrompt.name}` : 'Select prompt…'}
           </button>
         </div>
 
-        <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} />
+        <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} disabled={isLoading} />
 
         <div className="flex items-center justify-between gap-2">
           <div className="flex flex-wrap gap-1.5">
             {DECISION_FILTERS.map((f) => (
-              <button key={f.value} type="button" onClick={() => onDecisionFilterChange(f.value)}
-                className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${decisionFilter === f.value ? 'text-white' : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s2) hover:text-(--s2-text)'}`}
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => onDecisionFilterChange(f.value)}
+                disabled={isLoading}
+                className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${decisionFilter === f.value ? 'text-white' : isLoading ? 'border border-(--oc-border) text-(--oc-border) cursor-not-allowed' : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s2) hover:text-(--s2-text)'}`}
                 style={decisionFilter === f.value ? { backgroundColor: 'var(--s2)' } : {}}>
                 {f.label}
               </button>
             ))}
           </div>
-          <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+          <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} disabled={isLoading} />
         </div>
 
         <SelectionBar
@@ -209,15 +217,16 @@ export function S2AIDecisionView({
         selectedCount={selectedIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
-        onSelectAllMatching={selectedIds.length > 0 && !isSearchFiltered ? onSelectAllMatching : null}
+        onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
         isSelectingAll={isSelectingAll}
         onClear={onClearSelection}
+        disabled={isLoading}
       >
         <div ref={dropRef} className="relative">
           <button
             type="button"
             onClick={() => setDropOpen((v) => !v)}
-            disabled={isAnalyzing || selectedIds.length === 0 || !selectedPrompt?.enabled}
+            disabled={isLoading || isAnalyzing || selectedIds.length === 0 || !selectedPrompt?.enabled}
             className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
             style={{ backgroundColor: 'var(--s2)' }}
             title={!selectedPrompt?.enabled ? 'Select an enabled prompt first' : undefined}
@@ -235,6 +244,7 @@ export function S2AIDecisionView({
                   key={p.id}
                   type="button"
                   onClick={() => { setDropOpen(false); onAnalyzeSelected() }}
+                  disabled={isLoading}
                   className={`w-full px-3 py-2 text-left text-xs transition hover:bg-(--oc-surface) ${
                     p.id === selectedPrompt?.id ? 'font-bold text-(--oc-accent)' : 'text-(--oc-text)'
                   }`}
@@ -258,18 +268,19 @@ export function S2AIDecisionView({
               <th className="w-8 p-3">
                 <input
                   type="checkbox"
+                  disabled={isLoading}
                   checked={allVisibleSelected}
                   ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
                   onChange={() =>
                     onToggleAll(allVisibleSelected ? [] : visibleCompanies.map((c) => c.id))
                   }
-                  className="cursor-pointer"
+                  className="cursor-pointer disabled:cursor-not-allowed"
                 />
               </th>
-              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Confidence" field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+              <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+              <SortableHeader label="Confidence" field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
@@ -316,9 +327,10 @@ export function S2AIDecisionView({
                 <td className="p-3">
                   <input
                     type="checkbox"
+                    disabled={isLoading}
                     checked={selectedSet.has(c.id)}
                     onChange={() => onToggleRow(c.id)}
-                    className="cursor-pointer"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                   />
                 </td>
                 <td className="p-3">
@@ -344,7 +356,7 @@ export function S2AIDecisionView({
                     ) : <span className="text-xs text-(--oc-muted)">—</span>}
                     <QuickLabelPicker
                       current={c.feedback_manual_label}
-                      disabled={isSavingManualLabel}
+                      disabled={isLoading || isSavingManualLabel}
                       onSelect={(label) => onSetManualLabel(c, label)}
                     />
                     {isSavingManualLabel && (
@@ -360,7 +372,7 @@ export function S2AIDecisionView({
                     <button
                       type="button"
                       onClick={() => onClassifyOne(c)}
-                      disabled={!!analysisActionState[c.id]}
+                      disabled={isLoading || !!analysisActionState[c.id]}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text) disabled:opacity-50"
                     >
                       {analysisActionState[c.id] ?? 'Classify'}
@@ -368,6 +380,7 @@ export function S2AIDecisionView({
                     <button
                       type="button"
                       onClick={() => onReviewCompany(c)}
+                      disabled={isLoading}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
                     >
                       Review
@@ -376,6 +389,7 @@ export function S2AIDecisionView({
                       <button
                         type="button"
                         onClick={() => onViewMarkdown(c)}
+                        disabled={isLoading}
                         className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s2) hover:text-(--s2-text)"
                       >
                         MD

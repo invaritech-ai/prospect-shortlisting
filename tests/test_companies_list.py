@@ -8,9 +8,9 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, delete
 
 from app.api.routes.campaigns import create_campaign
-from app.api.routes.companies import get_company_counts, list_companies
+from app.api.routes.companies import get_company_counts, get_letter_counts, list_companies, list_company_ids
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, ContactFetchJob, Upload
+from app.models import Company, CompanyFeedback, ContactFetchJob, ScrapeJob, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState, utcnow
 
 
@@ -32,6 +32,19 @@ def _seed_company(session: Session, *, upload_id, domain: str) -> Company:
     session.add(company)
     session.flush()
     return company
+
+
+def _seed_scrape_job(session: Session, *, company: Company, status: str, terminal_state: bool) -> ScrapeJob:
+    job = ScrapeJob(
+        website_url=company.normalized_url,
+        normalized_url=company.normalized_url,
+        domain=company.domain,
+        status=status,
+        terminal_state=terminal_state,
+    )
+    session.add(job)
+    session.flush()
+    return job
 
 
 def test_list_companies_multi_letters_is_server_filtered(sqlite_session: Session) -> None:
@@ -60,6 +73,49 @@ def test_list_companies_multi_letters_is_server_filtered(sqlite_session: Session
         sqlite_session.commit()
 
 
+def test_list_companies_search_is_server_filtered(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Search Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "search.csv", campaign_id=campaign.id)
+    try:
+        _seed_company(sqlite_session, upload_id=upload.id, domain="alpha-search.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="beta-search.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="gamma.example")
+        sqlite_session.commit()
+
+        response = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            search="search",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+
+        assert response.total == 2
+        assert {item.domain for item in response.items} == {"alpha-search.example", "beta-search.example"}
+
+        ids = list_company_ids(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            search="search",
+        )
+        assert ids.total == 2
+        assert len(ids.ids) == 2
+
+        letter_counts = get_letter_counts(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            search="search",
+        )
+        assert letter_counts.counts["a"] == 1
+        assert letter_counts.counts["b"] == 1
+        assert letter_counts.counts["g"] == 0
+    finally:
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
 def test_company_counts_honors_upload_scope(sqlite_session: Session) -> None:
     campaign = create_campaign(payload=CampaignCreate(name="Count Scope"), session=sqlite_session)
     upload_a = _seed_upload(sqlite_session, "scope-a.csv", campaign_id=campaign.id)
@@ -79,6 +135,207 @@ def test_company_counts_honors_upload_scope(sqlite_session: Session) -> None:
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id).in_([upload_a.id, upload_b.id])))
         sqlite_session.exec(delete(Upload).where(col(Upload.id).in_([upload_a.id, upload_b.id])))
+        sqlite_session.commit()
+
+
+def test_company_counts_scrape_buckets_reconcile(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Scrape Buckets"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "scrape-buckets.csv", campaign_id=campaign.id)
+    try:
+        _not_started = _seed_company(sqlite_session, upload_id=upload.id, domain="not-started.example")
+        in_progress = _seed_company(sqlite_session, upload_id=upload.id, domain="in-progress.example")
+        done = _seed_company(sqlite_session, upload_id=upload.id, domain="done.example")
+        cancelled = _seed_company(sqlite_session, upload_id=upload.id, domain="cancelled.example")
+        permanent = _seed_company(sqlite_session, upload_id=upload.id, domain="permanent.example")
+        soft = _seed_company(sqlite_session, upload_id=upload.id, domain="soft.example")
+        sqlite_session.add_all(
+            [
+                _seed_scrape_job(sqlite_session, company=in_progress, status="running", terminal_state=False),
+                _seed_scrape_job(sqlite_session, company=done, status="completed", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=cancelled, status="cancelled", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=permanent, status="site_unavailable", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=soft, status="failed", terminal_state=True),
+            ]
+        )
+        sqlite_session.commit()
+
+        counts = get_company_counts(session=sqlite_session, campaign_id=campaign.id, upload_id=upload.id)
+        assert counts.total == 6
+        assert counts.scrape_not_started == 1
+        assert counts.scrape_in_progress == 1
+        assert counts.scrape_done == 1
+        assert counts.scrape_cancelled == 1
+        assert counts.scrape_permanent_fail == 1
+        assert counts.scrape_soft_fail == 1
+        assert counts.not_scraped == 1
+        assert counts.scrape_not_started + counts.scrape_in_progress + counts.scrape_done + counts.scrape_cancelled + counts.scrape_permanent_fail + counts.scrape_soft_fail == counts.total
+
+        not_started_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            scrape_filter="not-started",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in not_started_rows.items] == ["not-started.example"]
+
+        in_progress_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            scrape_filter="in-progress",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in in_progress_rows.items] == ["in-progress.example"]
+
+        done_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            scrape_filter="done",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in done_rows.items] == ["done.example"]
+
+        cancelled_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            scrape_filter="cancelled",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in cancelled_rows.items] == ["cancelled.example"]
+
+        permanent_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            scrape_filter="permanent",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in permanent_rows.items] == ["permanent.example"]
+
+        soft_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            scrape_filter="soft",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in soft_rows.items] == ["soft.example"]
+    finally:
+        sqlite_session.exec(delete(ScrapeJob))
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_list_companies_pipeline_status_filter_is_server_filtered(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Pipeline Status Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "pipeline-status.csv", campaign_id=campaign.id)
+    try:
+        _not_started = _seed_company(sqlite_session, upload_id=upload.id, domain="not-started.example")
+        in_progress_scrape = _seed_company(sqlite_session, upload_id=upload.id, domain="scrape-running.example")
+        in_progress_contact = _seed_company(sqlite_session, upload_id=upload.id, domain="contact-running.example")
+        complete = _seed_company(sqlite_session, upload_id=upload.id, domain="complete.example")
+        cancelled = _seed_company(sqlite_session, upload_id=upload.id, domain="cancelled.example")
+        permanent = _seed_company(sqlite_session, upload_id=upload.id, domain="permanent.example")
+        soft = _seed_company(sqlite_session, upload_id=upload.id, domain="soft.example")
+        failed_contact = _seed_company(sqlite_session, upload_id=upload.id, domain="contact-failed.example")
+
+        sqlite_session.add_all(
+            [
+                _seed_scrape_job(sqlite_session, company=in_progress_scrape, status="running", terminal_state=False),
+                _seed_scrape_job(sqlite_session, company=in_progress_contact, status="completed", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=complete, status="completed", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=cancelled, status="cancelled", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=permanent, status="site_unavailable", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=soft, status="failed", terminal_state=True),
+                _seed_scrape_job(sqlite_session, company=failed_contact, status="completed", terminal_state=True),
+            ]
+        )
+        sqlite_session.add(
+            ContactFetchJob(company_id=in_progress_contact.id, provider="snov", state=ContactFetchJobState.RUNNING, terminal_state=False)
+        )
+        sqlite_session.add(
+            ContactFetchJob(company_id=failed_contact.id, provider="snov", state=ContactFetchJobState.FAILED, terminal_state=True)
+        )
+        sqlite_session.add(
+            CompanyFeedback(company_id=complete.id, manual_label="possible")
+        )
+        sqlite_session.commit()
+
+        in_progress_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            status_filter="in-progress",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert {item.domain for item in in_progress_rows.items} == {"scrape-running.example", "contact-running.example"}
+
+        complete_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            status_filter="complete",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in complete_rows.items] == ["complete.example"]
+
+        cancelled_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            status_filter="cancelled",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert [item.domain for item in cancelled_rows.items] == ["cancelled.example"]
+
+        soft_rows = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            status_filter="soft-failures",
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+        assert {item.domain for item in soft_rows.items} == {"soft.example", "contact-failed.example"}
+
+        letter_counts = get_letter_counts(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            status_filter="in-progress",
+        )
+        assert letter_counts.counts["c"] == 1
+        assert letter_counts.counts["s"] == 1
+        assert letter_counts.counts["n"] == 0
+    finally:
+        sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id).in_([in_progress_contact.id, failed_contact.id])))
+        sqlite_session.exec(delete(CompanyFeedback).where(col(CompanyFeedback.company_id) == complete.id))
+        sqlite_session.exec(delete(ScrapeJob))
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()
 
 

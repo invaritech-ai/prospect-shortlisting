@@ -1,14 +1,13 @@
-import { useState } from 'react'
 import type { CompanyList, CompanyListItem, CostStatsResponse, PipelineCostSummaryRead, PipelineRunProgressRead } from '../../../lib/types'
 import {
   companyListBrowseUrl,
-  matchesFullPipelineFilters,
   type FullPipelineStatusFilter,
 } from '../../../lib/fullPipelineFilters'
 import { getResumeStageForCompany } from '../../../lib/pipelineMappings'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { Pager } from '../../ui/Pager'
 import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
+import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -103,9 +102,8 @@ const STATUS_FILTERS: Array<{ value: FullPipelineStatusFilter; label: string }> 
   { value: 'in-progress', label: 'In progress' },
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'complete', label: 'Complete' },
-  { value: 'has-failures', label: 'Has failures' },
-  { value: 'permanent-failures', label: 'Permanent' },
-  { value: 'soft-failures', label: 'Soft' },
+  { value: 'permanent-failures', label: 'Permanent fail' },
+  { value: 'soft-failures', label: 'Soft fail' },
 ]
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -120,7 +118,11 @@ interface FullPipelineViewProps {
   isLoading: boolean
   offset: number
   pageSize: number
+  statusFilter: FullPipelineStatusFilter
+  search: string
   onLetterChange: (l: string | null) => void
+  onStatusFilterChange: (filter: FullPipelineStatusFilter) => void
+  onSearchChange: (value: string) => void
   onToggleRow: (id: string) => void
   onToggleAll: (ids: string[]) => void
   onClearSelection: () => void
@@ -136,7 +138,7 @@ interface FullPipelineViewProps {
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void
   isSelectingAllMatching: boolean
-  onSelectAllMatching: (statusFilter: FullPipelineStatusFilter, search: string) => void
+  onSelectAllMatching: () => void
   latestRunProgress: PipelineRunProgressRead | null
   campaignCostSummary: PipelineCostSummaryRead | null
   campaignCostBreakdown: CostStatsResponse | null
@@ -154,7 +156,11 @@ export function FullPipelineView({
   isLoading,
   offset,
   pageSize,
+  statusFilter,
+  search,
   onLetterChange,
+  onStatusFilterChange,
+  onSearchChange,
   onToggleRow,
   onToggleAll,
   onClearSelection,
@@ -175,15 +181,13 @@ export function FullPipelineView({
   campaignCostSummary,
   campaignCostBreakdown,
 }: FullPipelineViewProps) {
-  const [statusFilter, setStatusFilter] = useState<FullPipelineStatusFilter>('all')
-  const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
+  const visibleCompanies = companies?.items ?? []
 
-  const allItems = companies?.items ?? []
-  const visible = allItems.filter((c) => matchesFullPipelineFilters(c, statusFilter, search))
-
-  const allVisibleSelected = visible.length > 0 && visible.every((c) => selectedSet.has(c.id))
-  const someVisibleSelected = !allVisibleSelected && visible.some((c) => selectedSet.has(c.id))
+  const allVisibleSelected =
+    visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.id))
+  const someVisibleSelected =
+    !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden">
@@ -212,15 +216,16 @@ export function FullPipelineView({
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => onSearchChange(e.target.value)}
+            disabled={isLoading}
             placeholder="Search domains…"
-            className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--oc-accent) focus:bg-white"
+            className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--oc-accent) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
           />
         </div>
         <button
           type="button"
           onClick={onStartCampaignPipeline}
-          disabled={isStartingCampaignPipeline}
+          disabled={isLoading || isStartingCampaignPipeline}
           title="Starts a chained campaign pipeline run (S1→S4)."
           className="rounded-lg border border-(--oc-accent) bg-(--oc-accent-soft) px-3 py-1.5 text-xs font-semibold text-(--oc-accent-ink) transition hover:bg-(--oc-accent-soft)/80 disabled:opacity-60"
         >
@@ -234,6 +239,7 @@ export function FullPipelineView({
           active={activeLetter}
           onChange={onLetterChange}
           counts={letterCounts}
+          disabled={isLoading}
         />
         <span className="h-5 w-px bg-(--oc-border)" />
         <div className="flex gap-1.5">
@@ -241,11 +247,14 @@ export function FullPipelineView({
             <button
               key={f.value}
               type="button"
-              onClick={() => setStatusFilter(f.value)}
+              onClick={() => onStatusFilterChange(f.value)}
+              disabled={isLoading}
               className={`rounded-full px-3 py-1 text-[11px] font-semibold transition ${
                 statusFilter === f.value
                   ? 'border border-(--oc-accent) bg-(--oc-accent-soft) text-(--oc-accent-ink)'
-                  : 'border border-(--oc-border) bg-white text-(--oc-muted) hover:border-(--oc-accent) hover:text-(--oc-accent-ink)'
+                  : isLoading
+                    ? 'border border-(--oc-border) bg-white text-(--oc-border) cursor-not-allowed'
+                    : 'border border-(--oc-border) bg-white text-(--oc-muted) hover:border-(--oc-accent) hover:text-(--oc-accent-ink)'
               }`}
             >
               {f.label}
@@ -261,11 +270,12 @@ export function FullPipelineView({
           onPrev={onPagePrev}
           onNext={onPageNext}
           onPageSizeChange={onPageSizeChange}
+          disabled={isLoading}
         />
         <button
           type="button"
           disabled={isLoading || isSelectingAllMatching}
-          onClick={() => onSelectAllMatching(statusFilter, search)}
+          onClick={onSelectAllMatching}
           className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-accent-ink) transition hover:border-(--oc-accent) disabled:opacity-50"
         >
           {isSelectingAllMatching ? 'Selecting…' : 'Select all matching filters'}
@@ -314,32 +324,27 @@ export function FullPipelineView({
       </div>
 
       {/* Selection bar */}
-      {selectedIds.length > 0 && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-(--oc-border) bg-(--oc-accent-soft) px-3 py-2 text-sm"
-          style={{ animation: 'sel-slide-in 120ms ease-out' }}
+      <SelectionBar
+        stageColor="--oc-accent"
+        stageBg="--oc-accent-soft"
+        selectedCount={selectedIds.length}
+        totalMatching={companies?.total ?? null}
+        activeLetters={activeLetter ? new Set([activeLetter]) : new Set()}
+        onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
+        isSelectingAll={isSelectingAllMatching}
+        onClear={onClearSelection}
+        disabled={isLoading}
+      >
+        <button
+          type="button"
+          onClick={onScrapeSelected}
+          disabled={isLoading || isScraping || selectedIds.length === 0}
+          title="Starts a chained run for selected rows (S1→S4)."
+          className="rounded-lg bg-(--oc-accent) px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-60"
         >
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-(--oc-accent) px-2.5 py-0.5 text-xs font-bold text-white">
-            {selectedIds.length.toLocaleString()} selected
-          </span>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={onScrapeSelected}
-            disabled={isScraping}
-            title="Starts a chained run for selected rows (S1→S4)."
-            className="rounded-lg bg-(--oc-accent) px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-60"
-          >
-            {isScraping ? 'Starting run…' : 'Start pipeline'}
-          </button>
-          <button
-            type="button"
-            onClick={onClearSelection}
-            className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text)"
-          >
-            Clear
-          </button>
-        </div>
-      )}
+          {isScraping ? 'Starting run…' : 'Start pipeline'}
+        </button>
+      </SelectionBar>
 
       {/* Table */}
       <div className="flex-1 overflow-auto">
@@ -350,10 +355,11 @@ export function FullPipelineView({
                 <th className="w-10 p-3 pl-4">
                   <input
                     type="checkbox"
+                    disabled={isLoading}
                     checked={allVisibleSelected}
                     ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
-                    onChange={() => onToggleAll(allVisibleSelected ? [] : visible.map((c) => c.id))}
-                    className="cursor-pointer accent-(--oc-accent)"
+                    onChange={() => onToggleAll(allVisibleSelected ? [] : visibleCompanies.map((c) => c.id))}
+                    className="cursor-pointer accent-(--oc-accent) disabled:cursor-not-allowed"
                   />
                 </th>
                 <th className="min-w-52 p-3 text-left text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)">
@@ -366,6 +372,7 @@ export function FullPipelineView({
                   sortDir={sortDir}
                   onSort={onSort}
                   className="min-w-28 text-[10.5px] font-bold uppercase tracking-widest text-(--oc-muted)"
+                  disabled={isLoading}
                 />
                 {STAGES.map((s) => (
                   <th
@@ -397,14 +404,14 @@ export function FullPipelineView({
                   <td colSpan={8} className="p-8 text-center text-sm text-(--oc-muted)">Loading…</td>
                 </tr>
               )}
-              {!isLoading && visible.length === 0 && (
+              {!isLoading && visibleCompanies.length === 0 && (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-sm text-(--oc-muted)">
                     No companies match this filter.
                   </td>
                 </tr>
               )}
-              {visible.map((c) => {
+              {visibleCompanies.map((c) => {
                 const isSelected = selectedSet.has(c.id)
                 const resumeStage = getResumeStageForCompany(c)
                 const resumeLabel = resumeActionState[c.id]
@@ -420,9 +427,10 @@ export function FullPipelineView({
                     <td className="p-3 pl-4">
                       <input
                         type="checkbox"
+                        disabled={isLoading}
                         checked={isSelected}
                         onChange={() => onToggleRow(c.id)}
-                        className="cursor-pointer accent-(--oc-accent)"
+                        className="cursor-pointer accent-(--oc-accent) disabled:cursor-not-allowed"
                       />
                     </td>
                     <td className="p-3">
@@ -457,7 +465,7 @@ export function FullPipelineView({
                         <button
                           type="button"
                           onClick={() => onResumeCompany(c)}
-                          disabled={Boolean(resumeLabel)}
+                          disabled={isLoading || Boolean(resumeLabel)}
                           className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-semibold transition hover:border-(--oc-accent) hover:text-(--oc-accent-ink) disabled:opacity-50"
                         >
                           {resumeLabel ?? `Resume ${resumeStage}`}
@@ -478,7 +486,7 @@ export function FullPipelineView({
       {companies && (
         <div className="flex shrink-0 items-center justify-between border-t border-(--oc-border) px-4 py-2.5 text-xs text-(--oc-muted)">
           <span>
-            Showing {visible.length.toLocaleString()} of {(allItems.length ?? 0).toLocaleString()} on this page
+            Showing {visibleCompanies.length.toLocaleString()} on this page
           </span>
           {companies.has_more && (
             <span className="text-xs text-(--oc-accent)">Scroll or adjust letter filter to see more</span>

@@ -62,6 +62,7 @@ import type {
   UploadList,
   MatchGapFilter,
 } from './types'
+import type { FullPipelineStatusFilter } from './fullPipelineFilters'
 
 const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env
 const API_BASE_URL = (
@@ -247,13 +248,28 @@ export async function listCompanies(
   sortDir: 'asc' | 'desc' = 'desc',
   uploadId?: string,
   letters?: string[],
+  statusFilter: FullPipelineStatusFilter = 'all',
+  search = '',
 ): Promise<CompanyList> {
   const buildUrl = (sb: string, sd: string) => {
-    let u = `/v1/companies?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}&include_total=${includeTotal}&sort_by=${encodeURIComponent(sb)}&sort_dir=${sd}`
-    if (letter) u += `&letter=${encodeURIComponent(letter)}`
-    if (letters && letters.length > 0) u += `&letters=${encodeURIComponent(letters.join(','))}`
-    if (uploadId) u += `&upload_id=${encodeURIComponent(uploadId)}`
-    return u
+    const params = new URLSearchParams({
+      campaign_id: campaignId,
+      limit: String(limit),
+      offset: String(offset),
+      decision_filter: decisionFilter,
+      scrape_filter: scrapeFilter,
+      stage_filter: stageFilter,
+      include_total: includeTotal ? 'true' : 'false',
+      sort_by: sb,
+      sort_dir: sd,
+    })
+    if (letter) params.set('letter', letter)
+    if (letters && letters.length > 0) params.set('letters', letters.join(','))
+    if (uploadId) params.set('upload_id', uploadId)
+    const q = search.trim()
+    if (q) params.set('search', q)
+    if (statusFilter !== 'all') params.set('status_filter', statusFilter)
+    return `/v1/companies?${params.toString()}`
   }
 
   companyListLegacySortFallback = false
@@ -495,12 +511,22 @@ export async function listCompanyIds(
   letter: string | null = null,
   uploadId?: string,
   letters?: string[],
+  statusFilter: FullPipelineStatusFilter = 'all',
+  search = '',
 ): Promise<CompanyIdsResult> {
-  let url = `/v1/companies/ids?campaign_id=${encodeURIComponent(campaignId)}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}`
-  if (letter) url += `&letter=${encodeURIComponent(letter)}`
-  if (letters && letters.length > 0) url += `&letters=${encodeURIComponent(letters.join(','))}`
-  if (uploadId) url += `&upload_id=${encodeURIComponent(uploadId)}`
-  return request<CompanyIdsResult>(url)
+  const params = new URLSearchParams({
+    campaign_id: campaignId,
+    decision_filter: decisionFilter,
+    scrape_filter: scrapeFilter,
+    stage_filter: stageFilter,
+  })
+  if (letter) params.set('letter', letter)
+  if (letters && letters.length > 0) params.set('letters', letters.join(','))
+  if (uploadId) params.set('upload_id', uploadId)
+  const q = search.trim()
+  if (q) params.set('search', q)
+  if (statusFilter !== 'all') params.set('status_filter', statusFilter)
+  return request<CompanyIdsResult>(`/v1/companies/ids?${params.toString()}`)
 }
 
 export async function getLetterCounts(
@@ -509,11 +535,20 @@ export async function getLetterCounts(
   scrapeFilter: ScrapeFilter = 'all',
   stageFilter: CompanyStageFilter = 'all',
   uploadId?: string,
+  statusFilter: FullPipelineStatusFilter = 'all',
+  search = '',
 ): Promise<LetterCounts> {
-  const uploadParam = uploadId ? `&upload_id=${encodeURIComponent(uploadId)}` : ''
-  return request<LetterCounts>(
-    `/v1/companies/letter-counts?campaign_id=${encodeURIComponent(campaignId)}&decision_filter=${encodeURIComponent(decisionFilter)}&scrape_filter=${encodeURIComponent(scrapeFilter)}&stage_filter=${encodeURIComponent(stageFilter)}${uploadParam}`,
-  )
+  const params = new URLSearchParams({
+    campaign_id: campaignId,
+    decision_filter: decisionFilter,
+    scrape_filter: scrapeFilter,
+    stage_filter: stageFilter,
+  })
+  if (uploadId) params.set('upload_id', uploadId)
+  const q = search.trim()
+  if (q) params.set('search', q)
+  if (statusFilter !== 'all') params.set('status_filter', statusFilter)
+  return request<LetterCounts>(`/v1/companies/letter-counts?${params.toString()}`)
 }
 
 // ── Contacts ──────────────────────────────────────────────────────────────────

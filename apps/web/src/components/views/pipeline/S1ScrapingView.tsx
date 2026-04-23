@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import type { CompanyList, CompanyListItem, ScrapePromptRead, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
+import type { CompanyCounts, CompanyList, CompanyListItem, ScrapePromptRead, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -15,16 +14,19 @@ interface S1ScrapingViewProps {
   selectedScrapePrompt: ScrapePromptRead | null
   selectedIds: string[]
   totalMatching: number | null
+  search: string
   isLoading: boolean
   isScraping: boolean
   isSelectingAll: boolean
   stats: StatsResponse | null
+  companyCounts: CompanyCounts | null
   isResettingStuck: boolean
   isDrainingQueue: boolean
   actionState: Record<string, string>
   offset: number
   pageSize: number
   onScrapeSubFilterChange: (filter: ScrapeSubFilter) => void
+  onSearchChange: (value: string) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -47,12 +49,12 @@ interface S1ScrapingViewProps {
 
 const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'pending', label: 'Not scraped' },
-  { value: 'active', label: 'In progress' },
+  { value: 'not-started', label: 'Not started' },
+  { value: 'in-progress', label: 'In progress' },
   { value: 'done', label: 'Done' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'permanent', label: 'Permanent' },
-  { value: 'soft', label: 'Soft' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'permanent', label: 'Permanent fail' },
+  { value: 'soft', label: 'Soft fail' },
 ]
 
 function scrapeBadgeClass(status: string): string {
@@ -81,16 +83,19 @@ export function S1ScrapingView({
   selectedScrapePrompt,
   selectedIds,
   totalMatching,
+  search,
   isLoading,
   isScraping,
   isSelectingAll,
   stats,
+  companyCounts,
   isResettingStuck,
   isDrainingQueue,
   actionState,
   offset,
   pageSize,
   onScrapeSubFilterChange,
+  onSearchChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -110,53 +115,36 @@ export function S1ScrapingView({
   sortDir,
   onSort,
 }: S1ScrapingViewProps) {
-  const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
-
-  // 'active' is the only filter that can't be done server-side (no API equivalent),
-  // so we client-filter on the loaded page. All other filters are applied server-side.
-  const visibleCompanies = (companies?.items ?? []).filter((c) => {
-    if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
-    const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
-    if (!letterOk) return false
-    if (scrapeSubFilter === 'active') {
-      const s = c.latest_scrape_status?.toLowerCase() ?? ''
-      return s === 'queued' || s === 'created' || s === 'running'
-    }
-    if (scrapeSubFilter === 'permanent') {
-      const s = c.latest_scrape_status?.toLowerCase() ?? ''
-      return s === 'site_unavailable'
-    }
-    if (scrapeSubFilter === 'soft') {
-      const s = c.latest_scrape_status?.toLowerCase() ?? ''
-      return s === 'failed' || s === 'step1_failed' || s === 'dead'
-    }
-    return true
-  })
-
-  const allVisibleSelected =
-    visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.id))
-  const someVisibleSelected =
-    !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
-
-  // Only client-side sub-filters count as "sub-filtered" for the total count/select-all logic
-  const isClientFiltered =
-    scrapeSubFilter === 'active'
-    || scrapeSubFilter === 'permanent'
-    || scrapeSubFilter === 'soft'
-    || search !== ''
-  const displayCount = isClientFiltered ? visibleCompanies.length : (companies?.total ?? 0)
-  const effectiveTotalMatching = isClientFiltered ? visibleCompanies.length : totalMatching
+  const visibleCompanies = companies?.items ?? []
+  const allVisibleSelected = visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.id))
+  const someVisibleSelected = !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
+  const displayCount = companies?.total ?? 0
+  const effectiveTotalMatching = totalMatching ?? companies?.total ?? null
 
   // Pipeline progress from stats
   const scrape = stats?.scrape
-  const running = scrape?.running ?? 0
-  const queued = scrape?.queued ?? 0
-  const completed = scrape?.completed ?? 0
-  const failed = scrape?.failed ?? 0
   const total = scrape?.total ?? 0
   const pctDone = scrape?.pct_done ?? 0
-  const hasActivity = running > 0 || queued > 0
+  const counts = companyCounts
+  const fallbackCounts = scrape ? {
+    scrape_not_started: Math.max(
+      0,
+      total
+        - (scrape.completed ?? 0)
+        - (scrape.running ?? 0)
+        - (scrape.queued ?? 0)
+        - (scrape.site_unavailable ?? 0)
+        - (scrape.failed ?? 0),
+    ),
+    scrape_in_progress: (scrape.running ?? 0) + (scrape.queued ?? 0),
+    scrape_done: scrape.completed ?? 0,
+    scrape_cancelled: 0,
+    scrape_permanent_fail: scrape.site_unavailable ?? 0,
+    scrape_soft_fail: scrape.failed ?? 0,
+  } : null
+  const summaryCounts = counts ?? fallbackCounts
+  const hasActivity = (scrape?.running ?? 0) > 0 || (scrape?.queued ?? 0) > 0
 
   return (
     <div className="space-y-3">
@@ -165,7 +153,7 @@ export function S1ScrapingView({
         className="sticky top-0 z-10 space-y-2 border-b border-transparent pb-2"
         style={{ backgroundColor: 'var(--oc-bg)' }}
       >
-        {scrape && (hasActivity || completed > 0) && (
+        {scrape && (hasActivity || counts != null) && (
           <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -180,7 +168,7 @@ export function S1ScrapingView({
                 )}
               </div>
               <span className="text-[11px] text-(--oc-muted)">
-                {completed.toLocaleString()} / {total.toLocaleString()}
+                {counts ? `${counts.scrape_done.toLocaleString()} done / ${counts.total.toLocaleString()} total` : `${scrape?.completed ?? 0} / ${total.toLocaleString()}`}
               </span>
             </div>
             <p className="mb-2 text-[11px] text-(--oc-muted)">
@@ -191,17 +179,25 @@ export function S1ScrapingView({
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${Math.min(pctDone, 100)}%`,
-                  background: hasActivity ? 'linear-gradient(90deg, var(--s1), #3b82f6)' : '#16a34a',
-                }}
+                background: hasActivity ? 'linear-gradient(90deg, var(--s1), #3b82f6)' : '#16a34a',
+              }}
               />
             </div>
             <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-              {running > 0 && <span className="font-bold text-amber-600">{running.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
-              {queued > 0 && <span className="font-bold text-(--oc-muted)">{queued.toLocaleString()} <span className="font-normal">queued</span></span>}
-              <span className="font-bold text-emerald-700">{completed.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-              {failed > 0 && <span className="font-bold text-rose-600">{failed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
+              {summaryCounts ? (
+                <>
+                  <span className="font-bold text-slate-600">{summaryCounts.scrape_not_started.toLocaleString()} <span className="font-normal text-(--oc-muted)">not started</span></span>
+                  <span className="font-bold text-amber-600">{summaryCounts.scrape_in_progress.toLocaleString()} <span className="font-normal text-(--oc-muted)">in progress</span></span>
+                  <span className="font-bold text-emerald-700">{summaryCounts.scrape_done.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
+                  <span className="font-bold text-slate-500">{summaryCounts.scrape_cancelled.toLocaleString()} <span className="font-normal text-(--oc-muted)">cancelled</span></span>
+                  <span className="font-bold text-orange-700">{summaryCounts.scrape_permanent_fail.toLocaleString()} <span className="font-normal text-(--oc-muted)">permanent fail</span></span>
+                  <span className="font-bold text-rose-600">{summaryCounts.scrape_soft_fail.toLocaleString()} <span className="font-normal text-(--oc-muted)">soft fail</span></span>
+                </>
+              ) : (
+                <span className="text-(--oc-muted)">No summary available.</span>
+              )}
               {scrape.stuck_count > 0 && (
-                <button type="button" onClick={onResetStuck} disabled={isResettingStuck}
+                <button type="button" onClick={onResetStuck} disabled={isLoading || isResettingStuck}
                   className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">
                   {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
                 </button>
@@ -226,15 +222,16 @@ export function S1ScrapingView({
               <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
               </svg>
-              <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              <input type="text" value={search} onChange={(e) => onSearchChange(e.target.value)} disabled={isLoading}
                 placeholder="Search domains…"
-                className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white" />
+                className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60" />
             </div>
             <button
               type="button"
               onClick={onOpenPromptLibrary}
+              disabled={isLoading}
               title={selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Open scrape prompt library'}
-              className="min-w-0 w-full text-left text-xs text-(--oc-muted) underline underline-offset-2 transition hover:text-(--oc-text) sm:w-auto sm:max-w-[min(20rem,45vw)] sm:shrink-0 sm:text-right"
+              className="min-w-0 w-full text-left text-xs text-(--oc-muted) underline underline-offset-2 transition hover:text-(--oc-text) disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:max-w-[min(20rem,45vw)] sm:shrink-0 sm:text-right"
             >
               <span className="block min-w-0 truncate sm:whitespace-nowrap">
                 {selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Select prompt…'}
@@ -244,20 +241,20 @@ export function S1ScrapingView({
         </div>
 
         {/* Letter strip */}
-        <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} />
+        <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} disabled={isLoading} />
 
         {/* Sub-filter chips + Pager */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex flex-wrap gap-1.5">
               {SUB_FILTERS.map((f) => (
-                <button key={f.value} type="button" onClick={() => onScrapeSubFilterChange(f.value)}
-                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${scrapeSubFilter === f.value ? 'text-white' : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'}`}
+                <button key={f.value} type="button" onClick={() => onScrapeSubFilterChange(f.value)} disabled={isLoading}
+                  className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${scrapeSubFilter === f.value ? 'text-white' : isLoading ? 'border border-(--oc-border) text-(--oc-border) cursor-not-allowed' : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s1) hover:text-(--s1-text)'}`}
                   style={scrapeSubFilter === f.value ? { backgroundColor: 'var(--s1)' } : {}}>
                   {f.label}
                 </button>
               ))}
             </div>
-            <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+            <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} disabled={isLoading} />
           </div>
 
         {/* Selection bar */}
@@ -267,11 +264,12 @@ export function S1ScrapingView({
           selectedCount={selectedIds.length}
           totalMatching={effectiveTotalMatching}
           activeLetters={activeLetters}
-          onSelectAllMatching={selectedIds.length > 0 && !isClientFiltered ? onSelectAllMatching : null}
+          onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
           isSelectingAll={isSelectingAll}
           onClear={onClearSelection}
+          disabled={isLoading}
         >
-          <button type="button" onClick={onScrapeSelected} disabled={isScraping || selectedIds.length === 0}
+          <button type="button" onClick={onScrapeSelected} disabled={isLoading || isScraping || selectedIds.length === 0}
             className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
             style={{ backgroundColor: 'var(--s1)' }}>
             {isScraping ? 'Queuing…' : 'Scrape Selected'}
@@ -288,17 +286,18 @@ export function S1ScrapingView({
               <th className="w-8 p-3">
                 <input
                   type="checkbox"
+                  disabled={isLoading}
                   checked={allVisibleSelected}
                   ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
                   onChange={() =>
                     onToggleAll(allVisibleSelected ? [] : visibleCompanies.map((c) => c.id))
                   }
-                  className="cursor-pointer"
+                  className="cursor-pointer disabled:cursor-not-allowed"
                 />
               </th>
-              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Scrape status" field="scrape_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+              <SortableHeader label="Scrape status" field="scrape_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
@@ -315,14 +314,14 @@ export function S1ScrapingView({
             {!isLoading && visibleCompanies.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-10 text-center">
-                  {scrapeSubFilter === 'pending' && companies != null ? (
+                  {scrapeSubFilter === 'not-started' && companies != null ? (
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-emerald-700">All companies have been scraped ✓</p>
                       <p className="text-xs text-(--oc-muted)">Switch to "All" or "Done" to review results.</p>
                     </div>
-                  ) : scrapeSubFilter === 'failed' ? (
+                  ) : scrapeSubFilter === 'soft' ? (
                     <div className="space-y-1">
-                      <p className="text-sm font-semibold text-(--oc-text)">No failed scrapes</p>
+                      <p className="text-sm font-semibold text-(--oc-text)">No soft failures</p>
                       <p className="text-xs text-(--oc-muted)">All scrapes completed successfully.</p>
                     </div>
                   ) : (
@@ -340,9 +339,10 @@ export function S1ScrapingView({
                 <td className="p-3">
                   <input
                     type="checkbox"
+                    disabled={isLoading}
                     checked={selectedSet.has(c.id)}
                     onChange={() => onToggleRow(c.id)}
-                    className="cursor-pointer"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                   />
                 </td>
                 <td className="p-3">
@@ -373,7 +373,7 @@ export function S1ScrapingView({
                     <button
                       type="button"
                       onClick={() => onScrapeOne(c)}
-                      disabled={!!actionState[c.id]}
+                      disabled={isLoading || !!actionState[c.id]}
                       title={(c.latest_scrape_status ?? '').toLowerCase() === 'site_unavailable'
                         ? 'Permanent failure marker exists. Retry will attempt recovery explicitly.'
                         : undefined}
@@ -385,7 +385,8 @@ export function S1ScrapingView({
                       <button
                         type="button"
                         onClick={() => onOpenDiagnostics(c)}
-                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text)"
+                        disabled={isLoading}
+                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s1) hover:text-(--s1-text) disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Diag
                       </button>
@@ -405,7 +406,7 @@ export function S1ScrapingView({
           <button
             type="button"
             onClick={onDrainQueue}
-            disabled={isDrainingQueue || stats.scrape.queued === 0}
+            disabled={isLoading || isDrainingQueue || stats.scrape.queued === 0}
             className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isDrainingQueue ? 'Draining…' : `Drain Queue (${stats.scrape.queued})`}

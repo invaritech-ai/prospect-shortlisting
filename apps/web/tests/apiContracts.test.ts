@@ -179,6 +179,20 @@ test('listCompanies serializes multi-letter filters', async () => {
   assert.match(requested, /letters=w%2Cx/)
 })
 
+test('listCompanies serializes full pipeline status and search filters', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return { total: 0, has_more: false, limit: 25, offset: 0, items: [] }
+  })
+
+  await listCompanies('camp-1', 25, 0, 'all', true, 'all', 'all', 'a', 'domain', 'asc', undefined, undefined, 'soft-failures', ' acme ')
+
+  assert.match(requested, /letter=a/)
+  assert.match(requested, /status_filter=soft-failures/)
+  assert.match(requested, /search=acme/)
+})
+
 test('listCompanyIds serializes multi-letter filters', async () => {
   let requested = ''
   mockFetch((url) => {
@@ -189,6 +203,34 @@ test('listCompanyIds serializes multi-letter filters', async () => {
   await listCompanyIds('camp-1', 'all', 'all', 'all', null, undefined, ['w', 'x'])
 
   assert.match(requested, /letters=w%2Cx/)
+})
+
+test('listCompanyIds serializes full pipeline status and search filters', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return { ids: [], total: 0 }
+  })
+
+  await listCompanyIds('camp-1', 'all', 'all', 'all', 'b', undefined, undefined, 'complete', ' beta ')
+
+  assert.match(requested, /letter=b/)
+  assert.match(requested, /status_filter=complete/)
+  assert.match(requested, /search=beta/)
+})
+
+test('getLetterCounts serializes full pipeline status and search filters', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return { counts: {} }
+  })
+
+  const { getLetterCounts } = await import('../src/lib/api.ts')
+  await getLetterCounts('camp-1', 'all', 'all', 'all', undefined, 'permanent-failures', ' gamma ')
+
+  assert.match(requested, /status_filter=permanent-failures/)
+  assert.match(requested, /search=gamma/)
 })
 
 test('createScrapePrompt serializes intent_text', async () => {

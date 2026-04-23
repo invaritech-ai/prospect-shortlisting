@@ -60,12 +60,14 @@ interface S3ContactFetchViewProps {
   decisionFilter: DecisionFilter
   selectedIds: string[]
   totalMatching: number | null
+  search: string
   isLoading: boolean
   isFetching: boolean
   isSelectingAll: boolean
   contactCounts: ContactCountsResponse | null
   stats: StatsResponse | null
   onDecisionFilterChange: (filter: DecisionFilter) => void
+  onSearchChange: (value: string) => void
   onToggleLetter: (l: string) => void
   onClearLetters: () => void
   onToggleRow: (id: string) => void
@@ -109,12 +111,14 @@ export function S3ContactFetchView({
   decisionFilter,
   selectedIds,
   totalMatching,
+  search,
   isLoading,
   isFetching,
   isSelectingAll,
   contactCounts,
   stats,
   onDecisionFilterChange,
+  onSearchChange,
   onToggleLetter,
   onClearLetters,
   onToggleRow,
@@ -134,20 +138,21 @@ export function S3ContactFetchView({
   sortDir,
   onSort,
 }: S3ContactFetchViewProps) {
-  const [search, setSearch] = useState('')
   const selectedSet = new Set(selectedIds)
 
   // ── Title-match audit: list companies with contacts fetched but 0/>0 title matches ──
   const [auditMode, setAuditMode] = useState<AuditMode>('off')
+  const [auditSearch, setAuditSearch] = useState('')
   const [auditOffset, setAuditOffset] = useState(0)
   const [auditData, setAuditData] = useState<ContactCompanyListResponse | null>(null)
   const [isAuditLoading, setIsAuditLoading] = useState(false)
   const [auditError, setAuditError] = useState('')
   const auditRequestRef = useRef(0)
+  const controlsDisabled = isLoading || isAuditLoading
 
   useEffect(() => {
     setAuditOffset(0)
-  }, [auditMode, search])
+  }, [auditMode, auditSearch])
 
   useEffect(() => {
     if (!campaignId) {
@@ -171,7 +176,7 @@ export function S3ContactFetchView({
     const gapOptions = auditMode === 'no_matches'
       ? { matchGapFilter: 'contacts_no_match' as const }
       : { titleMatch: true }
-    const trimmed = search.trim()
+    const trimmed = auditSearch.trim()
     listContactCompanies({
       campaignId,
       ...gapOptions,
@@ -190,27 +195,22 @@ export function S3ContactFetchView({
       .finally(() => {
         if (auditRequestRef.current === reqId) setIsAuditLoading(false)
       })
-  }, [auditMode, auditOffset, campaignId, search])
+  }, [auditMode, auditOffset, campaignId, auditSearch])
 
   const isAuditActive = auditMode !== 'off'
-  const auditItems = auditData?.items ?? []
+  const auditItems: ContactCompanySummary[] = auditData?.items ?? []
   const auditTotal = auditData?.total ?? null
   const auditHasMore = auditData?.has_more ?? false
 
-  const visibleCompanies = (companies?.items ?? []).filter((c) => {
-    if (search && !c.domain.toLowerCase().includes(search.toLowerCase())) return false
-    const letterOk = activeLetters.size === 0 || activeLetters.has(c.domain[0].toLowerCase())
-    return letterOk
-  })
+  const visibleCompanies = companies?.items ?? []
 
   const allVisibleSelected =
     visibleCompanies.length > 0 && visibleCompanies.every((c) => selectedSet.has(c.id))
   const someVisibleSelected =
     !allVisibleSelected && visibleCompanies.some((c) => selectedSet.has(c.id))
 
-  const isSearchFiltered = search !== ''
-  const displayCount = isSearchFiltered ? visibleCompanies.length : (companies?.total ?? 0)
-  const effectiveTotalMatching = isSearchFiltered ? visibleCompanies.length : totalMatching
+  const displayCount = companies?.total ?? 0
+  const effectiveTotalMatching = totalMatching ?? companies?.total ?? null
   const contactFetch = stats?.contact_fetch
   const cfRunning = contactFetch?.running ?? 0
   const cfQueued = contactFetch?.queued ?? 0
@@ -277,17 +277,23 @@ export function S3ContactFetchView({
           </svg>
           <input
             type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={isAuditActive ? auditSearch : search}
+            onChange={(e) => {
+              const next = e.target.value
+              if (isAuditActive) setAuditSearch(next)
+              else onSearchChange(next)
+            }}
+            disabled={controlsDisabled}
             placeholder="Search domains…"
-            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s3) focus:bg-white"
+            className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s3) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             style={{ width: 180 }}
           />
         </div>
         <button
           type="button"
           onClick={onOpenTitleRules}
-          className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text) whitespace-nowrap"
+          disabled={controlsDisabled}
+          className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text) whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
         >
           Title Rules
         </button>
@@ -321,13 +327,14 @@ export function S3ContactFetchView({
           counts={letterCounts}
           onToggle={onToggleLetter}
           onClear={onClearLetters}
+          disabled={controlsDisabled}
         />
       )}
 
       {/* Title-match audit chips — lets ops verify whether title rules catch the intended contacts */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-(--oc-muted)">Title-match audit</span>
-        {([
+          {([
           { value: 'off', label: 'Off' },
           { value: 'no_matches', label: 'Fetched · 0 matches' },
           { value: 'matched', label: 'Fetched · has matches' },
@@ -335,12 +342,18 @@ export function S3ContactFetchView({
           <button
             key={value}
             type="button"
-            onClick={() => setAuditMode(value)}
+            onClick={() => {
+              if (value !== 'off') setAuditSearch(search)
+              setAuditMode(value)
+            }}
+            disabled={controlsDisabled}
             className="rounded-full border px-3 py-1 text-xs font-medium transition"
             style={
               auditMode === value
                 ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
-                : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+                : controlsDisabled
+                  ? { borderColor: 'var(--oc-border)', color: 'var(--oc-border)' }
+                  : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
             }
           >
             {label}
@@ -365,18 +378,21 @@ export function S3ContactFetchView({
                   key={value}
                   type="button"
                   onClick={() => onDecisionFilterChange(value)}
+                  disabled={controlsDisabled}
                   className="rounded-full border px-3 py-1 text-xs font-medium transition"
                   style={
                     decisionFilter === value
                       ? { borderColor: 'var(--s3)', backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)', fontWeight: 700 }
-                      : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+                      : controlsDisabled
+                        ? { borderColor: 'var(--oc-border)', color: 'var(--oc-border)' }
+                        : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
                   }
                 >
                   {label}
                 </button>
               ))}
             </div>
-            <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+            <Pager offset={offset} pageSize={pageSize} total={companies?.total ?? null} hasMore={companies?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} disabled={controlsDisabled} />
           </div>
 
           <SelectionBar
@@ -385,16 +401,17 @@ export function S3ContactFetchView({
             selectedCount={selectedIds.length}
             totalMatching={effectiveTotalMatching}
             activeLetters={activeLetters}
-            onSelectAllMatching={selectedIds.length > 0 && !isSearchFiltered ? onSelectAllMatching : null}
+            onSelectAllMatching={selectedIds.length > 0 ? onSelectAllMatching : null}
             isSelectingAll={isSelectingAll}
             onClear={onClearSelection}
+            disabled={controlsDisabled}
           >
             {FETCH_BUTTONS.map(({ source, label, bg }) => (
               <button
                 key={source}
                 type="button"
                 onClick={() => onFetchSelected(source)}
-                disabled={isFetching || selectedIds.length === 0}
+                disabled={controlsDisabled || isFetching || selectedIds.length === 0}
                 className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
                 style={{ backgroundColor: bg }}
               >
@@ -419,13 +436,14 @@ export function S3ContactFetchView({
             <button
               type="button"
               onClick={onOpenTitleRules}
+              disabled={controlsDisabled}
               className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
             >
               Edit title rules
             </button>
             <button
               type="button"
-              disabled={auditOffset === 0}
+              disabled={auditOffset === 0 || controlsDisabled}
               onClick={() => setAuditOffset(Math.max(0, auditOffset - AUDIT_PAGE_SIZE))}
               className="flex h-6 w-6 items-center justify-center rounded-md border border-(--oc-border) bg-(--oc-surface-strong) text-xs transition hover:bg-(--oc-surface) disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Previous page"
@@ -439,7 +457,7 @@ export function S3ContactFetchView({
             </span>
             <button
               type="button"
-              disabled={!auditHasMore}
+              disabled={!auditHasMore || controlsDisabled}
               onClick={() => setAuditOffset(auditOffset + AUDIT_PAGE_SIZE)}
               className="flex h-6 w-6 items-center justify-center rounded-md border border-(--oc-border) bg-(--oc-surface-strong) text-xs transition hover:bg-(--oc-surface) disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Next page"
@@ -533,6 +551,7 @@ export function S3ContactFetchView({
                       <button
                         type="button"
                         onClick={() => onViewContacts(summaryToCompanyStub(summary))}
+                        disabled={controlsDisabled}
                         className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
                       >
                         View contacts
@@ -552,16 +571,17 @@ export function S3ContactFetchView({
               <th className="w-8 p-3">
                 <input
                   type="checkbox"
+                  disabled={controlsDisabled}
                   checked={allVisibleSelected}
                   ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
                   onChange={() => onToggleAll(allVisibleSelected ? [] : visibleCompanies.map((c) => c.id))}
-                  className="cursor-pointer"
+                  className="cursor-pointer disabled:cursor-not-allowed"
                 />
               </th>
-              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Contacts" field="contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
+              <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
+              <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
+              <SortableHeader label="Contacts" field="contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
@@ -603,9 +623,10 @@ export function S3ContactFetchView({
                 <td className="p-3">
                   <input
                     type="checkbox"
+                    disabled={controlsDisabled}
                     checked={selectedSet.has(c.id)}
                     onChange={() => onToggleRow(c.id)}
-                    className="cursor-pointer"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                   />
                 </td>
                 <td className="p-3">
@@ -635,7 +656,7 @@ export function S3ContactFetchView({
                     <button
                       type="button"
                       onClick={() => onViewContacts(c)}
-                      disabled={(c.contact_count ?? 0) === 0}
+                      disabled={controlsDisabled || (c.contact_count ?? 0) === 0}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text) disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       View
@@ -644,6 +665,7 @@ export function S3ContactFetchView({
                       type="button"
                       onClick={() => onFetchOne(c, 'both')}
                       title="Sequential chain: Snov first, Apollo follow-up."
+                      disabled={controlsDisabled}
                       className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition"
                       style={{ backgroundColor: 'var(--s3)' }}
                     >
@@ -652,6 +674,7 @@ export function S3ContactFetchView({
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'snov')}
+                      disabled={controlsDisabled}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
                     >
                       Snov
@@ -659,6 +682,7 @@ export function S3ContactFetchView({
                     <button
                       type="button"
                       onClick={() => onFetchOne(c, 'apollo')}
+                      disabled={controlsDisabled}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
                     >
                       Apollo

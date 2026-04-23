@@ -183,6 +183,15 @@ function App() {
     setNotice,
   )
   const refreshPipelineView = pipeline.refreshPipelineView
+  const cancelStaleSelectAllRequests = pipeline.cancelStaleSelectAllRequests
+  const setSelectedCampaignIdAndCancel = useCallback((campaignId: string | null) => {
+    cancelStaleSelectAllRequests()
+    setSelectedCampaignId(campaignId)
+  }, [cancelStaleSelectAllRequests])
+  const setActiveViewAndCancel = useCallback((view: ActiveView) => {
+    cancelStaleSelectAllRequests()
+    setActiveView(view)
+  }, [cancelStaleSelectAllRequests])
 
   const panels = usePanels(setError, setNotice, selectedCampaignId, refreshPipelineView)
 
@@ -288,10 +297,10 @@ function App() {
           // keep current selection
         } else {
           const pilot = campaignRows.items.find((c) => c.name.toLowerCase().includes('pilot'))
-          setSelectedCampaignId((pilot ?? campaignRows.items[0]).id)
+          setSelectedCampaignIdAndCancel((pilot ?? campaignRows.items[0]).id)
         }
       } else if (selectedCampaignId) {
-        setSelectedCampaignId(null)
+        setSelectedCampaignIdAndCancel(null)
       }
     } catch (err) {
       setError(parseApiError(err))
@@ -523,7 +532,7 @@ function App() {
     setError('')
     try {
       const created = await createCampaign({ name, description })
-      setSelectedCampaignId(created.id)
+      setSelectedCampaignIdAndCancel(created.id)
       setNotice(`Campaign "${created.name}" created.`)
       await loadCampaignData()
     } catch (err) {
@@ -538,7 +547,9 @@ function App() {
     setError('')
     try {
       await deleteCampaign(campaignId)
-      if (selectedCampaignId === campaignId) setSelectedCampaignId(null)
+      if (selectedCampaignId === campaignId) {
+        setSelectedCampaignIdAndCancel(null)
+      }
       setNotice('Campaign deleted.')
       await loadCampaignData()
     } catch (err) {
@@ -748,39 +759,41 @@ function App() {
   }, [])
 
   const setCampaignFromUser = useCallback((campaignId: string | null) => {
-    setSelectedCampaignId(campaignId)
+    setSelectedCampaignIdAndCancel(campaignId)
     syncUrlState({ view: activeView, campaignId }, 'push')
-  }, [activeView, syncUrlState])
+  }, [activeView, setSelectedCampaignIdAndCancel, syncUrlState])
 
   const requiresCampaignScope = activeView !== 'dashboard' && activeView !== 'campaigns' && activeView !== 'settings'
 
   const navigateToView = useCallback((view: ActiveView) => {
     const viewNeedsCampaign = view !== 'dashboard' && view !== 'campaigns' && view !== 'settings'
     if (viewNeedsCampaign && !selectedCampaignId) {
-      setActiveView('campaigns')
+      setActiveViewAndCancel('campaigns')
       syncUrlState({ view: 'campaigns', campaignId: selectedCampaignId }, 'push')
       setNotice('Select a campaign first, then continue to the pipeline stage.')
       setNoticeAction({
         label: 'Open Campaigns',
-        onClick: () => setActiveView('campaigns'),
+        onClick: () => {
+          setActiveViewAndCancel('campaigns')
+        },
       })
       return
     }
     setNoticeAction(null)
-    setActiveView(view)
+    setActiveViewAndCancel(view)
     syncUrlState({ view, campaignId: selectedCampaignId }, 'push')
-  }, [selectedCampaignId, syncUrlState])
+  }, [selectedCampaignId, setActiveViewAndCancel, syncUrlState])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
     const onPopState = () => {
       const routeState = parseRouteState(window.location.search)
-      setActiveView(routeState.view)
-      setSelectedCampaignId(routeState.campaignId)
+      setActiveViewAndCancel(routeState.view)
+      setSelectedCampaignIdAndCancel(routeState.campaignId)
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [])
+  }, [setActiveViewAndCancel, setSelectedCampaignIdAndCancel])
 
   useEffect(() => {
     syncUrlState({ view: activeView, campaignId: selectedCampaignId }, 'replace')
@@ -951,10 +964,14 @@ function App() {
             isLoading={pipeline.isFullPipelineLoading}
             offset={pipeline.fullPipelineOffset}
             pageSize={pipeline.fullPipelinePageSize}
+            statusFilter={pipeline.fullPipelineStatusFilter}
+            search={pipeline.fullPipelineSearch}
             isScraping={pipeline.isFullPipelineScraping}
             isSelectingAllMatching={pipeline.isFullPipelineSelectingAllMatching}
             onSelectAllMatching={pipeline.onFullPipelineSelectAllMatching}
             onLetterChange={pipeline.onFullPipelineLetterChange}
+            onStatusFilterChange={pipeline.onFullPipelineStatusFilterChange}
+            onSearchChange={pipeline.onFullPipelineSearchChange}
             onToggleRow={pipeline.onFullPipelineToggleRow}
             onToggleAll={pipeline.onFullPipelineToggleAll}
             onClearSelection={pipeline.onFullPipelineClearSelection}
@@ -983,14 +1000,17 @@ function App() {
             selectedScrapePrompt={scrapePromptMgmt.activeScrapePrompt}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
+            search={pipeline.pipelineSearch}
             isLoading={pipeline.isPipelineLoading}
             isScraping={pipeline.isPipelineScraping}
             isSelectingAll={pipeline.isPipelineSelectingAll}
             stats={stats}
+            companyCounts={companyCounts}
             isResettingStuck={isResettingStuck}
             isDrainingQueue={isDrainingQueue}
             actionState={actionState}
             onScrapeSubFilterChange={pipeline.onPipelineScrapeSubFilterChange}
+            onSearchChange={pipeline.onPipelineSearchChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -1026,6 +1046,7 @@ function App() {
             decisionFilter={pipeline.pipelineDecisionFilter}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
+            search={pipeline.pipelineSearch}
             isLoading={pipeline.isPipelineLoading}
             isAnalyzing={pipeline.isPipelineAnalyzing}
             isSelectingAll={pipeline.isPipelineSelectingAll}
@@ -1036,6 +1057,7 @@ function App() {
             manualLabelActionState={pipeline.pipelineManualLabelActionState}
             stats={stats}
             onDecisionFilterChange={pipeline.onPipelineDecisionFilterChange}
+            onSearchChange={pipeline.onPipelineSearchChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
@@ -1072,12 +1094,14 @@ function App() {
             decisionFilter={pipeline.pipelineDecisionFilter}
             selectedIds={pipeline.pipelineSelectedIds}
             totalMatching={pipeline.pipelineCompanies?.total ?? null}
+            search={pipeline.pipelineSearch}
             isLoading={pipeline.isPipelineLoading}
             isFetching={pipeline.isPipelineFetching}
             isSelectingAll={pipeline.isPipelineSelectingAll}
             contactCounts={contactCounts}
             stats={stats}
             onDecisionFilterChange={pipeline.onPipelineDecisionFilterChange}
+            onSearchChange={pipeline.onPipelineSearchChange}
             onToggleLetter={pipeline.onPipelineToggleLetter}
             onClearLetters={pipeline.onPipelineClearLetters}
             onToggleRow={pipeline.onPipelineToggleRow}
