@@ -110,7 +110,7 @@ def test_create_title_rule_rematches_without_implicit_fetch(sqlite_session: Sess
     company = _make_company(sqlite_session, domain="create-rule.example")
     _make_terminal_contact(sqlite_session, company=company, title="VP Marketing")
 
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         result = create_title_rule(
             TitleMatchRuleCreate(rule_type="include", keywords="marketing, vice president"),
             session=sqlite_session,
@@ -146,7 +146,7 @@ def test_delete_title_rule_rematches_without_implicit_fetch(sqlite_session: Sess
     sqlite_session.refresh(rule_exclude)
     _make_terminal_contact(sqlite_session, company=company, title="Assistant VP Marketing")
 
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         delete_title_rule(rule_id=rule_exclude.id, session=sqlite_session)
 
     assert mock_delay.call_count == 0
@@ -175,7 +175,7 @@ def test_rematch_returns_zero_implicit_fetch_jobs(sqlite_session: Session) -> No
         session=sqlite_session,
     )
 
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         result = rematch_contacts(session=sqlite_session)
 
     assert result.updated >= 0
@@ -219,7 +219,7 @@ def test_queue_title_rule_impact_fetch_scopes_campaign(sqlite_session: Session) 
         session=sqlite_session,
     )
 
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         result = queue_title_rule_impact_fetch(campaign_id=campaign_a.id, session=sqlite_session)
 
     assert result.requested_count == 1
@@ -236,7 +236,7 @@ def test_queue_title_rule_impact_fetch_supports_apollo_source(sqlite_session: Se
         session=sqlite_session,
     )
 
-    with patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         result = queue_title_rule_impact_fetch(campaign_id=campaign.id, source="apollo", session=sqlite_session)
 
     assert result.requested_count == 1
@@ -253,17 +253,13 @@ def test_queue_title_rule_impact_fetch_both_queues_snov_chain_only(sqlite_sessio
         session=sqlite_session,
     )
 
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov_delay,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo_delay,
-    ):
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
         result = queue_title_rule_impact_fetch(campaign_id=campaign.id, source="both", session=sqlite_session)
 
     assert result.requested_count == 1
     assert result.queued_count == 1
     assert result.already_fetching_count == 0
-    assert snov_delay.call_count == 1
-    assert apollo_delay.call_count == 0
+    mock_dispatch.assert_called_once()
     jobs = list(
         sqlite_session.exec(
             select(ContactFetchJob).where(col(ContactFetchJob.company_id) == company.id).order_by(col(ContactFetchJob.created_at))
@@ -271,7 +267,7 @@ def test_queue_title_rule_impact_fetch_both_queues_snov_chain_only(sqlite_sessio
     )
     assert jobs
     assert jobs[-1].provider == "snov"
-    assert jobs[-1].next_provider == "apollo"
+    assert jobs[-1].requested_providers_json == ["snov", "apollo"]
 
 
 def test_queue_title_rule_impact_fetch_both_counts_snov_chain_activity(sqlite_session: Session) -> None:
@@ -286,17 +282,13 @@ def test_queue_title_rule_impact_fetch_both_counts_snov_chain_activity(sqlite_se
     sqlite_session.add(ContactFetchJob(company_id=company.id, provider="apollo", state=ContactFetchJobState.RUNNING, terminal_state=False))
     sqlite_session.commit()
 
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov_delay,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo_delay,
-    ):
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
         result = queue_title_rule_impact_fetch(campaign_id=campaign.id, source="both", session=sqlite_session)
 
     assert result.requested_count == 1
     assert result.queued_count == 0
     assert result.already_fetching_count == 1
-    assert snov_delay.call_count == 0
-    assert apollo_delay.call_count == 0
+    mock_dispatch.assert_called_once()
 
 
 def test_queue_title_rule_impact_fetch_both_updates_active_snov_followup(sqlite_session: Session) -> None:
@@ -312,19 +304,15 @@ def test_queue_title_rule_impact_fetch_both_updates_active_snov_followup(sqlite_
     sqlite_session.commit()
     sqlite_session.refresh(active)
 
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov_delay,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo_delay,
-    ):
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
         result = queue_title_rule_impact_fetch(campaign_id=campaign.id, source="both", session=sqlite_session)
 
     assert result.requested_count == 1
     assert result.queued_count == 0
     assert result.already_fetching_count == 1
-    assert snov_delay.call_count == 0
-    assert apollo_delay.call_count == 0
+    mock_dispatch.assert_called_once()
     sqlite_session.refresh(active)
-    assert active.next_provider == "apollo"
+    assert active.requested_providers_json is None
 
 
 def test_queue_title_rule_impact_fetch_invalid_source_raises_422(sqlite_session: Session) -> None:
@@ -381,7 +369,7 @@ def test_queue_title_rule_impact_fetch_include_stale_queues_company(sqlite_sessi
     sqlite_session.add(contact)
     sqlite_session.commit()
 
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         result = queue_title_rule_impact_fetch(
             campaign_id=campaign.id,
             source="snov",
@@ -431,7 +419,7 @@ def test_queue_title_rule_impact_fetch_force_refresh_queues_company(sqlite_sessi
     sqlite_session.add(contact)
     sqlite_session.commit()
 
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock_delay:
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
         result = queue_title_rule_impact_fetch(
             campaign_id=campaign.id,
             source="snov",

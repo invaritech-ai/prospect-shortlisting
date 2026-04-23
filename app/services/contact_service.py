@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,18 +19,26 @@ from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
 from app.core.logging import log_event
-from app.models import Company, ContactFetchJob, ProspectContact, ProspectContactEmail, TitleMatchRule
-from app.models.pipeline import ContactFetchJobState
+from app.models import Company, ContactFetchJob, ContactProviderAttempt, ProspectContact, ProspectContactEmail, TitleMatchRule
+from app.models.pipeline import ContactFetchJobState, ContactProviderAttemptState
 from app.services.pipeline_service import recompute_contact_stages
 from app.services.pipeline_run_orchestrator import enqueue_s4_for_contact_success
 from app.services.apollo_client import (
     ERR_APOLLO_AUTH_FAILED,
     ERR_APOLLO_CREDENTIALS_MISSING,
+    ERR_APOLLO_FAILED,
+    ERR_APOLLO_RATE_LIMITED,
+    ERR_APOLLO_TIMEOUT,
     ApolloClient,
 )
+from app.services.contact_queue_service import ContactQueueService
+from app.services.contact_runtime_service import ContactRuntimeService
 from app.services.snov_client import (
     ERR_SNOV_AUTH_FAILED,
     ERR_SNOV_CREDENTIALS_MISSING,
+    ERR_SNOV_FAILED,
+    ERR_SNOV_RATE_LIMITED,
+    ERR_SNOV_TIMEOUT,
     SnovClient,
 )
 
@@ -43,6 +52,16 @@ _PERMANENT_ERROR_CODES: frozenset[str] = frozenset({
     ERR_SNOV_AUTH_FAILED,
     ERR_APOLLO_CREDENTIALS_MISSING,
     ERR_APOLLO_AUTH_FAILED,
+})
+_TRANSIENT_ERROR_CODES: frozenset[str] = frozenset({
+    ERR_SNOV_RATE_LIMITED,
+    ERR_SNOV_TIMEOUT,
+    ERR_SNOV_FAILED,
+    ERR_APOLLO_RATE_LIMITED,
+    ERR_APOLLO_TIMEOUT,
+    ERR_APOLLO_FAILED,
+    "provider_unexpected",
+    "contact_job_unexpected",
 })
 
 _snov = SnovClient()
@@ -463,194 +482,784 @@ def compute_title_rule_stats(session: Session) -> dict:
 
 # ── ContactService ────────────────────────────────────────────────────────────
 
+
+@dataclass(frozen=True)
+class ContactProviderFetchResult:
+    contacts: list[dict[str, Any]]
+    title_matched_count: int
+    error_code: str = ""
+    error_message: str = ""
+
+
 class ContactService:
-    def _dispatch_contact_task(self, *, provider: str, job_id: UUID) -> None:
-        from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo
-
-        if provider == "apollo":
-            fetch_contacts_apollo.delay(str(job_id))
-        else:
-            fetch_contacts.delay(str(job_id))
-
-    def _prepare_next_provider_if_needed(
-        self,
-        *,
-        session: Session,
-        job: ContactFetchJob,
-    ) -> tuple[bool, tuple[str, UUID] | None]:
-        next_provider = (job.next_provider or "").strip().lower()
-        if next_provider not in {"snov", "apollo"}:
-            return False, None
-        existing_active = session.exec(
-            select(ContactFetchJob.id).where(
-                col(ContactFetchJob.company_id) == job.company_id,
-                col(ContactFetchJob.provider) == next_provider,
-                col(ContactFetchJob.terminal_state).is_(False),
-            )
-        ).first()
-        if existing_active:
-            return True, None
-        followup = ContactFetchJob(
-            company_id=job.company_id,
-            pipeline_run_id=job.pipeline_run_id,
-            provider=next_provider,
-            next_provider=None,
-        )
-        session.add(followup)
-        session.flush()
-        if followup.id:
-            return True, (next_provider, followup.id)
-        return False, None
+    def __init__(self) -> None:
+        self._runtime = ContactRuntimeService()
+        self._queue = ContactQueueService()
 
     def run_contact_fetch(self, *, engine: Any, job_id: UUID) -> ContactFetchJob | None:
-        return self._run_contact_fetch(engine=engine, job_id=job_id, provider="snov")
+        return self._run_contact_job(engine=engine, job_id=job_id, legacy_provider="snov")
 
     def run_apollo_fetch(self, *, engine: Any, job_id: UUID) -> ContactFetchJob | None:
-        return self._run_contact_fetch(engine=engine, job_id=job_id, provider="apollo")
+        return self._run_contact_job(engine=engine, job_id=job_id, legacy_provider="apollo")
 
-    def _run_contact_fetch(self, *, engine: Any, job_id: UUID, provider: str) -> ContactFetchJob | None:
-        """Fetch contacts for a single ContactFetchJob.
+    def run_snov_attempt(self, *, engine: Any, attempt_id: UUID) -> ContactProviderAttempt | None:
+        return self._run_provider_attempt(engine=engine, attempt_id=attempt_id, provider="snov")
 
-        Returns the job object (terminal), or None if the CAS lock was lost.
-        """
+    def run_apollo_attempt(self, *, engine: Any, attempt_id: UUID) -> ContactProviderAttempt | None:
+        return self._run_provider_attempt(engine=engine, attempt_id=attempt_id, provider="apollo")
+
+    def _run_contact_job(self, *, engine: Any, job_id: UUID, legacy_provider: str) -> ContactFetchJob | None:
         now = utcnow()
         lock_token = str(uuid4())
 
-        # ── Phase 1: CAS-claim + load context ────────────────────────────────
-        with Session(engine) as session:
-            session.execute(
-                sa_update(ContactFetchJob)
-                .where(
-                    col(ContactFetchJob.id) == job_id,
-                    col(ContactFetchJob.terminal_state).is_(False),
-                    col(ContactFetchJob.state).in_([
-                        ContactFetchJobState.QUEUED,
-                        ContactFetchJobState.RUNNING,
-                    ]),
-                    or_(
-                        col(ContactFetchJob.lock_token).is_(None),
-                        col(ContactFetchJob.lock_expires_at) < now,
-                    ),
-                )
-                .values(
-                    state=ContactFetchJobState.RUNNING,
-                    attempt_count=col(ContactFetchJob.attempt_count) + 1,
+        try:
+            with Session(engine) as session:
+                job = self._claim_contact_job(
+                    session=session,
+                    job_id=job_id,
                     lock_token=lock_token,
-                    lock_expires_at=now + _CONTACT_LOCK_TTL,
-                    last_error_code=None,
-                    last_error_message=None,
-                    updated_at=now,
+                    now=now,
                 )
+                if job is None:
+                    log_event(logger, "contact_fetch_skipped_not_owner", job_id=str(job_id))
+                    return None
+
+                company = session.get(Company, job.company_id)
+                if company is None:
+                    return self._mark_job_failure(
+                        engine=engine,
+                        job_id=job_id,
+                        lock_token=lock_token,
+                        error_code="contact_company_missing",
+                        error_message="Company not found.",
+                    )
+
+                requested_providers = self._requested_providers(job=job, legacy_provider=legacy_provider)
+                if job.requested_providers_json != requested_providers:
+                    job.requested_providers_json = requested_providers
+                if job.provider != requested_providers[0]:
+                    job.provider = requested_providers[0]
+                self._ensure_provider_attempts(session=session, job=job, requested_providers=requested_providers)
+
+                attempts = list(
+                    session.exec(
+                        select(ContactProviderAttempt)
+                        .where(col(ContactProviderAttempt.contact_fetch_job_id) == job.id)
+                        .order_by(col(ContactProviderAttempt.sequence_index), col(ContactProviderAttempt.created_at))
+                    )
+                )
+                running_attempt = any(
+                    attempt.state == ContactProviderAttemptState.RUNNING and not attempt.terminal_state
+                    for attempt in attempts
+                )
+                ready_attempts = [
+                    attempt
+                    for attempt in attempts
+                    if (
+                        not attempt.terminal_state
+                        and attempt.state in {
+                            ContactProviderAttemptState.QUEUED,
+                            ContactProviderAttemptState.DEFERRED,
+                        }
+                        and (attempt.next_retry_at is None or attempt.next_retry_at <= now)
+                    )
+                ]
+                waiting_on_future_retry = any(
+                    not attempt.terminal_state
+                    and attempt.state == ContactProviderAttemptState.DEFERRED
+                    and attempt.next_retry_at is not None
+                    and attempt.next_retry_at > now
+                    for attempt in attempts
+                )
+
+                if ready_attempts:
+                    self._release_contact_job(
+                        session=session,
+                        job=job,
+                        state=ContactFetchJobState.RUNNING,
+                        error_code=None,
+                        error_message=None,
+                    )
+                    self._queue.refresh_batch_state(session, batch_id=job.contact_fetch_batch_id)
+                    session.commit()
+                    session.refresh(job)
+                    for attempt in ready_attempts:
+                        self._dispatch_provider_attempt(attempt=attempt)
+                    return job
+
+                if running_attempt or waiting_on_future_retry:
+                    self._release_contact_job(
+                        session=session,
+                        job=job,
+                        state=ContactFetchJobState.RUNNING if running_attempt else ContactFetchJobState.QUEUED,
+                        error_code=None,
+                        error_message=None,
+                    )
+                    self._queue.refresh_batch_state(session, batch_id=job.contact_fetch_batch_id)
+                    session.commit()
+                    session.refresh(job)
+                    return job
+
+                finalized_job = self._finalize_contact_job(session=session, job=job)
+                session.commit()
+                session.refresh(finalized_job)
+
+            if finalized_job.state == ContactFetchJobState.SUCCEEDED:
+                enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=finalized_job.id)
+            return finalized_job
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "contact_job_unexpected_error", job_id=str(job_id), error=str(exc))
+            return self._mark_job_failure(
+                engine=engine,
+                job_id=job_id,
+                lock_token=lock_token,
+                error_code="contact_job_unexpected",
+                error_message=str(exc),
             )
-            session.commit()
-            job = session.get(ContactFetchJob, job_id)
-            if not job or job.lock_token != lock_token:
-                log_event(logger, "contact_fetch_skipped_not_owner", job_id=str(job_id))
-                return None
 
-            job_provider = str(getattr(job, "provider", provider) or provider).lower()
-            if job_provider not in {"snov", "apollo"}:
-                return self._fail_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    error_code="contact_provider_invalid",
-                    error_message=f"Unsupported contact provider: {job_provider}",
-                    attempt_count=job.attempt_count,
-                    max_attempts=1,
+    def _run_provider_attempt(
+        self,
+        *,
+        engine: Any,
+        attempt_id: UUID,
+        provider: str,
+    ) -> ContactProviderAttempt | None:
+        now = utcnow()
+        lock_token = str(uuid4())
+        try:
+            with Session(engine) as session:
+                attempt = self._claim_provider_attempt(
+                    session=session,
+                    attempt_id=attempt_id,
+                    provider=provider,
+                    lock_token=lock_token,
+                    now=now,
+                )
+                if attempt is None:
+                    return None
+
+                job = session.get(ContactFetchJob, attempt.contact_fetch_job_id)
+                if job is None:
+                    return self._fail_provider_attempt(
+                        engine=engine,
+                        attempt_id=attempt_id,
+                        lock_token=lock_token,
+                        error_code="contact_job_missing",
+                        error_message="Parent contact fetch job not found.",
+                    )
+
+                company = session.get(Company, job.company_id)
+                if company is None:
+                    return self._fail_provider_attempt(
+                        engine=engine,
+                        attempt_id=attempt_id,
+                        lock_token=lock_token,
+                        error_code="contact_company_missing",
+                        error_message="Company not found.",
+                    )
+
+                include_rules, exclude_words = load_title_rules(session)
+                apollo_title_filter = (
+                    _extract_apollo_title_filter(session) if provider == "apollo" else []
                 )
 
+            decision = self._runtime.claim_provider_slot(provider)
+            if decision.wait_seconds > 0:
+                return self._defer_provider_attempt(
+                    engine=engine,
+                    attempt_id=attempt_id,
+                    lock_token=lock_token,
+                    error_code=f"{provider}_backpressure",
+                    error_message=decision.reason or "Provider is throttled.",
+                    deferred_reason=decision.reason or "provider_backpressure",
+                    delay_seconds=decision.wait_seconds,
+                )
+
+            if provider == "apollo":
+                result = self._fetch_apollo_contacts(
+                    domain=company.domain,
+                    include_rules=include_rules,
+                    exclude_words=exclude_words,
+                    apollo_title_filter=apollo_title_filter,
+                )
+            else:
+                result = self._fetch_snov_contacts(
+                    domain=company.domain,
+                    include_rules=include_rules,
+                    exclude_words=exclude_words,
+                )
+
+            if result.error_code:
+                if result.error_code in _PERMANENT_ERROR_CODES:
+                    return self._fail_provider_attempt(
+                        engine=engine,
+                        attempt_id=attempt_id,
+                        lock_token=lock_token,
+                        error_code=result.error_code,
+                        error_message=result.error_message,
+                    )
+                delay_seconds = self._runtime.record_provider_error(provider, result.error_code)
+                return self._defer_provider_attempt(
+                    engine=engine,
+                    attempt_id=attempt_id,
+                    lock_token=lock_token,
+                    error_code=result.error_code,
+                    error_message=result.error_message,
+                    deferred_reason=result.error_code,
+                    delay_seconds=delay_seconds,
+                )
+
+            self._runtime.record_provider_success(provider)
+            contacts_written = self._persist_contacts(
+                engine=engine,
+                job_id=job.id,
+                company_id=company.id,
+                provider=provider,
+                contacts_to_write=result.contacts,
+            )
+            return self._complete_provider_attempt(
+                engine=engine,
+                attempt_id=attempt_id,
+                lock_token=lock_token,
+                contacts_found=contacts_written,
+                title_matched_count=result.title_matched_count,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "contact_provider_attempt_unexpected_error", attempt_id=str(attempt_id), error=str(exc))
+            delay_seconds = self._runtime.record_provider_error(provider, "provider_unexpected")
+            return self._defer_provider_attempt(
+                engine=engine,
+                attempt_id=attempt_id,
+                lock_token=lock_token,
+                error_code="provider_unexpected",
+                error_message=str(exc),
+                deferred_reason="provider_unexpected",
+                delay_seconds=delay_seconds,
+            )
+
+    def _claim_contact_job(
+        self,
+        *,
+        session: Session,
+        job_id: UUID,
+        lock_token: str,
+        now: datetime,
+    ) -> ContactFetchJob | None:
+        session.execute(
+            sa_update(ContactFetchJob)
+            .where(
+                col(ContactFetchJob.id) == job_id,
+                col(ContactFetchJob.terminal_state).is_(False),
+                col(ContactFetchJob.state).in_([
+                    ContactFetchJobState.QUEUED,
+                    ContactFetchJobState.RUNNING,
+                ]),
+                or_(
+                    col(ContactFetchJob.lock_token).is_(None),
+                    col(ContactFetchJob.lock_expires_at) < now,
+                ),
+            )
+            .values(
+                state=ContactFetchJobState.RUNNING,
+                attempt_count=col(ContactFetchJob.attempt_count) + 1,
+                lock_token=lock_token,
+                lock_expires_at=now + _CONTACT_LOCK_TTL,
+                last_error_code=None,
+                last_error_message=None,
+                updated_at=now,
+            )
+        )
+        session.commit()
+        job = session.get(ContactFetchJob, job_id)
+        if job is None or job.lock_token != lock_token:
+            return None
         if not job.started_at:
             job.started_at = now
             session.add(job)
             session.commit()
+            session.refresh(job)
+        return job
 
-            company = session.get(Company, job.company_id)
-            if not company:
-                return self._fail_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    error_code="contact_company_missing",
-                    error_message="Company not found.",
-                    attempt_count=job.attempt_count,
-                    max_attempts=job.max_attempts,
-                )
-
-            domain = company.domain
-            company_id = company.id
-            include_rules, exclude_words = load_title_rules(session)
-            apollo_title_filter = (
-                _extract_apollo_title_filter(session) if job_provider == "apollo" else []
+    def _claim_provider_attempt(
+        self,
+        *,
+        session: Session,
+        attempt_id: UUID,
+        provider: str,
+        lock_token: str,
+        now: datetime,
+    ) -> ContactProviderAttempt | None:
+        session.execute(
+            sa_update(ContactProviderAttempt)
+            .where(
+                col(ContactProviderAttempt.id) == attempt_id,
+                col(ContactProviderAttempt.provider) == provider,
+                col(ContactProviderAttempt.terminal_state).is_(False),
+                col(ContactProviderAttempt.state).in_([
+                    ContactProviderAttemptState.QUEUED,
+                    ContactProviderAttemptState.DEFERRED,
+                    ContactProviderAttemptState.RUNNING,
+                ]),
+                or_(
+                    col(ContactProviderAttempt.lock_token).is_(None),
+                    col(ContactProviderAttempt.lock_expires_at) < now,
+                ),
             )
-        # ── session closed ────────────────────────────────────────────────────
+            .values(
+                state=ContactProviderAttemptState.RUNNING,
+                attempt_count=col(ContactProviderAttempt.attempt_count) + 1,
+                lock_token=lock_token,
+                lock_expires_at=now + _CONTACT_LOCK_TTL,
+                deferred_reason=None,
+                next_retry_at=None,
+                last_error_code=None,
+                last_error_message=None,
+                updated_at=now,
+            )
+        )
+        session.commit()
+        attempt = session.get(ContactProviderAttempt, attempt_id)
+        if attempt is None or attempt.lock_token != lock_token:
+            return None
+        if not attempt.started_at:
+            attempt.started_at = now
+            session.add(attempt)
+            session.commit()
+            session.refresh(attempt)
+        return attempt
 
-        all_prospects: list[dict] = []
-        contacts_to_write: list[dict] = []
-        fetch_error_code = ""
+    def _requested_providers(self, *, job: ContactFetchJob, legacy_provider: str) -> list[str]:
+        allowed = {"snov", "apollo"}
+        requested = [
+            str(provider).strip().lower()
+            for provider in (job.requested_providers_json or [])
+            if str(provider).strip().lower() in allowed
+        ]
+        if requested:
+            return list(dict.fromkeys(requested))
+
+        primary = str(getattr(job, "provider", legacy_provider) or legacy_provider).strip().lower()
+        next_provider = str(getattr(job, "next_provider", "") or "").strip().lower()
+        requested = []
+        if primary in allowed:
+            requested.append(primary)
+        if next_provider in allowed and next_provider not in requested:
+            requested.append(next_provider)
+        if not requested:
+            requested.append(legacy_provider)
+        return requested
+
+    def _ensure_provider_attempts(
+        self,
+        *,
+        session: Session,
+        job: ContactFetchJob,
+        requested_providers: list[str],
+    ) -> None:
+        existing = {
+            attempt.provider: attempt
+            for attempt in session.exec(
+                select(ContactProviderAttempt).where(
+                    col(ContactProviderAttempt.contact_fetch_job_id) == job.id
+                )
+            )
+        }
+        for index, provider in enumerate(requested_providers):
+            if provider in existing:
+                continue
+            session.add(
+                ContactProviderAttempt(
+                    contact_fetch_job_id=job.id,
+                    provider=provider,
+                    sequence_index=index,
+                    max_attempts=max(5, job.max_attempts),
+                )
+            )
+        session.commit()
+
+    def _release_contact_job(
+        self,
+        *,
+        session: Session,
+        job: ContactFetchJob,
+        state: ContactFetchJobState,
+        error_code: str | None,
+        error_message: str | None,
+    ) -> None:
+        job.state = state
+        job.terminal_state = False
+        job.lock_token = None
+        job.lock_expires_at = None
+        job.last_error_code = error_code
+        job.last_error_message = error_message
+        job.updated_at = utcnow()
+        session.add(job)
+
+    def _finalize_contact_job(self, *, session: Session, job: ContactFetchJob) -> ContactFetchJob:
+        attempts = list(
+            session.exec(
+                select(ContactProviderAttempt).where(
+                    col(ContactProviderAttempt.contact_fetch_job_id) == job.id
+                )
+            )
+        )
+        contacts_found = session.exec(
+            select(func.count(ProspectContact.id)).where(
+                col(ProspectContact.contact_fetch_job_id) == job.id
+            )
+        ).one() or 0
+        title_matched_count = session.exec(
+            select(func.count(ProspectContact.id)).where(
+                col(ProspectContact.contact_fetch_job_id) == job.id,
+                col(ProspectContact.title_match).is_(True),
+            )
+        ).one() or 0
+        any_success = any(attempt.state == ContactProviderAttemptState.SUCCEEDED for attempt in attempts)
+        first_error = next(
+            (
+                (attempt.last_error_code, attempt.last_error_message)
+                for attempt in attempts
+                if attempt.last_error_code
+            ),
+            (None, None),
+        )
+        if any_success:
+            job.state = ContactFetchJobState.SUCCEEDED
+            job.last_error_code = None
+            job.last_error_message = None
+        elif any(attempt.state == ContactProviderAttemptState.DEAD for attempt in attempts):
+            job.state = ContactFetchJobState.DEAD
+            job.last_error_code = first_error[0]
+            job.last_error_message = first_error[1]
+        elif any(attempt.state == ContactProviderAttemptState.FAILED for attempt in attempts):
+            job.state = ContactFetchJobState.FAILED
+            job.last_error_code = first_error[0]
+            job.last_error_message = first_error[1]
+        else:
+            job.state = ContactFetchJobState.SUCCEEDED
+            job.last_error_code = None
+            job.last_error_message = None
+        job.terminal_state = True
+        job.contacts_found = int(contacts_found)
+        job.title_matched_count = int(title_matched_count)
+        job.finished_at = utcnow()
+        job.updated_at = utcnow()
+        job.lock_token = None
+        job.lock_expires_at = None
+        session.add(job)
+        recompute_contact_stages(session, company_ids=[job.company_id])
+        self._queue.refresh_batch_state(session, batch_id=job.contact_fetch_batch_id)
+        return job
+
+    def _mark_job_failure(
+        self,
+        *,
+        engine: Any,
+        job_id: UUID,
+        lock_token: str,
+        error_code: str,
+        error_message: str,
+    ) -> ContactFetchJob | None:
+        with Session(engine) as session:
+            job = session.get(ContactFetchJob, job_id)
+            if job is None or job.lock_token != lock_token:
+                return job
+            if job.attempt_count >= job.max_attempts or error_code in _PERMANENT_ERROR_CODES:
+                job.state = (
+                    ContactFetchJobState.FAILED
+                    if error_code in _PERMANENT_ERROR_CODES
+                    else ContactFetchJobState.DEAD
+                )
+                job.terminal_state = True
+                job.finished_at = utcnow()
+            else:
+                job.state = ContactFetchJobState.QUEUED
+                job.terminal_state = False
+            job.lock_token = None
+            job.lock_expires_at = None
+            job.last_error_code = error_code
+            job.last_error_message = error_message[:4000]
+            job.updated_at = utcnow()
+            session.add(job)
+            self._queue.refresh_batch_state(session, batch_id=job.contact_fetch_batch_id)
+            session.commit()
+            session.refresh(job)
+            return job
+
+    def _complete_provider_attempt(
+        self,
+        *,
+        engine: Any,
+        attempt_id: UUID,
+        lock_token: str,
+        contacts_found: int,
+        title_matched_count: int,
+    ) -> ContactProviderAttempt | None:
+        dispatch_job_id: UUID | None = None
+        dispatch_provider: str | None = None
+        with Session(engine) as session:
+            attempt = session.get(ContactProviderAttempt, attempt_id)
+            if attempt is None or attempt.lock_token != lock_token:
+                return attempt
+            attempt.state = ContactProviderAttemptState.SUCCEEDED
+            attempt.terminal_state = True
+            attempt.contacts_found = contacts_found
+            attempt.title_matched_count = title_matched_count
+            attempt.deferred_reason = None
+            attempt.next_retry_at = None
+            attempt.last_error_code = None
+            attempt.last_error_message = None
+            attempt.lock_token = None
+            attempt.lock_expires_at = None
+            attempt.finished_at = utcnow()
+            attempt.updated_at = utcnow()
+            session.add(attempt)
+            job = session.get(ContactFetchJob, attempt.contact_fetch_job_id)
+            if job is not None:
+                dispatch_job_id = job.id
+                dispatch_provider = job.provider
+            session.commit()
+            session.refresh(attempt)
+        if dispatch_job_id and dispatch_provider:
+            self._dispatch_contact_task(provider=dispatch_provider, job_id=dispatch_job_id)
+        return attempt
+
+    def _defer_provider_attempt(
+        self,
+        *,
+        engine: Any,
+        attempt_id: UUID,
+        lock_token: str,
+        error_code: str,
+        error_message: str,
+        deferred_reason: str,
+        delay_seconds: int,
+    ) -> ContactProviderAttempt | None:
+        dispatch_job_id: UUID | None = None
+        dispatch_provider: str | None = None
+        with Session(engine) as session:
+            attempt = session.get(ContactProviderAttempt, attempt_id)
+            if attempt is None or attempt.lock_token != lock_token:
+                return attempt
+            if attempt.attempt_count >= attempt.max_attempts:
+                attempt.state = ContactProviderAttemptState.DEAD
+                attempt.terminal_state = True
+                attempt.finished_at = utcnow()
+            else:
+                attempt.state = ContactProviderAttemptState.DEFERRED
+                attempt.terminal_state = False
+                attempt.next_retry_at = utcnow() + timedelta(seconds=max(1, delay_seconds))
+            attempt.deferred_reason = deferred_reason
+            attempt.last_error_code = error_code
+            attempt.last_error_message = error_message[:4000]
+            attempt.lock_token = None
+            attempt.lock_expires_at = None
+            attempt.updated_at = utcnow()
+            session.add(attempt)
+            job = session.get(ContactFetchJob, attempt.contact_fetch_job_id)
+            if job is not None:
+                dispatch_job_id = job.id
+                dispatch_provider = job.provider
+            session.commit()
+            session.refresh(attempt)
+        if dispatch_job_id and dispatch_provider:
+            self._dispatch_contact_task(provider=dispatch_provider, job_id=dispatch_job_id)
+        return attempt
+
+    def _fail_provider_attempt(
+        self,
+        *,
+        engine: Any,
+        attempt_id: UUID,
+        lock_token: str,
+        error_code: str,
+        error_message: str,
+    ) -> ContactProviderAttempt | None:
+        dispatch_job_id: UUID | None = None
+        dispatch_provider: str | None = None
+        with Session(engine) as session:
+            attempt = session.get(ContactProviderAttempt, attempt_id)
+            if attempt is None or attempt.lock_token != lock_token:
+                return attempt
+            attempt.state = (
+                ContactProviderAttemptState.FAILED
+                if error_code in _PERMANENT_ERROR_CODES
+                else ContactProviderAttemptState.DEAD
+            )
+            attempt.terminal_state = True
+            attempt.deferred_reason = None
+            attempt.next_retry_at = None
+            attempt.last_error_code = error_code
+            attempt.last_error_message = error_message[:4000]
+            attempt.lock_token = None
+            attempt.lock_expires_at = None
+            attempt.finished_at = utcnow()
+            attempt.updated_at = utcnow()
+            session.add(attempt)
+            job = session.get(ContactFetchJob, attempt.contact_fetch_job_id)
+            if job is not None:
+                dispatch_job_id = job.id
+                dispatch_provider = job.provider
+            session.commit()
+            session.refresh(attempt)
+        if dispatch_job_id and dispatch_provider:
+            self._dispatch_contact_task(provider=dispatch_provider, job_id=dispatch_job_id)
+        return attempt
+
+    def _persist_contacts(
+        self,
+        *,
+        engine: Any,
+        job_id: UUID,
+        company_id: UUID,
+        provider: str,
+        contacts_to_write: list[dict[str, Any]],
+    ) -> int:
         contacts_written = 0
+        with Session(engine) as session:
+            job = session.get(ContactFetchJob, job_id)
+            if job is None:
+                return 0
+            for contact_entry in contacts_to_write:
+                existing = _find_existing_contact(
+                    session=session,
+                    company_id=company_id,
+                    contact_entry=contact_entry,
+                )
+                if existing:
+                    existing.contact_fetch_job_id = job_id
+                    existing.first_name = contact_entry["first_name"] or existing.first_name
+                    existing.last_name = contact_entry["last_name"] or existing.last_name
+                    existing.title = contact_entry["title"] or existing.title
+                    existing.title_match = contact_entry["title_match"]
+                    existing.linkedin_url = contact_entry["linkedin_url"] or existing.linkedin_url
+                    existing.provider_email_status = (
+                        contact_entry["provider_email_status"] or existing.provider_email_status
+                    )
+                    if contact_entry["snov_confidence"] is not None:
+                        existing.snov_confidence = contact_entry["snov_confidence"]
+                    if contact_entry["snov_prospect_raw"] is not None:
+                        existing.snov_prospect_raw = contact_entry["snov_prospect_raw"]
+                    if contact_entry.get("apollo_prospect_raw") is not None:
+                        existing.apollo_prospect_raw = contact_entry.get("apollo_prospect_raw")
+                    if contact_entry["snov_email_raw"] is not None:
+                        existing.snov_email_raw = contact_entry["snov_email_raw"]
+                    if existing.email:
+                        _upsert_contact_email(
+                            session=session,
+                            contact=existing,
+                            email=existing.email,
+                            source=existing.source or provider,
+                            provider_email_status=existing.provider_email_status,
+                            set_primary_if_missing=False,
+                        )
+                    _upsert_contact_email(
+                        session=session,
+                        contact=existing,
+                        email=contact_entry.get("email"),
+                        source=provider,
+                        provider_email_status=contact_entry.get("provider_email_status"),
+                    )
+                    existing.source = provider
+                    existing.updated_at = utcnow()
+                    session.add(existing)
+                else:
+                    new_contact = ProspectContact(
+                        company_id=company_id,
+                        contact_fetch_job_id=job_id,
+                        source=provider,
+                        first_name=contact_entry["first_name"],
+                        last_name=contact_entry["last_name"],
+                        title=contact_entry["title"],
+                        title_match=contact_entry["title_match"],
+                        linkedin_url=contact_entry["linkedin_url"],
+                        email=contact_entry["email"],
+                        provider_email_status=contact_entry["provider_email_status"],
+                        verification_status=contact_entry["verification_status"],
+                        snov_confidence=contact_entry["snov_confidence"],
+                        snov_prospect_raw=contact_entry["snov_prospect_raw"],
+                        apollo_prospect_raw=contact_entry.get("apollo_prospect_raw"),
+                        snov_email_raw=contact_entry["snov_email_raw"],
+                    )
+                    session.add(new_contact)
+                    session.flush()
+                    _upsert_contact_email(
+                        session=session,
+                        contact=new_contact,
+                        email=contact_entry.get("email"),
+                        source=provider,
+                        provider_email_status=contact_entry.get("provider_email_status"),
+                    )
+                contacts_written += 1
+            session.commit()
+        return contacts_written
+
+    def _fetch_apollo_contacts(
+        self,
+        *,
+        domain: str,
+        include_rules: list[list[str]],
+        exclude_words: list[str],
+        apollo_title_filter: list[str],
+    ) -> ContactProviderFetchResult:
+        all_prospects: list[dict[str, Any]] = []
+        contacts_to_write: list[dict[str, Any]] = []
         title_matched_count = 0
 
-        if job_provider == "apollo":
-            for page in range(1, 4):
-                prospects = _apollo.search_people(
-                    domain,
-                    page=page,
-                    person_titles=apollo_title_filter if apollo_title_filter else None,
-                )
-                apollo_err = _apollo.last_error_code
-                if not prospects:
-                    if apollo_err in _PERMANENT_ERROR_CODES:
-                        return self._fail_job(
-                            engine=engine, job_id=job_id, lock_token=lock_token,
-                            error_code=apollo_err,
-                            error_message=f"Apollo search failed: {apollo_err}",
-                            attempt_count=1, max_attempts=1,
-                        )
-                    break
-                all_prospects.extend(prospects)
-                if len(prospects) < 100:
-                    break
-
-            if not all_prospects:
-                if _apollo.last_error_code in _PERMANENT_ERROR_CODES:
-                    return self._fail_job(
-                        engine=engine, job_id=job_id, lock_token=lock_token,
-                        error_code=_apollo.last_error_code,
-                        error_message=f"Apollo search failed: {_apollo.last_error_code}",
-                        attempt_count=1, max_attempts=1,
+        for page in range(1, 4):
+            prospects = _apollo.search_people(
+                domain,
+                page=page,
+                person_titles=apollo_title_filter if apollo_title_filter else None,
+            )
+            apollo_err = _apollo.last_error_code
+            if not prospects:
+                if apollo_err:
+                    return ContactProviderFetchResult(
+                        contacts=[],
+                        title_matched_count=0,
+                        error_code=apollo_err,
+                        error_message=f"Apollo search failed: {apollo_err}",
                     )
+                break
+            all_prospects.extend(prospects)
+            if len(prospects) < 100:
+                break
+
+        if not all_prospects:
+            return ContactProviderFetchResult(contacts=[], title_matched_count=0)
+
+        for prospect in all_prospects:
+            first_name = str(prospect.get("first_name") or "").strip()
+            last_name = str(prospect.get("last_name") or prospect.get("last_name_obfuscated") or "").strip()
+            title = str(prospect.get("title") or prospect.get("position") or "").strip()
+            linkedin_url = str(prospect.get("linkedin_url") or "").strip() or None
+            title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
+            if not title_matched:
+                continue
+            title_matched_count += 1
+
+            person_id = str(prospect.get("id") or "").strip()
+            if not person_id or not prospect.get("has_email"):
+                continue
+
+            person_details = _apollo.reveal_email(person_id)
+            if not person_details:
                 if _apollo.last_error_code:
-                    return self._fail_job(
-                        engine=engine, job_id=job_id, lock_token=lock_token,
+                    return ContactProviderFetchResult(
+                        contacts=[],
+                        title_matched_count=title_matched_count,
                         error_code=_apollo.last_error_code,
-                        error_message=f"Apollo search failed: {_apollo.last_error_code}",
-                        attempt_count=1, max_attempts=3,
+                        error_message=f"Apollo reveal failed: {_apollo.last_error_code}",
                     )
-                return self._complete_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    contacts_found=0, title_matched_count=0,
-                )
+                continue
 
-            for prospect in all_prospects:
-                first_name = str(prospect.get("first_name") or "").strip()
-                last_name = str(prospect.get("last_name") or prospect.get("last_name_obfuscated") or "").strip()
-                title = str(prospect.get("title") or prospect.get("position") or "").strip()
-                linkedin_url = str(prospect.get("linkedin_url") or "").strip() or None
-                title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
-                if not title_matched:
-                    continue
-                title_matched_count += 1
+            email = str(person_details.get("email") or "").strip() or None
+            if not email:
+                continue
 
-                person_id = str(prospect.get("id") or "").strip()
-                if not person_id or not prospect.get("has_email"):
-                    continue
-
-                person_details = _apollo.reveal_email(person_id)
-                if not person_details:
-                    continue
-
-                email = str(person_details.get("email") or "").strip() or None
-                if not email:
-                    continue
-
-                contact_entry = {
+            contacts_to_write.append(
+                {
                     "first_name": str(person_details.get("first_name") or first_name).strip(),
                     "last_name": str(person_details.get("last_name") or last_name).strip(),
                     "title": str(person_details.get("title") or title).strip() or None,
@@ -664,297 +1273,135 @@ class ContactService:
                     "apollo_prospect_raw": prospect,
                     "snov_email_raw": None,
                 }
-                contacts_to_write.append(contact_entry)
-        else:
-            # 2a. Free check — skip domains with 0 known emails
-            count, err = _snov.get_domain_email_count(domain)
-            if err in _PERMANENT_ERROR_CODES:
-                return self._fail_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    error_code=err, error_message=f"Snov credentials error: {err}",
-                    attempt_count=1, max_attempts=1,  # force terminal immediately
-                )
+            )
+
+        return ContactProviderFetchResult(
+            contacts=contacts_to_write,
+            title_matched_count=title_matched_count,
+        )
+
+    def _fetch_snov_contacts(
+        self,
+        *,
+        domain: str,
+        include_rules: list[list[str]],
+        exclude_words: list[str],
+    ) -> ContactProviderFetchResult:
+        count, err = _snov.get_domain_email_count(domain)
+        if err:
+            return ContactProviderFetchResult(
+                contacts=[],
+                title_matched_count=0,
+                error_code=err,
+                error_message=f"Snov domain count failed: {err}",
+            )
+        if count == 0:
+            log_event(logger, "contact_fetch_no_emails", domain=domain)
+            return ContactProviderFetchResult(contacts=[], title_matched_count=0)
+
+        all_prospects: list[dict[str, Any]] = []
+        fetch_error_code = ""
+        for page in range(1, 3):
+            prospects, total, err = _snov.search_prospects(domain, page=page)
             if err:
-                return self._fail_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    error_code=err, error_message=f"Snov domain count failed: {err}",
-                    attempt_count=1, max_attempts=3,
-                )
+                fetch_error_code = err
+                log_event(logger, "contact_fetch_prospects_error", domain=domain, page=page, err=err)
+                break
+            all_prospects.extend(prospects)
+            if len(all_prospects) >= total or len(prospects) == 0:
+                break
 
-            if count == 0:
-                log_event(logger, "contact_fetch_no_emails", domain=domain)
-                return self._complete_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    contacts_found=0, title_matched_count=0,
-                )
+        if not all_prospects and fetch_error_code:
+            return ContactProviderFetchResult(
+                contacts=[],
+                title_matched_count=0,
+                error_code=fetch_error_code,
+                error_message=f"Snov prospects failed: {fetch_error_code}",
+            )
 
-            # 2b. Fetch prospects (paginate up to 2 pages = 40 prospects)
-            for page in range(1, 3):
-                prospects, total, err = _snov.search_prospects(domain, page=page)
-                if err:
-                    fetch_error_code = err
-                    log_event(logger, "contact_fetch_prospects_error", domain=domain, page=page, err=err)
-                    break
-                all_prospects.extend(prospects)
-                if len(all_prospects) >= total or len(prospects) == 0:
-                    break
+        contacts_to_write: list[dict[str, Any]] = []
+        title_matched_count = 0
+        for prospect in all_prospects:
+            first_name = str(prospect.get("first_name") or "").strip()
+            last_name = str(prospect.get("last_name") or "").strip()
+            title = str(prospect.get("position") or "").strip()
+            linkedin_url = str(prospect.get("source_page") or "").strip() or None
+            search_emails_url = str(prospect.get("search_emails_start") or "")
+            prospect_hash = search_emails_url.rstrip("/").rsplit("/", 1)[-1] if search_emails_url else ""
+            title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
+            if title_matched:
+                title_matched_count += 1
 
-            if not all_prospects:
-                if fetch_error_code in _PERMANENT_ERROR_CODES:
-                    return self._fail_job(
-                        engine=engine, job_id=job_id, lock_token=lock_token,
-                        error_code=fetch_error_code, error_message=f"Snov prospects failed: {fetch_error_code}",
-                        attempt_count=1, max_attempts=1,
+            contact_entry: dict[str, Any] = {
+                "first_name": first_name,
+                "last_name": last_name,
+                "title": title or None,
+                "title_match": title_matched,
+                "linkedin_url": linkedin_url,
+                "email": None,
+                "provider_email_status": None,
+                "verification_status": "unverified",
+                "snov_confidence": None,
+                "snov_prospect_raw": prospect,
+                "apollo_prospect_raw": None,
+                "snov_email_raw": None,
+            }
+            if title_matched and prospect_hash:
+                emails, email_err = _snov.search_prospect_email(prospect_hash)
+                if email_err:
+                    return ContactProviderFetchResult(
+                        contacts=[],
+                        title_matched_count=title_matched_count,
+                        error_code=email_err,
+                        error_message=f"Snov email search failed: {email_err}",
                     )
-                return self._complete_job(
-                    engine=engine, job_id=job_id, lock_token=lock_token,
-                    contacts_found=0, title_matched_count=0,
-                )
+                if emails:
+                    best = emails[0]
+                    contact_entry["email"] = str(best.get("email") or "").strip() or None
+                    contact_entry["provider_email_status"] = str(best.get("smtp_status") or "unknown").lower()
+                    contact_entry["snov_email_raw"] = emails
 
-            # 2c. Collect matched contacts and fetch their emails
-            for prospect in all_prospects:
-                first_name = str(prospect.get("first_name") or "").strip()
-                last_name = str(prospect.get("last_name") or "").strip()
-                title = str(prospect.get("position") or "").strip()
-                linkedin_url = str(prospect.get("source_page") or "").strip() or None
-
-                # Hash is embedded in the search_emails_start URL path, e.g.
-                # ".../search-emails/start/abc123def456"
-                search_emails_url = str(prospect.get("search_emails_start") or "")
-                prospect_hash = search_emails_url.rstrip("/").rsplit("/", 1)[-1] if search_emails_url else ""
-
-                title_matched = match_title(title, include_rules, exclude_words) if include_rules else False
-                if title_matched:
-                    title_matched_count += 1
-
-                contact_entry: dict = {
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "title": title or None,
-                    "title_match": title_matched,
-                    "linkedin_url": linkedin_url,
-                    "email": None,
-                    "provider_email_status": None,
-                    "verification_status": "unverified",
-                    "snov_confidence": None,
-                    "snov_prospect_raw": prospect,
-                    "apollo_prospect_raw": None,
-                    "snov_email_raw": None,
-                }
-
-                # 2d. Fetch email for title-matched prospects.
-                #   Step 1: Snov database lookup (free if no result).
-                #   Step 2: If empty, email finder by name+domain (1 credit if found).
-                if title_matched and prospect_hash:
-                    emails, email_err = _snov.search_prospect_email(prospect_hash)
-                    if not email_err and emails:
-                        best = emails[0]
-                        contact_entry["email"] = str(best.get("email") or "").strip() or None
-                        contact_entry["provider_email_status"] = str(best.get("smtp_status") or "unknown").lower()
-                        contact_entry["snov_email_raw"] = emails
-
-                # Fallback: guess email by name+domain if lookup returned nothing
-                if title_matched and not contact_entry["email"] and first_name and last_name:
-                    finder_emails, finder_err = _snov.find_email_by_name(first_name, last_name, domain)
-                    if not finder_err and finder_emails:
-                        best = finder_emails[0]
-                        contact_entry["email"] = str(best.get("email") or "").strip() or None
-                        contact_entry["provider_email_status"] = str(best.get("smtp_status") or "unknown").lower()
-                        contact_entry["snov_email_raw"] = finder_emails
-                        log_event(logger, "contact_email_found_by_name",
-                                  domain=domain, name=f"{first_name} {last_name}",
-                                  email=contact_entry["email"])
-
-                contacts_to_write.append(contact_entry)
-        log_event(logger, "contact_fetch_done", domain=domain,
-                  contacts=len(contacts_to_write), title_matched=title_matched_count)
-
-        # ── Phase 3: write results (new session) ─────────────────────────────
-        with Session(engine) as session:
-            job = session.get(ContactFetchJob, job_id)
-            if not job or job.lock_token != lock_token:
-                log_event(logger, "contact_fetch_results_skipped_not_owner", job_id=str(job_id))
-                return None
-
-            for c in contacts_to_write:
-                existing = _find_existing_contact(
-                    session=session,
-                    company_id=company_id,
-                    contact_entry=c,
-                )
-
-                if existing:
-                    existing.contact_fetch_job_id = job_id
-                    existing.first_name = c["first_name"] or existing.first_name
-                    existing.last_name = c["last_name"] or existing.last_name
-                    existing.title = c["title"] or existing.title
-                    existing.title_match = c["title_match"]
-                    existing.linkedin_url = c["linkedin_url"] or existing.linkedin_url
-                    existing.source = existing.source or job_provider
-                    existing.provider_email_status = c["provider_email_status"] or existing.provider_email_status
-                    existing.snov_confidence = c["snov_confidence"] or existing.snov_confidence
-                    if c["snov_prospect_raw"] is not None:
-                        existing.snov_prospect_raw = c["snov_prospect_raw"]
-                    if c.get("apollo_prospect_raw") is not None:
-                        existing.apollo_prospect_raw = c.get("apollo_prospect_raw")
-                    if c["snov_email_raw"] is not None:
-                        existing.snov_email_raw = c["snov_email_raw"]
-                    if existing.email:
-                        _upsert_contact_email(
-                            session=session,
-                            contact=existing,
-                            email=existing.email,
-                            source=existing.source,
-                            provider_email_status=existing.provider_email_status,
-                            set_primary_if_missing=False,
-                        )
-                    _upsert_contact_email(
-                        session=session,
-                        contact=existing,
-                        email=c.get("email"),
-                        source=job_provider,
-                        provider_email_status=c.get("provider_email_status"),
+            if title_matched and not contact_entry["email"] and first_name and last_name:
+                finder_emails, finder_err = _snov.find_email_by_name(first_name, last_name, domain)
+                if finder_err:
+                    return ContactProviderFetchResult(
+                        contacts=[],
+                        title_matched_count=title_matched_count,
+                        error_code=finder_err,
+                        error_message=f"Snov email finder failed: {finder_err}",
                     )
-                    existing.updated_at = utcnow()
-                    session.add(existing)
-                    contacts_written += 1
-                else:
-                    new_contact = ProspectContact(
-                        company_id=company_id,
-                        contact_fetch_job_id=job_id,
-                        source=job_provider,
-                        first_name=c["first_name"],
-                        last_name=c["last_name"],
-                        title=c["title"],
-                        title_match=c["title_match"],
-                        linkedin_url=c["linkedin_url"],
-                        email=c["email"],
-                        provider_email_status=c["provider_email_status"],
-                        verification_status=c["verification_status"],
-                        snov_confidence=c["snov_confidence"],
-                        snov_prospect_raw=c["snov_prospect_raw"],
-                        apollo_prospect_raw=c.get("apollo_prospect_raw"),
-                        snov_email_raw=c["snov_email_raw"],
-                    )
-                    session.add(new_contact)
-                    session.flush()
-                    _upsert_contact_email(
-                        session=session,
-                        contact=new_contact,
-                        email=c.get("email"),
-                        source=job_provider,
-                        provider_email_status=c.get("provider_email_status"),
-                    )
-                    contacts_written += 1
+                if finder_emails:
+                    best = finder_emails[0]
+                    contact_entry["email"] = str(best.get("email") or "").strip() or None
+                    contact_entry["provider_email_status"] = str(best.get("smtp_status") or "unknown").lower()
+                    contact_entry["snov_email_raw"] = finder_emails
 
-            now_finish = utcnow()
-            job.state = ContactFetchJobState.SUCCEEDED
-            job.terminal_state = True
-            job.contacts_found = contacts_written
-            job.title_matched_count = title_matched_count
-            job.finished_at = now_finish
-            job.updated_at = now_finish
-            job.lock_token = None
-            job.lock_expires_at = None
-            has_followup, followup_task = self._prepare_next_provider_if_needed(session=session, job=job)
-            session.add(job)
-            recompute_contact_stages(session, company_ids=[company_id])
-            session.commit()
-            session.refresh(job)
-            if followup_task is not None:
-                provider_name, followup_job_id = followup_task
-                self._dispatch_contact_task(provider=provider_name, job_id=followup_job_id)
-            if not has_followup:
-                enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
-            return job
+            contacts_to_write.append(contact_entry)
 
-    def _complete_job(
-        self,
-        *,
-        engine: Any,
-        job_id: UUID,
-        lock_token: str,
-        contacts_found: int,
-        title_matched_count: int,
-    ) -> ContactFetchJob | None:
-        with Session(engine) as session:
-            job = session.get(ContactFetchJob, job_id)
-            if not job or job.lock_token != lock_token:
-                return None
-            now = utcnow()
-            job.state = ContactFetchJobState.SUCCEEDED
-            job.terminal_state = True
-            job.contacts_found = contacts_found
-            job.title_matched_count = title_matched_count
-            job.finished_at = now
-            job.updated_at = now
-            job.lock_token = None
-            job.lock_expires_at = None
-            has_followup, followup_task = self._prepare_next_provider_if_needed(session=session, job=job)
-            session.add(job)
-            session.commit()
-            session.refresh(job)
-            if followup_task is not None:
-                provider_name, followup_job_id = followup_task
-                self._dispatch_contact_task(provider=provider_name, job_id=followup_job_id)
-            if not has_followup:
-                enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
-            return job
+        log_event(
+            logger,
+            "contact_fetch_done",
+            domain=domain,
+            contacts=len(contacts_to_write),
+            title_matched=title_matched_count,
+        )
+        return ContactProviderFetchResult(
+            contacts=contacts_to_write,
+            title_matched_count=title_matched_count,
+        )
 
-    def _fail_job(
-        self,
-        *,
-        engine: Any,
-        job_id: UUID,
-        error_code: str,
-        error_message: str,
-        lock_token: str,
-        attempt_count: int,
-        max_attempts: int,
-    ) -> ContactFetchJob | None:
-        is_permanent = error_code in _PERMANENT_ERROR_CODES
-        attempts_exhausted = attempt_count >= max_attempts
+    def _dispatch_contact_task(self, *, provider: str, job_id: UUID) -> None:
+        from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo
 
-        with Session(engine) as session:
-            job = session.get(ContactFetchJob, job_id)
-            if not job or job.lock_token != lock_token:
-                log_event(logger, "contact_fail_skipped_not_owner", job_id=str(job_id))
-                return job
+        if provider == "apollo":
+            fetch_contacts_apollo.delay(str(job_id))
+        else:
+            fetch_contacts.delay(str(job_id))
 
-            if is_permanent or attempts_exhausted:
-                job.state = (
-                    ContactFetchJobState.DEAD
-                    if attempts_exhausted and not is_permanent
-                    else ContactFetchJobState.FAILED
-                )
-                job.terminal_state = True
-                job.finished_at = utcnow()
-            else:
-                # Transient failure — re-queue for retry
-                job.state = ContactFetchJobState.QUEUED
-                job.terminal_state = False
-                job.lock_token = None
-                job.lock_expires_at = None
+    def _dispatch_provider_attempt(self, *, attempt: ContactProviderAttempt) -> None:
+        from app.tasks.contacts import fetch_contacts_apollo_attempt, fetch_contacts_snov_attempt
 
-            job.last_error_code = error_code
-            job.last_error_message = error_message
-            job.updated_at = utcnow()
-            has_followup = False
-            followup_task: tuple[str, UUID] | None = None
-            if job.terminal_state:
-                has_followup, followup_task = self._prepare_next_provider_if_needed(session=session, job=job)
-            session.add(job)
-            session.commit()
-            session.refresh(job)
-            if followup_task is not None:
-                provider_name, followup_job_id = followup_task
-                self._dispatch_contact_task(provider=provider_name, job_id=followup_job_id)
-            if has_followup:
-                log_event(
-                    logger,
-                    "contact_fetch_followup_enqueued_after_failure",
-                    job_id=str(job.id),
-                    provider=job.provider,
-                    next_provider=job.next_provider,
-                )
-            return job
+        if attempt.provider == "apollo":
+            fetch_contacts_apollo_attempt.delay(str(attempt.id))
+        else:
+            fetch_contacts_snov_attempt.delay(str(attempt.id))

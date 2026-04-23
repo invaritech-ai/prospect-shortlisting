@@ -29,6 +29,42 @@ services:
       redis:
         condition: service_started
 
+  worker-contact-orchestrator:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-contact-snov:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-contact-apollo:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-contact-verify:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   worker-scrape-local:
     environment:
       PS_REDIS_URL: redis://redis:6379/0

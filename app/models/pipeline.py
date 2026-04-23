@@ -57,6 +57,23 @@ class ContactFetchJobState(StrEnum):
     DEAD = "dead"
 
 
+class ContactFetchBatchState(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PAUSED = "paused"
+
+
+class ContactProviderAttemptState(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    DEFERRED = "deferred"
+    FAILED = "failed"
+    DEAD = "dead"
+
+
 class CompanyPipelineStage(StrEnum):
     UPLOADED = "uploaded"
     SCRAPED = "scraped"
@@ -357,6 +374,50 @@ class AiUsageEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class ContactFetchRuntimeControl(SQLModel, table=True):
+    """Singleton-style operator controls for the contact pipeline."""
+
+    __tablename__ = "contact_fetch_runtime_controls"
+    __table_args__ = (
+        UniqueConstraint("singleton_key", name="uq_contact_fetch_runtime_controls_singleton_key"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    singleton_key: str = Field(default="default", max_length=32, index=True)
+    auto_enqueue_enabled: bool = Field(default=True, index=True)
+    auto_enqueue_paused: bool = Field(default=False, index=True)
+    auto_enqueue_max_batch_size: int = Field(default=25, ge=1)
+    auto_enqueue_max_active_per_run: int = Field(default=10, ge=1)
+    dispatcher_batch_size: int = Field(default=50, ge=1)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContactFetchBatch(SQLModel, table=True):
+    """A single operator or pipeline enqueue action for contact fetching."""
+
+    __tablename__ = "contact_fetch_batches"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    campaign_id: UUID | None = Field(default=None, foreign_key="campaigns.id", index=True)
+    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
+    trigger_source: str = Field(default="manual", max_length=32, index=True)
+    requested_provider_mode: str = Field(default="snov", max_length=16, index=True)
+    auto_enqueued: bool = Field(default=False, index=True)
+    state: ContactFetchBatchState = Field(
+        default=ContactFetchBatchState.QUEUED,
+        sa_column=Column(Text, nullable=False, index=True),
+    )
+    requested_count: int = Field(default=0, ge=0)
+    queued_count: int = Field(default=0, ge=0)
+    already_fetching_count: int = Field(default=0, ge=0)
+    last_error_code: str | None = Field(default=None, max_length=128)
+    last_error_message: str | None = Field(default=None, max_length=4000)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    finished_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class ContactFetchJob(SQLModel, table=True):
     """One contact-fetch task per company. CAS-locked, same pattern as AnalysisJob."""
 
@@ -364,9 +425,15 @@ class ContactFetchJob(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
+    contact_fetch_batch_id: UUID | None = Field(default=None, foreign_key="contact_fetch_batches.id", index=True)
     pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     provider: str = Field(default="snov", max_length=32, index=True)
     next_provider: str | None = Field(default=None, max_length=32, index=True)
+    requested_providers_json: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    auto_enqueued: bool = Field(default=False, index=True)
 
     state: ContactFetchJobState = Field(
         default=ContactFetchJobState.QUEUED,
@@ -395,6 +462,39 @@ class ContactFetchJob(SQLModel, table=True):
     contacts_found: int = Field(default=0, ge=0)
     title_matched_count: int = Field(default=0, ge=0)
 
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContactProviderAttempt(SQLModel, table=True):
+    """Provider-specific execution record for a company-level fetch job."""
+
+    __tablename__ = "contact_provider_attempts"
+    __table_args__ = (
+        UniqueConstraint("contact_fetch_job_id", "provider", name="uq_contact_provider_attempts_job_provider"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    contact_fetch_job_id: UUID = Field(foreign_key="contact_fetch_jobs.id", index=True)
+    provider: str = Field(max_length=32, index=True)
+    sequence_index: int = Field(default=0, ge=0)
+    state: ContactProviderAttemptState = Field(
+        default=ContactProviderAttemptState.QUEUED,
+        sa_column=Column(Text, nullable=False, index=True),
+    )
+    terminal_state: bool = Field(default=False)
+    attempt_count: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=5, ge=1)
+    last_error_code: str | None = Field(default=None, max_length=128)
+    last_error_message: str | None = Field(default=None, max_length=4000)
+    deferred_reason: str | None = Field(default=None, max_length=128)
+    next_retry_at: datetime | None = Field(default=None, index=True)
+    lock_token: str | None = Field(default=None, max_length=64)
+    lock_expires_at: datetime | None = Field(default=None, index=True)
+    contacts_found: int = Field(default=0, ge=0)
+    title_matched_count: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utcnow, index=True)
     started_at: datetime | None = None
     finished_at: datetime | None = None

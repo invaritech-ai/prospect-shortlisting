@@ -9,8 +9,8 @@ from sqlmodel import Session, col, select
 from app.celery_app import app
 from app.core.logging import log_event
 from app.db.session import get_engine
-from app.models import AiUsageEvent, AnalysisJob, ContactFetchJob, ContactVerifyJob, ScrapeJob
-from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState
+from app.models import AiUsageEvent, AnalysisJob, ContactFetchJob, ContactProviderAttempt, ContactVerifyJob, ScrapeJob
+from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactProviderAttemptState, ContactVerifyJobState
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ _SCRAPE_STUCK_MINUTES = 35    # normal max runtime ~30 min (soft_time_limit)
 _ANALYSIS_STUCK_MINUTES = 35  # lock TTL is 35 min; must match
 _CONTACT_STUCK_MINUTES = 15   # normal max runtime < 10 min (polling)
 _VERIFY_STUCK_MINUTES = 15
+_CONTACT_ATTEMPT_STUCK_MINUTES = 15
 
 # After this many reconciler re-queues a scrape job is marked terminal so it
 # doesn't cycle forever on sites that consistently hang or fail.
@@ -38,11 +39,12 @@ def reconcile_stuck_jobs() -> None:
     analysis_cutoff = now - timedelta(minutes=_ANALYSIS_STUCK_MINUTES)
     contact_cutoff = now - timedelta(minutes=_CONTACT_STUCK_MINUTES)
     verify_cutoff = now - timedelta(minutes=_VERIFY_STUCK_MINUTES)
+    contact_attempt_cutoff = now - timedelta(minutes=_CONTACT_ATTEMPT_STUCK_MINUTES)
 
     # Import here to avoid circular imports at module load time.
     from app.tasks.scrape import scrape_website
     from app.tasks.analysis import run_analysis_job
-    from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo, verify_contacts_batch
+    from app.tasks.contacts import dispatch_contact_fetch_jobs, verify_contacts_batch
 
     engine = get_engine()
     with Session(engine) as session:
@@ -108,6 +110,18 @@ def reconcile_stuck_jobs() -> None:
             )
         ).all()
 
+        stuck_contact_attempts = session.exec(
+            select(ContactProviderAttempt).where(
+                col(ContactProviderAttempt.terminal_state).is_(False),
+                col(ContactProviderAttempt.state).in_([
+                    ContactProviderAttemptState.RUNNING.value,
+                    ContactProviderAttemptState.QUEUED.value,
+                    ContactProviderAttemptState.DEFERRED.value,
+                ]),
+                col(ContactProviderAttempt.updated_at) < contact_attempt_cutoff,
+            )
+        ).all()
+
         never_started_verify = session.exec(
             select(ContactVerifyJob).where(
                 col(ContactVerifyJob.terminal_state).is_(False),
@@ -139,8 +153,16 @@ def reconcile_stuck_jobs() -> None:
         ]
         ns_analysis_ids = [str(job.id) for job in never_started_analysis]
         stuck_analysis_ids = [str(job.id) for job in stuck_analysis]
-        ns_contact_jobs = [(str(job.id), str(job.provider or "snov")) for job in never_started_contacts]
-        stuck_contact_jobs = [(str(job.id), str(job.provider or "snov")) for job in stuck_contacts]
+        ns_contact_jobs = [str(job.id) for job in never_started_contacts]
+        stuck_contact_jobs = [str(job.id) for job in stuck_contacts]
+        stuck_contact_attempt_job_ids = [
+            str(job_id)
+            for job_id in {
+                attempt.contact_fetch_job_id
+                for attempt in stuck_contact_attempts
+                if attempt.contact_fetch_job_id is not None
+            }
+        ]
         ns_verify_ids = [str(job.id) for job in never_started_verify]
         stuck_verify_ids = [str(job.id) for job in stuck_verify]
 
@@ -183,10 +205,23 @@ def reconcile_stuck_jobs() -> None:
 
         for job in never_started_contacts + stuck_contacts:
             job.state = ContactFetchJobState.QUEUED
+            job.started_at = None
             job.lock_token = None
             job.lock_expires_at = None
             job.updated_at = now
             session.add(job)
+
+        for attempt in stuck_contact_attempts:
+            attempt.state = (
+                ContactProviderAttemptState.DEFERRED
+                if attempt.next_retry_at is not None and attempt.next_retry_at > now
+                else ContactProviderAttemptState.QUEUED
+            )
+            attempt.started_at = None
+            attempt.lock_token = None
+            attempt.lock_expires_at = None
+            attempt.updated_at = now
+            session.add(attempt)
 
         for job in never_started_verify + stuck_verify:
             job.state = ContactVerifyJobState.QUEUED
@@ -206,12 +241,10 @@ def reconcile_stuck_jobs() -> None:
         run_analysis_job.delay(job_id)
         log_event(logger, "reconciler_requeued_analysis", job_id=job_id)
 
-    for job_id, provider in ns_contact_jobs + stuck_contact_jobs:
-        if provider == "apollo":
-            fetch_contacts_apollo.delay(job_id)
-        else:
-            fetch_contacts.delay(job_id)
-        log_event(logger, "reconciler_requeued_contact", job_id=job_id, provider=provider)
+    if ns_contact_jobs or stuck_contact_jobs or stuck_contact_attempt_job_ids:
+        dispatch_contact_fetch_jobs.delay()
+        for job_id in ns_contact_jobs + stuck_contact_jobs + stuck_contact_attempt_job_ids:
+            log_event(logger, "reconciler_requeued_contact", job_id=job_id)
 
     for job_id in ns_verify_ids + stuck_verify_ids:
         verify_contacts_batch.delay(job_id)
@@ -219,7 +252,7 @@ def reconcile_stuck_jobs() -> None:
 
     total_scrape = len(ns_scrape_ids) + len(stuck_scrape_ids)
     total_analysis = len(ns_analysis_ids) + len(stuck_analysis_ids)
-    total_contacts = len(ns_contact_jobs) + len(stuck_contact_jobs)
+    total_contacts = len(ns_contact_jobs) + len(stuck_contact_jobs) + len(stuck_contact_attempt_job_ids)
     total_verify = len(ns_verify_ids) + len(stuck_verify_ids)
     log_event(
         logger,
@@ -230,6 +263,7 @@ def reconcile_stuck_jobs() -> None:
         stuck_analysis=len(stuck_analysis_ids),
         never_started_contacts=len(ns_contact_jobs),
         stuck_contacts=len(stuck_contact_jobs),
+        stuck_contact_attempts=len(stuck_contact_attempts),
         never_started_verify=len(ns_verify_ids),
         stuck_verify=len(stuck_verify_ids),
         total_requeued=total_scrape + total_analysis + total_contacts + total_verify,

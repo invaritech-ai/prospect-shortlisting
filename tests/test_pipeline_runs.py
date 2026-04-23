@@ -16,6 +16,7 @@ from app.api.routes.pipeline_runs import (
 from app.api.schemas.pipeline_run import PipelineRunStartRequest
 from app.models import (
     AiUsageEvent,
+    ClassificationResult,
     CrawlArtifact,
     CrawlJob,
     Campaign,
@@ -31,16 +32,19 @@ from app.models import (
 from app.models.pipeline import (
     AnalysisJob,
     AnalysisJobState,
+    CompanyPipelineStage,
     ContactFetchJob,
     ContactFetchJobState,
     ContactVerifyJob,
     ContactVerifyJobState,
     CrawlJobState,
     PipelineRunStatus,
+    PredictedLabel,
     RunStatus,
 )
 from app.models.scrape import ScrapeJob
 from app.services.analysis_service import AnalysisService
+from app.services.contact_runtime_service import ContactRuntimeService
 from app.services.pipeline_run_orchestrator import (
     enqueue_s2_for_scrape_success,
     enqueue_s3_for_analysis_success,
@@ -312,17 +316,34 @@ def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.Mon
         pipeline_run_id=run.id,
     )
     sqlite_session.add(analysis_job)
+    company.pipeline_stage = CompanyPipelineStage.CONTACT_READY
+    sqlite_session.add(company)
+    sqlite_session.add(
+        ClassificationResult(
+            analysis_job_id=analysis_job.id,
+            predicted_label=PredictedLabel.POSSIBLE,
+        )
+    )
     sqlite_session.commit()
     sqlite_session.refresh(analysis_job)
+    sqlite_session.refresh(company)
 
-    queued_ids: list[str] = []
+    dispatched: list[str] = []
 
     class _DummyTask:
         @staticmethod
-        def delay(job_id: str) -> None:
-            queued_ids.append(job_id)
+        def delay() -> None:
+            dispatched.append("dispatch")
 
-    monkeypatch.setattr("app.tasks.contacts.fetch_contacts", _DummyTask())
+    monkeypatch.setattr("app.tasks.contacts.dispatch_contact_fetch_jobs", _DummyTask())
+    ContactRuntimeService().update_control(
+        sqlite_session,
+        auto_enqueue_enabled=True,
+        auto_enqueue_paused=False,
+        auto_enqueue_max_batch_size=25,
+        auto_enqueue_max_active_per_run=10,
+        dispatcher_batch_size=50,
+    )
 
     enqueue_s3_for_analysis_success(engine=sqlite_session.get_bind(), analysis_job_id=analysis_job.id)
 
@@ -331,7 +352,9 @@ def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.Mon
     )
     assert len(contact_jobs) == 1
     assert contact_jobs[0].company_id == company.id
-    assert queued_ids == [str(contact_jobs[0].id)]
+    assert contact_jobs[0].requested_providers_json == ["snov", "apollo"]
+    assert contact_jobs[0].contact_fetch_batch_id is not None
+    assert dispatched == ["dispatch"]
 
 
 def test_orchestrator_s3_to_s4_creates_verify_job(monkeypatch: pytest.MonkeyPatch, sqlite_session: Session) -> None:

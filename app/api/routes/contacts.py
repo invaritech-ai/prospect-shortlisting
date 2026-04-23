@@ -9,7 +9,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import Integer, and_, case, func, or_, select as sa_select, text
-from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
@@ -30,7 +29,6 @@ from app.api.schemas.contacts import (
     TitleRuleSeedResult,
     TitleTestRequest,
     TitleTestResult,
-    TitleRuleStatItem,
     TitleRuleStatsResponse,
 )
 from app.db.session import get_session
@@ -50,7 +48,6 @@ from app.models import (
 from app.models.pipeline import (
     AnalysisJobState,
     CompanyPipelineStage,
-    ContactFetchJobState,
     ContactVerifyJobState,
     PredictedLabel,
     utcnow,
@@ -61,6 +58,7 @@ from app.services.contact_service import (
     seed_title_rules,
     test_title_match_detailed,
 )
+from app.services.contact_queue_service import ContactQueueService
 from app.services.idempotency_service import (
     IdempotencyConflictError,
     IdempotencyUnavailableError,
@@ -69,7 +67,7 @@ from app.services.idempotency_service import (
     normalize_idempotency_key,
     store_idempotency_response,
 )
-from app.tasks.contacts import fetch_contacts, fetch_contacts_apollo, verify_contacts_batch
+from app.tasks.contacts import verify_contacts_batch
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
 
@@ -258,156 +256,36 @@ def _enqueue_contact_fetches(
     companies: list[Company],
     provider: str = "snov",
     next_provider: str | None = None,
+    campaign_id: UUID | None = None,
+    pipeline_run_id: UUID | None = None,
+    trigger_source: str = "manual",
+    auto_enqueued: bool = False,
 ) -> ContactFetchResult:
-    if not companies:
-        return ContactFetchResult(
-            requested_count=0,
-            queued_count=0,
-            already_fetching_count=0,
-            queued_job_ids=[],
-        )
-
-    company_ids = [c.id for c in companies]
-    # Lock target companies while deciding queue actions so concurrent requests
-    # do not double-enqueue the same provider chain on databases that support it.
-    session.exec(
-        select(Company.id).where(col(Company.id).in_(company_ids)).with_for_update()
-    ).all()
+    normalized_provider = (provider or "snov").strip().lower()
     normalized_next_provider = (next_provider or "").strip().lower() or None
-    if normalized_next_provider not in {"snov", "apollo"} or normalized_next_provider == provider:
-        normalized_next_provider = None
-    providers_to_scan = {provider}
-    if normalized_next_provider:
-        providers_to_scan.add(normalized_next_provider)
-    active_jobs = list(
-        session.exec(
-            select(ContactFetchJob).where(
-                col(ContactFetchJob.company_id).in_(company_ids),
-                col(ContactFetchJob.terminal_state).is_(False),
-                col(ContactFetchJob.provider).in_(tuple(providers_to_scan)),
-            )
-        )
+    provider_mode: Literal["snov", "apollo", "both"]
+    if normalized_provider == "snov" and normalized_next_provider == "apollo":
+        provider_mode = "both"
+    elif normalized_provider in {"snov", "apollo"}:
+        provider_mode = normalized_provider  # type: ignore[assignment]
+    else:
+        raise HTTPException(status_code=422, detail="Invalid provider.")
+
+    result = ContactQueueService().enqueue_fetches(
+        session=session,
+        companies=companies,
+        provider_mode=provider_mode,
+        campaign_id=campaign_id,
+        pipeline_run_id=pipeline_run_id,
+        trigger_source=trigger_source,
+        auto_enqueued=auto_enqueued,
     )
-    stale_active_company_ids: set[UUID] = set()
-    active_company_ids: set[UUID] = set()
-    active_followup_company_ids: set[UUID] = set()
-    active_updated = False
-    refreshed_active_jobs: list[ContactFetchJob] = []
-    for active_job in active_jobs:
-        session.refresh(active_job)
-        company_id = active_job.company_id
-        if not company_id:
-            continue
-        if active_job.terminal_state:
-            if active_job.provider == provider:
-                stale_active_company_ids.add(company_id)
-            continue
-        refreshed_active_jobs.append(active_job)
-        if active_job.provider == provider:
-            active_company_ids.add(company_id)
-        if normalized_next_provider and active_job.provider == normalized_next_provider:
-            active_followup_company_ids.add(company_id)
-
-    for active_job in refreshed_active_jobs:
-        company_id = active_job.company_id
-        if not company_id or active_job.provider != provider:
-            continue
-        target_next_provider = (
-            normalized_next_provider if company_id not in active_followup_company_ids else None
-        )
-        current_next = (active_job.next_provider or "").strip().lower() or None
-        if current_next == target_next_provider:
-            continue
-        update_result = session.execute(
-            sa_update(ContactFetchJob)
-            .where(
-                col(ContactFetchJob.id) == active_job.id,
-                col(ContactFetchJob.terminal_state).is_(False),
-            )
-            .values(next_provider=target_next_provider)
-        )
-        if update_result.rowcount and update_result.rowcount > 0:
-            active_updated = True
-        else:
-            active_company_ids.discard(company_id)
-            stale_active_company_ids.add(company_id)
-
-    jobs_to_create: list[ContactFetchJob] = []
-    for company in companies:
-        if company.id in active_company_ids:
-            continue
-        if company.id in stale_active_company_ids:
-            continue
-        target_next_provider = (
-            normalized_next_provider if company.id not in active_followup_company_ids else None
-        )
-        jobs_to_create.append(
-            ContactFetchJob(
-                company_id=company.id,
-                provider=provider,
-                next_provider=target_next_provider,
-            )
-        )
-
-    if jobs_to_create or active_updated:
-        session.add_all(jobs_to_create)
-        session.commit()
-
-    queued_job_ids: list[UUID] = []
-    dispatched_job_ids: set[UUID] = set()
-    task = fetch_contacts_apollo if provider == "apollo" else fetch_contacts
-    try:
-        for job in jobs_to_create:
-            if not job.id:
-                continue
-            task.delay(str(job.id))
-            dispatched_job_ids.add(job.id)
-            queued_job_ids.append(job.id)
-    except Exception as exc:
-        undispatched_job_ids = [
-            job.id for job in jobs_to_create if job.id and job.id not in dispatched_job_ids
-        ]
-        if undispatched_job_ids:
-            failed_at = utcnow()
-            session.execute(
-                sa_update(ContactFetchJob)
-                .where(
-                    col(ContactFetchJob.id).in_(undispatched_job_ids),
-                    col(ContactFetchJob.terminal_state).is_(False),
-                )
-                .values(
-                    state=ContactFetchJobState.FAILED,
-                    terminal_state=True,
-                    next_provider=None,
-                    last_error_code="dispatch_failed",
-                    last_error_message=str(exc)[:4000],
-                    finished_at=failed_at,
-                    updated_at=failed_at,
-                )
-            )
-            session.commit()
-        raise
-
-    followup_already_fetching = 0
-    if stale_active_company_ids and normalized_next_provider:
-        followup_companies = [
-            company
-            for company in companies
-            if company.id in stale_active_company_ids and company.id not in active_followup_company_ids
-        ]
-        followup_result = _enqueue_contact_fetches(
-            session=session,
-            companies=followup_companies,
-            provider=normalized_next_provider,
-        )
-        followup_already_fetching = followup_result.already_fetching_count
-        queued_job_ids.extend(followup_result.queued_job_ids)
-
     return ContactFetchResult(
-        requested_count=len(companies),
-        queued_count=len(queued_job_ids),
-        already_fetching_count=len(active_company_ids) + followup_already_fetching,
-        queued_job_ids=queued_job_ids,
+        requested_count=result.requested_count,
+        queued_count=result.queued_count,
+        already_fetching_count=result.already_fetching_count,
+        queued_job_ids=result.queued_job_ids,
+        batch_id=result.batch_id,
     )
 
 
@@ -560,7 +438,13 @@ def fetch_contacts_for_company(
         raise HTTPException(status_code=404, detail="Upload not found.")
     if upload.campaign_id != campaign_id:
         raise HTTPException(status_code=422, detail="company_id is not assigned to the selected campaign.")
-    return _enqueue_contact_fetches(session=session, companies=[company], provider="snov")
+    return _enqueue_contact_fetches(
+        session=session,
+        companies=[company],
+        provider="snov",
+        campaign_id=campaign_id,
+        trigger_source="manual_company",
+    )
 
 
 @router.post(
@@ -582,7 +466,13 @@ def fetch_apollo_contacts_for_company(
         raise HTTPException(status_code=404, detail="Upload not found.")
     if upload.campaign_id != campaign_id:
         raise HTTPException(status_code=422, detail="company_id is not assigned to the selected campaign.")
-    return _enqueue_contact_fetches(session=session, companies=[company], provider="apollo")
+    return _enqueue_contact_fetches(
+        session=session,
+        companies=[company],
+        provider="apollo",
+        campaign_id=campaign_id,
+        trigger_source="manual_company",
+    )
 
 
 @router.post(
@@ -618,7 +508,13 @@ def fetch_contacts_for_run(
             )
         ).all()
     )
-    return _enqueue_contact_fetches(session=session, companies=companies, provider="snov")
+    return _enqueue_contact_fetches(
+        session=session,
+        companies=companies,
+        provider="snov",
+        campaign_id=campaign_id,
+        trigger_source="manual_run",
+    )
 
 
 @router.post(
@@ -654,7 +550,13 @@ def fetch_apollo_contacts_for_run(
             )
         ).all()
     )
-    return _enqueue_contact_fetches(session=session, companies=companies, provider="apollo")
+    return _enqueue_contact_fetches(
+        session=session,
+        companies=companies,
+        provider="apollo",
+        campaign_id=campaign_id,
+        trigger_source="manual_run",
+    )
 
 
 @router.post(
@@ -712,12 +614,20 @@ def fetch_contacts_selected(
                 companies=companies,
                 provider="snov",
                 next_provider="apollo",
+                campaign_id=payload.campaign_id,
+                trigger_source="manual_selection",
             )
             total_queued = r.queued_count
             total_already_fetching = r.already_fetching_count
             all_job_ids = list(r.queued_job_ids)
         else:
-            r = _enqueue_contact_fetches(session=session, companies=companies, provider=payload.source)
+            r = _enqueue_contact_fetches(
+                session=session,
+                companies=companies,
+                provider=payload.source,
+                campaign_id=payload.campaign_id,
+                trigger_source="manual_selection",
+            )
             total_queued = r.queued_count
             total_already_fetching = r.already_fetching_count
             all_job_ids = list(r.queued_job_ids)
@@ -727,6 +637,7 @@ def fetch_contacts_selected(
             queued_count=total_queued,
             already_fetching_count=total_already_fetching,
             queued_job_ids=all_job_ids,
+            batch_id=r.batch_id,
             idempotency_key=idempotency_key,
             idempotency_replayed=False,
         )
@@ -1450,12 +1361,20 @@ def queue_title_rule_impact_fetch(
             companies=companies,
             provider="snov",
             next_provider="apollo",
+            campaign_id=campaign_id,
+            trigger_source="rule_impact",
         )
         total_queued = result.queued_count
         total_already_fetching = result.already_fetching_count
         all_job_ids = list(result.queued_job_ids)
     else:
-        result = _enqueue_contact_fetches(session=session, companies=companies, provider=normalized_source)
+        result = _enqueue_contact_fetches(
+            session=session,
+            companies=companies,
+            provider=normalized_source,
+            campaign_id=campaign_id,
+            trigger_source="rule_impact",
+        )
         total_queued = result.queued_count
         total_already_fetching = result.already_fetching_count
         all_job_ids = list(result.queued_job_ids)
@@ -1464,6 +1383,7 @@ def queue_title_rule_impact_fetch(
         queued_count=total_queued,
         already_fetching_count=total_already_fetching,
         queued_job_ids=all_job_ids,
+        batch_id=result.batch_id,
     )
 
 

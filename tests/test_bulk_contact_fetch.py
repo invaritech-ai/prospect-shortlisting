@@ -3,16 +3,14 @@ from __future__ import annotations
 from unittest.mock import patch
 from uuid import uuid4
 
-import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.routes.campaigns import create_campaign
 from app.api.routes.contacts import fetch_contacts_selected
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import BulkContactFetchRequest
-from app.models import Company, Upload
-from app.models.pipeline import CompanyPipelineStage, ContactFetchJob, ContactFetchJobState
-from sqlmodel import select
+from app.models import Company, ContactFetchBatch, Upload
+from app.models.pipeline import CompanyPipelineStage, ContactFetchJob
 
 
 def _company(session: Session, *, domain: str, stage: CompanyPipelineStage):
@@ -20,181 +18,152 @@ def _company(session: Session, *, domain: str, stage: CompanyPipelineStage):
     upload = Upload(filename="t.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0, campaign_id=campaign.id)
     session.add(upload)
     session.flush()
-    c = Company(
+    company = Company(
         upload_id=upload.id,
         raw_url=f"https://{domain}",
         normalized_url=f"https://{domain}",
         domain=domain,
         pipeline_stage=stage,
     )
-    session.add(c)
+    session.add(company)
     session.flush()
-    return campaign.id, c
+    return campaign.id, company
 
 
-def test_bulk_fetch_snov(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="snov.example", stage=CompanyPipelineStage.CONTACT_READY)
+def test_bulk_fetch_snov_queues_summary_job_and_batch(sqlite_session: Session) -> None:
+    campaign_id, company = _company(sqlite_session, domain="snov.example", stage=CompanyPipelineStage.CONTACT_READY)
     sqlite_session.commit()
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock:
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="snov"),
+
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
+        result = fetch_contacts_selected(
+            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[company.id], source="snov"),
             session=sqlite_session,
         )
-    assert r.queued_count == 1
-    assert mock.call_count == 1
 
+    assert result.queued_count == 1
+    assert result.already_fetching_count == 0
+    assert result.batch_id is not None
+    mock_dispatch.assert_called_once()
 
-def test_bulk_fetch_apollo(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="apollo.example", stage=CompanyPipelineStage.CONTACT_READY)
-    sqlite_session.commit()
-    with patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as mock:
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="apollo"),
-            session=sqlite_session,
-        )
-    assert r.queued_count == 1
-    assert mock.call_count == 1
-
-
-def test_bulk_fetch_both_enqueues_snov_then_apollo_chain(sqlite_session: Session) -> None:
-    """source='both' seeds only the snov job with apollo follow-up."""
-    campaign_id, c = _company(sqlite_session, domain="both.example", stage=CompanyPipelineStage.CONTACT_READY)
-    sqlite_session.commit()
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo,
-    ):
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="both"),
-            session=sqlite_session,
-        )
-    assert r.queued_count == 1
-    assert snov.call_count == 1
-    assert apollo.call_count == 0
     jobs = list(
         sqlite_session.exec(
-            select(ContactFetchJob).where(ContactFetchJob.company_id == c.id).order_by(ContactFetchJob.created_at)
+            select(ContactFetchJob).where(ContactFetchJob.company_id == company.id)
         )
     )
     assert len(jobs) == 1
     assert jobs[0].provider == "snov"
-    assert jobs[0].next_provider == "apollo"
+    assert jobs[0].requested_providers_json == ["snov"]
+    assert jobs[0].contact_fetch_batch_id == result.batch_id
+
+    batch = sqlite_session.get(ContactFetchBatch, result.batch_id)
+    assert batch is not None
+    assert batch.requested_provider_mode == "snov"
+    assert batch.requested_count == 1
+    assert batch.queued_count == 1
+
+
+def test_bulk_fetch_apollo_queues_summary_job_and_batch(sqlite_session: Session) -> None:
+    campaign_id, company = _company(sqlite_session, domain="apollo.example", stage=CompanyPipelineStage.CONTACT_READY)
+    sqlite_session.commit()
+
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
+        result = fetch_contacts_selected(
+            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[company.id], source="apollo"),
+            session=sqlite_session,
+        )
+
+    assert result.queued_count == 1
+    assert result.batch_id is not None
+    mock_dispatch.assert_called_once()
+
+    job = sqlite_session.exec(
+        select(ContactFetchJob).where(ContactFetchJob.company_id == company.id)
+    ).one()
+    assert job.provider == "apollo"
+    assert job.requested_providers_json == ["apollo"]
+
+
+def test_bulk_fetch_both_creates_one_summary_job_with_two_requested_providers(sqlite_session: Session) -> None:
+    campaign_id, company = _company(sqlite_session, domain="both.example", stage=CompanyPipelineStage.CONTACT_READY)
+    sqlite_session.commit()
+
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
+        result = fetch_contacts_selected(
+            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[company.id], source="both"),
+            session=sqlite_session,
+        )
+
+    assert result.queued_count == 1
+    assert result.batch_id is not None
+    mock_dispatch.assert_called_once()
+
+    jobs = list(
+        sqlite_session.exec(
+            select(ContactFetchJob).where(ContactFetchJob.company_id == company.id)
+        )
+    )
+    assert len(jobs) == 1
+    assert jobs[0].provider == "snov"
+    assert jobs[0].requested_providers_json == ["snov", "apollo"]
+    assert jobs[0].next_provider is None
+
+    batch = sqlite_session.get(ContactFetchBatch, result.batch_id)
+    assert batch is not None
+    assert batch.requested_provider_mode == "both"
 
 
 def test_bulk_fetch_allows_non_contact_ready(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="skip.example", stage=CompanyPipelineStage.UPLOADED)
+    campaign_id, company = _company(sqlite_session, domain="skip.example", stage=CompanyPipelineStage.UPLOADED)
     sqlite_session.commit()
-    with patch("app.api.routes.contacts.fetch_contacts.delay") as mock:
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="snov"),
+
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
+        result = fetch_contacts_selected(
+            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[company.id], source="snov"),
             session=sqlite_session,
         )
-    assert r.queued_count == 1
-    assert mock.call_count == 1
+
+    assert result.queued_count == 1
+    mock_dispatch.assert_called_once()
 
 
-def test_bulk_fetch_both_updates_active_snov_job_with_apollo_followup(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="both-active.example", stage=CompanyPipelineStage.CONTACT_READY)
-    active = ContactFetchJob(company_id=c.id, provider="snov", next_provider=None, terminal_state=False)
+def test_bulk_fetch_counts_active_job_as_already_fetching(sqlite_session: Session) -> None:
+    campaign_id, company = _company(sqlite_session, domain="active.example", stage=CompanyPipelineStage.CONTACT_READY)
+    active = ContactFetchJob(company_id=company.id, provider="snov", terminal_state=False)
     sqlite_session.add(active)
     sqlite_session.commit()
-    sqlite_session.refresh(active)
 
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo,
-    ):
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="both"),
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
+        result = fetch_contacts_selected(
+            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[company.id], source="both"),
             session=sqlite_session,
         )
 
-    assert r.queued_count == 0
-    assert r.already_fetching_count == 1
-    assert snov.call_count == 0
-    assert apollo.call_count == 0
-    sqlite_session.refresh(active)
-    assert active.next_provider == "apollo"
+    assert result.requested_count == 1
+    assert result.queued_count == 0
+    assert result.already_fetching_count == 1
+    mock_dispatch.assert_called_once()
 
-
-def test_bulk_fetch_both_queues_snov_without_followup_when_apollo_active(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="both-followup-active.example", stage=CompanyPipelineStage.CONTACT_READY)
-    sqlite_session.add(ContactFetchJob(company_id=c.id, provider="apollo", terminal_state=False))
-    sqlite_session.commit()
-
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo,
-    ):
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="both"),
-            session=sqlite_session,
-        )
-
-    assert r.queued_count == 1
-    assert snov.call_count == 1
-    assert apollo.call_count == 0
     jobs = list(
         sqlite_session.exec(
-            select(ContactFetchJob).where(ContactFetchJob.company_id == c.id).order_by(ContactFetchJob.created_at)
+            select(ContactFetchJob).where(ContactFetchJob.company_id == company.id)
         )
     )
-    snov_jobs = [job for job in jobs if job.provider == "snov"]
-    assert len(snov_jobs) == 1
-    assert snov_jobs[0].next_provider is None
-
-
-def test_bulk_fetch_both_clears_active_snov_followup_when_apollo_active(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="both-dual-active.example", stage=CompanyPipelineStage.CONTACT_READY)
-    active_snov = ContactFetchJob(company_id=c.id, provider="snov", next_provider="apollo", terminal_state=False)
-    active_apollo = ContactFetchJob(company_id=c.id, provider="apollo", terminal_state=False)
-    sqlite_session.add(active_snov)
-    sqlite_session.add(active_apollo)
-    sqlite_session.commit()
-    sqlite_session.refresh(active_snov)
-
-    with (
-        patch("app.api.routes.contacts.fetch_contacts.delay") as snov,
-        patch("app.api.routes.contacts.fetch_contacts_apollo.delay") as apollo,
-    ):
-        r = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="both"),
-            session=sqlite_session,
-        )
-
-    assert r.queued_count == 0
-    assert r.already_fetching_count == 1
-    assert snov.call_count == 0
-    assert apollo.call_count == 0
-    sqlite_session.refresh(active_snov)
-    assert active_snov.next_provider is None
-
-
-def test_bulk_fetch_marks_job_failed_when_dispatch_raises(sqlite_session: Session) -> None:
-    campaign_id, c = _company(sqlite_session, domain="dispatch-fail.example", stage=CompanyPipelineStage.CONTACT_READY)
-    sqlite_session.commit()
-
-    with patch("app.api.routes.contacts.fetch_contacts.delay", side_effect=RuntimeError("broker down")):
-        with pytest.raises(RuntimeError, match="broker down"):
-            fetch_contacts_selected(
-                BulkContactFetchRequest(campaign_id=campaign_id, company_ids=[c.id], source="snov"),
-                session=sqlite_session,
-            )
-
-    jobs = list(sqlite_session.exec(select(ContactFetchJob).where(ContactFetchJob.company_id == c.id)))
     assert len(jobs) == 1
-    assert jobs[0].state == ContactFetchJobState.FAILED
-    assert jobs[0].terminal_state is True
-    assert jobs[0].last_error_code == "dispatch_failed"
+    assert jobs[0].id == active.id
 
 
 def test_bulk_fetch_missing_ids_raises_404(sqlite_session: Session) -> None:
     from fastapi import HTTPException
 
     campaign = create_campaign(payload=CampaignCreate(name="Missing IDs"), session=sqlite_session)
-    with pytest.raises(HTTPException) as exc:
-        fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign.id, company_ids=[uuid4()], source="snov"),
-            session=sqlite_session,
-        )
-    assert exc.value.status_code == 404
+    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch:
+        try:
+            fetch_contacts_selected(
+                BulkContactFetchRequest(campaign_id=campaign.id, company_ids=[uuid4()], source="snov"),
+                session=sqlite_session,
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 404
+        else:
+            raise AssertionError("Expected HTTPException")
+    mock_dispatch.assert_not_called()

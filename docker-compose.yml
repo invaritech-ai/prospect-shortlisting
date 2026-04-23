@@ -57,7 +57,63 @@ services:
       - .env
     environment:
       PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat,contacts", "-c", "8", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat", "-c", "8", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-contact-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_orchestrator", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-contact-snov:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_snov", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-contact-apollo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_apollo", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-contact-verify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_verify", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
     restart: unless-stopped
     depends_on:
       api:

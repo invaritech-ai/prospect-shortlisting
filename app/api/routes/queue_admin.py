@@ -2,15 +2,44 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import case, update
 from sqlmodel import Session, col, func, select
 
+from app.api.schemas.contacts import (
+    ContactBacklogSummary,
+    ContactBatchSummary,
+    ContactFetchResult,
+    ContactProviderBacklogItem,
+    ContactReplayDeferredRequest,
+    ContactReplayDeferredResult,
+    ContactRetryFailedRequest,
+    ContactRuntimeControlRead,
+    ContactRuntimeControlUpdate,
+)
 from app.db.session import get_session
-from app.models import AnalysisJob, Run, ScrapeJob
-from app.models.pipeline import AnalysisJobState, RunStatus
+from app.models import (
+    AnalysisJob,
+    Campaign,
+    Company,
+    ContactFetchBatch,
+    ContactFetchJob,
+    ContactProviderAttempt,
+    Run,
+    ScrapeJob,
+    Upload,
+)
+from app.models.pipeline import (
+    AnalysisJobState,
+    ContactFetchJobState,
+    ContactProviderAttemptState,
+    RunStatus,
+)
+from app.services.contact_queue_service import ContactQueueService
+from app.services.contact_runtime_service import ContactRuntimeService
 from app.services.pipeline_service import recompute_all_stages
 from app.services.scrape_rules_store import load_rules_for_job
 
@@ -232,4 +261,227 @@ def recompute_pipeline_stages(session: Session = Depends(get_session)) -> Recomp
     return RecomputePipelineStagesResult(
         refreshed_company_count=company_changed,
         refreshed_contact_count=contact_changed,
+    )
+
+
+@router.get("/contacts/admin/runtime-control", response_model=ContactRuntimeControlRead)
+def get_contact_runtime_control(session: Session = Depends(get_session)) -> ContactRuntimeControlRead:
+    control = ContactRuntimeService().get_or_create_control(session)
+    return ContactRuntimeControlRead.model_validate(control, from_attributes=True)
+
+
+@router.patch("/contacts/admin/runtime-control", response_model=ContactRuntimeControlRead)
+def update_contact_runtime_control(
+    payload: ContactRuntimeControlUpdate,
+    session: Session = Depends(get_session),
+) -> ContactRuntimeControlRead:
+    control = ContactRuntimeService().update_control(
+        session,
+        auto_enqueue_enabled=payload.auto_enqueue_enabled,
+        auto_enqueue_paused=payload.auto_enqueue_paused,
+        auto_enqueue_max_batch_size=payload.auto_enqueue_max_batch_size,
+        auto_enqueue_max_active_per_run=payload.auto_enqueue_max_active_per_run,
+        dispatcher_batch_size=payload.dispatcher_batch_size,
+    )
+    if control.auto_enqueue_enabled and not control.auto_enqueue_paused:
+        from app.tasks.contacts import dispatch_contact_fetch_jobs
+
+        dispatch_contact_fetch_jobs.delay()
+    return ContactRuntimeControlRead.model_validate(control, from_attributes=True)
+
+
+@router.get("/contacts/admin/backlog", response_model=ContactBacklogSummary)
+def get_contact_backlog(session: Session = Depends(get_session)) -> ContactBacklogSummary:
+    job_counts = {
+        str(state): int(count)
+        for state, count in session.exec(
+            select(ContactFetchJob.state, func.count())
+            .group_by(ContactFetchJob.state)
+        ).all()
+    }
+    attempt_counts = {
+        str(state): int(count)
+        for state, count in session.exec(
+            select(ContactProviderAttempt.state, func.count())
+            .group_by(ContactProviderAttempt.state)
+        ).all()
+    }
+
+    provider_rollups: dict[str, ContactProviderBacklogItem] = {}
+    for provider, state, last_error_code, count in session.exec(
+        select(
+            ContactProviderAttempt.provider,
+            ContactProviderAttempt.state,
+            ContactProviderAttempt.last_error_code,
+            func.count(),
+        )
+        .group_by(
+            ContactProviderAttempt.provider,
+            ContactProviderAttempt.state,
+            ContactProviderAttempt.last_error_code,
+        )
+    ).all():
+        item = provider_rollups.setdefault(provider, ContactProviderBacklogItem(provider=provider))
+        state_value = str(state)
+        setattr(item, state_value, getattr(item, state_value) + int(count))
+        if state_value in {
+            ContactProviderAttemptState.QUEUED.value,
+            ContactProviderAttemptState.DEFERRED.value,
+        }:
+            item.retryable += int(count)
+        if last_error_code and "rate_limited" in last_error_code:
+            item.rate_limited += int(count)
+
+    recent_batches = [
+        ContactBatchSummary(
+            batch_id=batch.id,
+            trigger_source=batch.trigger_source,
+            requested_provider_mode=batch.requested_provider_mode,
+            auto_enqueued=batch.auto_enqueued,
+            state=str(batch.state),
+            requested_count=batch.requested_count,
+            queued_count=batch.queued_count,
+            already_fetching_count=batch.already_fetching_count,
+            last_error_code=batch.last_error_code,
+            last_error_message=batch.last_error_message,
+            created_at=batch.created_at,
+            finished_at=batch.finished_at,
+            updated_at=batch.updated_at,
+        )
+        for batch in session.exec(
+            select(ContactFetchBatch)
+            .order_by(col(ContactFetchBatch.created_at).desc())
+            .limit(20)
+        ).all()
+    ]
+
+    return ContactBacklogSummary(
+        job_counts=job_counts,
+        attempt_counts=attempt_counts,
+        provider_attempt_counts=list(provider_rollups.values()),
+        recent_batches=recent_batches,
+    )
+
+
+@router.post("/contacts/admin/retry-failed", response_model=ContactFetchResult)
+def retry_failed_contact_companies(
+    payload: ContactRetryFailedRequest,
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    campaign = session.get(Campaign, payload.campaign_id)
+    if campaign is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+
+    company_ids = list(dict.fromkeys(payload.company_ids or []))
+    if company_ids:
+        companies = list(
+            session.exec(
+                select(Company)
+                .join(Upload, col(Upload.id) == col(Company.upload_id))
+                .where(
+                    col(Company.id).in_(company_ids),
+                    col(Upload.campaign_id) == payload.campaign_id,
+                )
+            ).all()
+        )
+    else:
+        failed_company_ids = list(
+            session.exec(
+                select(ContactFetchJob.company_id)
+                .join(Company, col(Company.id) == col(ContactFetchJob.company_id))
+                .join(Upload, col(Upload.id) == col(Company.upload_id))
+                .where(
+                    col(Upload.campaign_id) == payload.campaign_id,
+                    col(ContactFetchJob.terminal_state).is_(True),
+                    col(ContactFetchJob.state).in_([
+                        ContactFetchJobState.FAILED,
+                        ContactFetchJobState.DEAD,
+                    ]),
+                )
+                .group_by(ContactFetchJob.company_id)
+            ).all()
+        )
+        companies = (
+            list(
+                session.exec(
+                    select(Company)
+                    .where(col(Company.id).in_(failed_company_ids))
+                    .order_by(col(Company.domain).asc())
+                ).all()
+            )
+            if failed_company_ids
+            else []
+        )
+
+    result = ContactQueueService().retry_failed_jobs(
+        session=session,
+        companies=companies,
+        provider_mode=payload.provider_mode,
+        campaign_id=payload.campaign_id,
+    )
+    return ContactFetchResult(
+        requested_count=result.requested_count,
+        queued_count=result.queued_count,
+        already_fetching_count=result.already_fetching_count,
+        queued_job_ids=result.queued_job_ids,
+        batch_id=result.batch_id,
+    )
+
+
+@router.post("/contacts/admin/replay-deferred", response_model=ContactReplayDeferredResult)
+def replay_deferred_contact_attempts(
+    payload: ContactReplayDeferredRequest,
+    session: Session = Depends(get_session),
+) -> ContactReplayDeferredResult:
+    attempts_stmt = (
+        select(ContactProviderAttempt)
+        .where(
+            col(ContactProviderAttempt.terminal_state).is_(False),
+            col(ContactProviderAttempt.state) == ContactProviderAttemptState.DEFERRED,
+        )
+        .order_by(col(ContactProviderAttempt.next_retry_at).asc(), col(ContactProviderAttempt.created_at).asc())
+        .limit(payload.limit)
+    )
+    if payload.batch_id is not None:
+        attempts_stmt = attempts_stmt.join(
+            ContactFetchJob,
+            col(ContactFetchJob.id) == col(ContactProviderAttempt.contact_fetch_job_id),
+        ).where(col(ContactFetchJob.contact_fetch_batch_id) == payload.batch_id)
+    if payload.provider != "both":
+        attempts_stmt = attempts_stmt.where(col(ContactProviderAttempt.provider) == payload.provider)
+
+    attempts = list(session.exec(attempts_stmt).all())
+    if not attempts:
+        return ContactReplayDeferredResult(replayed_attempt_count=0, scheduled_job_count=0)
+
+    now = _utcnow()
+    scheduled_job_ids: set[UUID] = set()
+    for attempt in attempts:
+        attempt.state = ContactProviderAttemptState.QUEUED
+        attempt.deferred_reason = None
+        attempt.next_retry_at = None
+        attempt.updated_at = now
+        session.add(attempt)
+
+        job = session.get(ContactFetchJob, attempt.contact_fetch_job_id)
+        if job is None or job.terminal_state:
+            continue
+        job.state = ContactFetchJobState.QUEUED
+        job.lock_token = None
+        job.lock_expires_at = None
+        job.updated_at = now
+        session.add(job)
+        if job.id:
+            scheduled_job_ids.add(job.id)
+
+    session.commit()
+    if scheduled_job_ids:
+        from app.tasks.contacts import dispatch_contact_fetch_jobs
+
+        dispatch_contact_fetch_jobs.delay()
+    return ContactReplayDeferredResult(
+        replayed_attempt_count=len(attempts),
+        scheduled_job_count=len(scheduled_job_ids),
     )

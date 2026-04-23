@@ -70,9 +70,12 @@ app.conf.update(
         "app.tasks.analysis.run_analysis_job": {"queue": "analysis"},
         "app.tasks.beat.reconcile_stuck_jobs": {"queue": "beat"},
         "app.tasks.beat.reconcile_openrouter_costs": {"queue": "beat"},
-        "app.tasks.contacts.fetch_contacts": {"queue": "contacts"},
-        "app.tasks.contacts.fetch_contacts_apollo": {"queue": "contacts"},
-        "app.tasks.contacts.verify_contacts_batch": {"queue": "contacts"},
+        "app.tasks.contacts.fetch_contacts": {"queue": "contacts_orchestrator"},
+        "app.tasks.contacts.fetch_contacts_apollo": {"queue": "contacts_orchestrator"},
+        "app.tasks.contacts.fetch_contacts_snov_attempt": {"queue": "contacts_snov"},
+        "app.tasks.contacts.fetch_contacts_apollo_attempt": {"queue": "contacts_apollo"},
+        "app.tasks.contacts.dispatch_contact_fetch_jobs": {"queue": "contacts_orchestrator"},
+        "app.tasks.contacts.verify_contacts_batch": {"queue": "contacts_verify"},
     },
     # Celery Beat periodic schedule.
     beat_schedule={
@@ -83,6 +86,10 @@ app.conf.update(
         "reconcile-openrouter-costs": {
             "task": "app.tasks.beat.reconcile_openrouter_costs",
             "schedule": crontab(minute="*/15"),
+        },
+        "dispatch-contact-fetch-jobs": {
+            "task": "app.tasks.contacts.dispatch_contact_fetch_jobs",
+            "schedule": crontab(minute="*"),
         },
     },
     timezone="UTC",

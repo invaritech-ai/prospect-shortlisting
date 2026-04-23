@@ -44,6 +44,7 @@ class ContactFetchResult(BaseModel):
     queued_count: int
     already_fetching_count: int
     queued_job_ids: list[UUID]
+    batch_id: UUID | None = None
     idempotency_key: str | None = None
     idempotency_replayed: bool = False
 
@@ -167,3 +168,74 @@ class ContactVerifyResult(BaseModel):
 
 
 MatchGapFilter = Literal["all", "contacts_no_match", "matched_no_email", "ready_candidates"]
+
+
+class ContactRuntimeControlRead(UTCReadModel):
+    id: UUID
+    auto_enqueue_enabled: bool
+    auto_enqueue_paused: bool
+    auto_enqueue_max_batch_size: int
+    auto_enqueue_max_active_per_run: int
+    dispatcher_batch_size: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ContactRuntimeControlUpdate(BaseModel):
+    auto_enqueue_enabled: bool | None = None
+    auto_enqueue_paused: bool | None = None
+    auto_enqueue_max_batch_size: int | None = Field(default=None, ge=1)
+    auto_enqueue_max_active_per_run: int | None = Field(default=None, ge=1)
+    dispatcher_batch_size: int | None = Field(default=None, ge=1)
+
+
+class ContactBatchSummary(UTCReadModel):
+    batch_id: UUID
+    trigger_source: str
+    requested_provider_mode: str
+    auto_enqueued: bool
+    state: str
+    requested_count: int
+    queued_count: int
+    already_fetching_count: int
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+    updated_at: datetime
+
+
+class ContactProviderBacklogItem(BaseModel):
+    provider: str
+    queued: int = 0
+    running: int = 0
+    deferred: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    dead: int = 0
+    rate_limited: int = 0
+    retryable: int = 0
+
+
+class ContactBacklogSummary(BaseModel):
+    job_counts: dict[str, int]
+    attempt_counts: dict[str, int]
+    provider_attempt_counts: list[ContactProviderBacklogItem]
+    recent_batches: list[ContactBatchSummary]
+
+
+class ContactRetryFailedRequest(BaseModel):
+    campaign_id: UUID
+    company_ids: list[UUID] | None = None
+    provider_mode: Literal["snov", "apollo", "both"] = "both"
+
+
+class ContactReplayDeferredRequest(BaseModel):
+    batch_id: UUID | None = None
+    provider: Literal["snov", "apollo", "both"] = "both"
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
+class ContactReplayDeferredResult(BaseModel):
+    replayed_attempt_count: int
+    scheduled_job_count: int

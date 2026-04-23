@@ -8,6 +8,7 @@ from sqlmodel import Session, col, select
 from app.core.config import settings
 from app.models import (
     AnalysisJob,
+    ClassificationResult,
     Company,
     ContactFetchJob,
     ContactVerifyJob,
@@ -17,7 +18,16 @@ from app.models import (
     ProspectContact,
     ScrapeJob,
 )
-from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState, PipelineStage
+from app.models.pipeline import (
+    AnalysisJobState,
+    CompanyPipelineStage,
+    ContactFetchJobState,
+    ContactVerifyJobState,
+    PipelineStage,
+    PredictedLabel,
+)
+from app.services.contact_queue_service import ContactQueueService
+from app.services.contact_runtime_service import ContactRuntimeService
 from app.services.run_service import RunService
 
 
@@ -117,41 +127,72 @@ def enqueue_s3_for_analysis_success(engine: Engine, analysis_job_id: UUID) -> No
             or analysis_job.state != AnalysisJobState.SUCCEEDED
         ):
             return
-        existing_active = session.exec(
-            select(ContactFetchJob).where(
-                col(ContactFetchJob.company_id) == analysis_job.company_id,
-                col(ContactFetchJob.pipeline_run_id) == analysis_job.pipeline_run_id,
-                col(ContactFetchJob.provider) == "snov",
-                col(ContactFetchJob.terminal_state).is_(False),
-            )
-        ).first()
-        if existing_active is not None:
+        runtime = ContactRuntimeService()
+        control = runtime.get_or_create_control(session)
+        if not control.auto_enqueue_enabled or control.auto_enqueue_paused:
+            return
+        pipeline_run = session.get(PipelineRun, analysis_job.pipeline_run_id)
+        if pipeline_run is None:
             return
 
-        fetch_job = ContactFetchJob(
-            company_id=analysis_job.company_id,
-            provider="snov",
-            pipeline_run_id=analysis_job.pipeline_run_id,
+        active_company_ids = {
+            company_id
+            for company_id in session.exec(
+                select(ContactFetchJob.company_id).where(
+                    col(ContactFetchJob.pipeline_run_id) == pipeline_run.id,
+                    col(ContactFetchJob.terminal_state).is_(False),
+                )
+            )
+            if company_id is not None
+        }
+        eligible_companies = list(
+            session.exec(
+                select(Company)
+                .join(AnalysisJob, col(AnalysisJob.company_id) == col(Company.id))
+                .join(ClassificationResult, col(ClassificationResult.analysis_job_id) == col(AnalysisJob.id))
+                .where(
+                    col(AnalysisJob.pipeline_run_id) == pipeline_run.id,
+                    col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED,
+                    col(ClassificationResult.predicted_label) == PredictedLabel.POSSIBLE,
+                    col(Company.pipeline_stage) == CompanyPipelineStage.CONTACT_READY,
+                )
+                .order_by(col(Company.domain).asc())
+            )
         )
-        session.add(fetch_job)
-        session.flush()
+        companies_to_queue = [
+            company
+            for company in eligible_companies
+            if company.id not in active_company_ids
+        ][: max(1, control.auto_enqueue_max_batch_size)]
+        if not companies_to_queue:
+            return
+
+        result = ContactQueueService().enqueue_fetches(
+            session=session,
+            companies=companies_to_queue,
+            provider_mode="both",
+            campaign_id=pipeline_run.campaign_id,
+            pipeline_run_id=pipeline_run.id,
+            trigger_source="pipeline",
+            auto_enqueued=True,
+        )
+        if result.queued_count == 0:
+            return
         session.add(
             PipelineRunEvent(
-                pipeline_run_id=analysis_job.pipeline_run_id,
-                company_id=analysis_job.company_id,
+                pipeline_run_id=pipeline_run.id,
                 stage=PipelineStage.S3_CONTACTS.value,
                 event_type="s2_to_s3_queued",
                 payload_json={
                     "analysis_job_id": str(analysis_job.id),
-                    "contact_fetch_job_id": str(fetch_job.id),
-                    "provider": "snov",
+                    "contact_fetch_batch_id": str(result.batch_id) if result.batch_id else None,
+                    "contact_fetch_job_ids": [str(job_id) for job_id in result.queued_job_ids],
+                    "provider_mode": "both",
+                    "queued_count": result.queued_count,
                 },
             )
         )
         session.commit()
-        from app.tasks.contacts import fetch_contacts
-
-        fetch_contacts.delay(str(fetch_job.id))
 
 
 def enqueue_s4_for_contact_success(engine: Engine, contact_fetch_job_id: UUID) -> None:
