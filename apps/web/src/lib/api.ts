@@ -16,10 +16,14 @@ import type {
   ContactCountsResponse,
   ContactFetchResult,
   ContactListResponse,
+  ContactRevealRequest,
+  ContactRevealResult,
   ContactStageFilter,
   ContactVerifyRequest,
   ContactVerifyResult,
   DecisionFilter,
+  DiscoveredContactCountsResponse,
+  DiscoveredContactListResponse,
   DrainQueueResult,
   FeedbackRead,
   FeedbackUpsert,
@@ -553,27 +557,51 @@ export async function getLetterCounts(
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
 
-export async function fetchContactsForCompany(campaignId: string, companyId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
+export async function fetchContactsForCompany(
+  campaignId: string,
+  companyId: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<ContactFetchResult> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (options.forceRefresh) params.set('force_refresh', 'true')
+  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
 }
 
-export async function fetchContactsForRun(campaignId: string, runId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
+export async function fetchContactsForRun(
+  campaignId: string,
+  runId: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<ContactFetchResult> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (options.forceRefresh) params.set('force_refresh', 'true')
+  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
 }
 
-export async function fetchContactsForCompanyApollo(campaignId: string, companyId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
+export async function fetchContactsForCompanyApollo(
+  campaignId: string,
+  companyId: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<ContactFetchResult> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (options.forceRefresh) params.set('force_refresh', 'true')
+  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo?${params.toString()}`, { method: 'POST' })
 }
 
-export async function fetchContactsForRunApollo(campaignId: string, runId: string): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
+export async function fetchContactsForRunApollo(
+  campaignId: string,
+  runId: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<ContactFetchResult> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (options.forceRefresh) params.set('force_refresh', 'true')
+  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo?${params.toString()}`, { method: 'POST' })
 }
 
 export async function fetchContactsSelected(
   campaignId: string,
   companyIds: string[],
   source: 'snov' | 'apollo' | 'both',
-  options: { idempotencyKey?: string } = {},
+  options: { idempotencyKey?: string; forceRefresh?: boolean } = {},
 ): Promise<ContactFetchResult> {
   return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
     method: 'POST',
@@ -581,7 +609,86 @@ export async function fetchContactsSelected(
       'Content-Type': 'application/json',
       ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
     },
-    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, source }),
+    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, source, force_refresh: Boolean(options.forceRefresh) }),
+  })
+}
+
+export async function listDiscoveredContacts(
+  options: {
+    campaignId: string
+    matchedOnly?: boolean
+    provider?: string
+    companyId?: string
+    search?: string
+    limit?: number
+    offset?: number
+    letters?: string[]
+    countByLetters?: boolean
+  },
+): Promise<DiscoveredContactListResponse> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
+  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.provider) params.set('provider', options.provider)
+  if (options.companyId) params.set('company_id', options.companyId)
+  if (options.search) params.set('search', options.search)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
+  if (options.countByLetters) params.set('count_by_letters', 'true')
+  return request<DiscoveredContactListResponse>(`/v1/discovered-contacts?${params.toString()}`)
+}
+
+export async function listCompanyDiscoveredContacts(
+  campaignId: string,
+  companyId: string,
+  options: { matchedOnly?: boolean; provider?: string; search?: string; limit?: number; offset?: number } = {},
+): Promise<DiscoveredContactListResponse> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', campaignId)
+  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.provider) params.set('provider', options.provider)
+  if (options.search) params.set('search', options.search)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  return request<DiscoveredContactListResponse>(`/v1/companies/${companyId}/discovered-contacts?${params.toString()}`)
+}
+
+export async function listDiscoveredCompanies(
+  options: {
+    campaignId: string
+    search?: string
+    matchedOnly?: boolean
+    matchGapFilter?: MatchGapFilter
+    limit?: number
+    offset?: number
+  },
+): Promise<ContactCompanyListResponse> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
+  if (options.search) params.set('search', options.search)
+  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.offset) params.set('offset', String(options.offset))
+  return request<ContactCompanyListResponse>(`/v1/discovered-contacts/companies?${params.toString()}`)
+}
+
+export async function getDiscoveredContactCounts(campaignId: string): Promise<DiscoveredContactCountsResponse> {
+  return request<DiscoveredContactCountsResponse>(`/v1/discovered-contacts/counts?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function revealDiscoveredContactEmails(
+  payload: ContactRevealRequest,
+  idempotencyKey?: string,
+): Promise<ContactRevealResult> {
+  return request<ContactRevealResult>('/v1/discovered-contacts/reveal-emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}),
+    },
+    body: JSON.stringify(payload),
   })
 }
 
@@ -717,8 +824,8 @@ export async function verifyContacts(payload: ContactVerifyRequest, idempotencyK
   })
 }
 
-export async function listTitleMatchRules(): Promise<TitleMatchRuleRead[]> {
-  return request<TitleMatchRuleRead[]>('/v1/title-match-rules')
+export async function listTitleMatchRules(campaignId: string): Promise<TitleMatchRuleRead[]> {
+  return request<TitleMatchRuleRead[]>(`/v1/title-match-rules?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
 export async function createTitleMatchRule(payload: TitleMatchRuleCreate): Promise<TitleMatchRuleRead> {
@@ -729,24 +836,24 @@ export async function createTitleMatchRule(payload: TitleMatchRuleCreate): Promi
   })
 }
 
-export async function deleteTitleMatchRule(ruleId: string): Promise<void> {
-  await request<void>(`/v1/title-match-rules/${ruleId}`, { method: 'DELETE' })
+export async function deleteTitleMatchRule(ruleId: string, campaignId: string): Promise<void> {
+  await request<void>(`/v1/title-match-rules/${ruleId}?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'DELETE' })
 }
 
-export async function seedTitleMatchRules(): Promise<TitleRuleSeedResult> {
-  return request<TitleRuleSeedResult>('/v1/title-match-rules/seed', { method: 'POST' })
+export async function seedTitleMatchRules(campaignId: string): Promise<TitleRuleSeedResult> {
+  return request<TitleRuleSeedResult>(`/v1/title-match-rules/seed?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
 }
 
-export async function testTitleMatch(title: string): Promise<TitleTestResult> {
+export async function testTitleMatch(campaignId: string, title: string): Promise<TitleTestResult> {
   return request<TitleTestResult>('/v1/title-match-rules/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ campaign_id: campaignId, title }),
   })
 }
 
-export async function getTitleRuleStats(): Promise<TitleRuleStatsResponse> {
-  return request<TitleRuleStatsResponse>('/v1/title-match-rules/stats')
+export async function getTitleRuleStats(campaignId: string): Promise<TitleRuleStatsResponse> {
+  return request<TitleRuleStatsResponse>(`/v1/title-match-rules/stats?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
 export async function previewTitleRuleImpact(

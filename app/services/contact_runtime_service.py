@@ -40,6 +40,9 @@ class ContactRuntimeService:
             auto_enqueue_max_batch_size=settings.contact_auto_enqueue_max_batch_size,
             auto_enqueue_max_active_per_run=settings.contact_auto_enqueue_max_active_per_run,
             dispatcher_batch_size=settings.contact_dispatcher_batch_size,
+            reveal_enabled=True,
+            reveal_paused=False,
+            reveal_dispatcher_batch_size=settings.contact_reveal_dispatcher_batch_size,
         )
         session.add(control)
         session.commit()
@@ -55,6 +58,9 @@ class ContactRuntimeService:
         auto_enqueue_max_batch_size: int | None = None,
         auto_enqueue_max_active_per_run: int | None = None,
         dispatcher_batch_size: int | None = None,
+        reveal_enabled: bool | None = None,
+        reveal_paused: bool | None = None,
+        reveal_dispatcher_batch_size: int | None = None,
     ) -> ContactFetchRuntimeControl:
         control = self.get_or_create_control(session)
         if auto_enqueue_enabled is not None:
@@ -67,6 +73,12 @@ class ContactRuntimeService:
             control.auto_enqueue_max_active_per_run = max(1, auto_enqueue_max_active_per_run)
         if dispatcher_batch_size is not None:
             control.dispatcher_batch_size = max(1, dispatcher_batch_size)
+        if reveal_enabled is not None:
+            control.reveal_enabled = reveal_enabled
+        if reveal_paused is not None:
+            control.reveal_paused = reveal_paused
+        if reveal_dispatcher_batch_size is not None:
+            control.reveal_dispatcher_batch_size = max(1, reveal_dispatcher_batch_size)
         control.updated_at = utcnow()
         session.add(control)
         session.commit()

@@ -75,6 +75,10 @@ app.conf.update(
         "app.tasks.contacts.fetch_contacts_snov_attempt": {"queue": "contacts_snov"},
         "app.tasks.contacts.fetch_contacts_apollo_attempt": {"queue": "contacts_apollo"},
         "app.tasks.contacts.dispatch_contact_fetch_jobs": {"queue": "contacts_orchestrator"},
+        "app.tasks.contacts.reveal_contact_emails": {"queue": "contacts_reveal_orchestrator"},
+        "app.tasks.contacts.reveal_contact_apollo_attempt": {"queue": "contacts_reveal_apollo"},
+        "app.tasks.contacts.reveal_contact_snov_attempt": {"queue": "contacts_reveal_snov"},
+        "app.tasks.contacts.dispatch_contact_reveal_jobs": {"queue": "contacts_reveal_orchestrator"},
         "app.tasks.contacts.verify_contacts_batch": {"queue": "contacts_verify"},
     },
     # Celery Beat periodic schedule.
@@ -89,6 +93,10 @@ app.conf.update(
         },
         "dispatch-contact-fetch-jobs": {
             "task": "app.tasks.contacts.dispatch_contact_fetch_jobs",
+            "schedule": crontab(minute="*"),
+        },
+        "dispatch-contact-reveal-jobs": {
+            "task": "app.tasks.contacts.dispatch_contact_reveal_jobs",
             "schedule": crontab(minute="*"),
         },
     },

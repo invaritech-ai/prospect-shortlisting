@@ -282,11 +282,18 @@ def update_contact_runtime_control(
         auto_enqueue_max_batch_size=payload.auto_enqueue_max_batch_size,
         auto_enqueue_max_active_per_run=payload.auto_enqueue_max_active_per_run,
         dispatcher_batch_size=payload.dispatcher_batch_size,
+        reveal_enabled=payload.reveal_enabled,
+        reveal_paused=payload.reveal_paused,
+        reveal_dispatcher_batch_size=payload.reveal_dispatcher_batch_size,
     )
     if control.auto_enqueue_enabled and not control.auto_enqueue_paused:
         from app.tasks.contacts import dispatch_contact_fetch_jobs
 
         dispatch_contact_fetch_jobs.delay()
+    if control.reveal_enabled and not control.reveal_paused:
+        from app.tasks.contacts import dispatch_contact_reveal_jobs
+
+        dispatch_contact_reveal_jobs.delay()
     return ContactRuntimeControlRead.model_validate(control, from_attributes=True)
 
 

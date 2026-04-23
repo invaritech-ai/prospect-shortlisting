@@ -569,6 +569,9 @@ export type ContactFetchResult = {
   queued_count: number
   already_fetching_count: number
   queued_job_ids: string[]
+  reused_count?: number
+  stale_reused_count?: number
+  batch_id?: string | null
   idempotency_key?: string | null
   idempotency_replayed?: boolean
 }
@@ -622,10 +625,69 @@ export type ContactVerifyResult = {
   idempotency_replayed?: boolean
 }
 
+export type DiscoveredContactRead = {
+  id: string
+  company_id: string
+  contact_fetch_job_id?: string | null
+  domain: string
+  provider: string
+  provider_person_id: string
+  first_name: string
+  last_name: string
+  title: string | null
+  title_match: boolean
+  linkedin_url: string | null
+  source_url: string | null
+  provider_has_email: boolean | null
+  is_active: boolean
+  backfilled: boolean
+  freshness_status: 'fresh' | 'stale'
+  group_key: string
+  discovered_at: string
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
+export type DiscoveredContactListResponse = {
+  total: number
+  has_more: boolean
+  limit: number
+  offset: number
+  items: DiscoveredContactRead[]
+  letter_counts?: Record<string, number>
+}
+
+export type DiscoveredContactCountsResponse = {
+  total: number
+  matched: number
+  stale: number
+  fresh: number
+  already_revealed: number
+}
+
+export type ContactRevealRequest = {
+  campaign_id: string
+  discovered_contact_ids?: string[]
+  company_ids?: string[]
+}
+
+export type ContactRevealResult = {
+  batch_id?: string | null
+  selected_count: number
+  queued_count: number
+  already_revealing_count: number
+  skipped_revealed_count: number
+  message: string
+  idempotency_key?: string | null
+  idempotency_replayed?: boolean
+}
+
 export type MatchGapFilter = 'all' | 'contacts_no_match' | 'matched_no_email' | 'ready_candidates'
 
 export type TitleMatchRuleRead = {
   id: string
+  campaign_id?: string | null
   rule_type: 'include' | 'exclude'
   match_type: 'keyword' | 'regex' | 'seniority'
   keywords: string
@@ -633,6 +695,7 @@ export type TitleMatchRuleRead = {
 }
 
 export type TitleMatchRuleCreate = {
+  campaign_id: string
   rule_type: 'include' | 'exclude'
   keywords: string
   match_type?: 'keyword' | 'regex' | 'seniority'

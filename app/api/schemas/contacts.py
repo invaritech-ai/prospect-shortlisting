@@ -44,6 +44,8 @@ class ContactFetchResult(BaseModel):
     queued_count: int
     already_fetching_count: int
     queued_job_ids: list[UUID]
+    reused_count: int = 0
+    stale_reused_count: int = 0
     batch_id: UUID | None = None
     idempotency_key: str | None = None
     idempotency_replayed: bool = False
@@ -51,6 +53,7 @@ class ContactFetchResult(BaseModel):
 
 class TitleMatchRuleRead(UTCReadModel):
     id: UUID
+    campaign_id: UUID | None = None
     rule_type: str
     match_type: str
     keywords: str
@@ -58,6 +61,7 @@ class TitleMatchRuleRead(UTCReadModel):
 
 
 class TitleMatchRuleCreate(BaseModel):
+    campaign_id: UUID
     rule_type: str = Field(pattern="^(include|exclude)$")
     keywords: str = Field(min_length=1, max_length=255)
     match_type: str = Field(default="keyword", pattern="^(keyword|regex|seniority)$")
@@ -72,6 +76,7 @@ class BulkContactFetchRequest(BaseModel):
     campaign_id: UUID
     company_ids: list[UUID] = Field(min_length=1)
     source: Literal["snov", "apollo", "both"] = "snov"
+    force_refresh: bool = False
 
 
 class RematchResult(BaseModel):
@@ -95,6 +100,7 @@ class TitleRuleImpactPreview(BaseModel):
 
 
 class TitleTestRequest(BaseModel):
+    campaign_id: UUID
     title: str = Field(min_length=1, max_length=512)
 
 
@@ -167,6 +173,64 @@ class ContactVerifyResult(BaseModel):
     idempotency_replayed: bool = False
 
 
+class DiscoveredContactRead(UTCReadModel):
+    id: UUID
+    company_id: UUID
+    contact_fetch_job_id: UUID | None = None
+    domain: str
+    provider: str
+    provider_person_id: str
+    first_name: str
+    last_name: str
+    title: str | None
+    title_match: bool
+    linkedin_url: str | None
+    source_url: str | None
+    provider_has_email: bool | None
+    is_active: bool
+    backfilled: bool
+    freshness_status: Literal["fresh", "stale"]
+    group_key: str
+    discovered_at: datetime
+    last_seen_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscoveredContactListResponse(BaseModel):
+    total: int
+    has_more: bool
+    limit: int
+    offset: int
+    items: list[DiscoveredContactRead]
+    letter_counts: dict[str, int] | None = None
+
+
+class DiscoveredContactCountsResponse(BaseModel):
+    total: int
+    matched: int
+    stale: int
+    fresh: int
+    already_revealed: int
+
+
+class ContactRevealRequest(BaseModel):
+    campaign_id: UUID
+    discovered_contact_ids: list[UUID] | None = None
+    company_ids: list[UUID] | None = None
+
+
+class ContactRevealResult(BaseModel):
+    batch_id: UUID | None = None
+    selected_count: int
+    queued_count: int
+    already_revealing_count: int
+    skipped_revealed_count: int
+    message: str
+    idempotency_key: str | None = None
+    idempotency_replayed: bool = False
+
+
 MatchGapFilter = Literal["all", "contacts_no_match", "matched_no_email", "ready_candidates"]
 
 
@@ -177,6 +241,9 @@ class ContactRuntimeControlRead(UTCReadModel):
     auto_enqueue_max_batch_size: int
     auto_enqueue_max_active_per_run: int
     dispatcher_batch_size: int
+    reveal_enabled: bool
+    reveal_paused: bool
+    reveal_dispatcher_batch_size: int
     created_at: datetime
     updated_at: datetime
 
@@ -187,6 +254,9 @@ class ContactRuntimeControlUpdate(BaseModel):
     auto_enqueue_max_batch_size: int | None = Field(default=None, ge=1)
     auto_enqueue_max_active_per_run: int | None = Field(default=None, ge=1)
     dispatcher_batch_size: int | None = Field(default=None, ge=1)
+    reveal_enabled: bool | None = None
+    reveal_paused: bool | None = None
+    reveal_dispatcher_batch_size: int | None = Field(default=None, ge=1)
 
 
 class ContactBatchSummary(UTCReadModel):

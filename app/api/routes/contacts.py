@@ -39,6 +39,7 @@ from app.models import (
     Company,
     ContactFetchJob,
     ContactVerifyJob,
+    DiscoveredContact,
     ProspectContact,
     ProspectContactEmail,
     Run,
@@ -52,12 +53,6 @@ from app.models.pipeline import (
     PredictedLabel,
     utcnow,
 )
-from app.services.contact_service import (
-    compute_title_rule_stats,
-    rematch_existing_contacts,
-    seed_title_rules,
-    test_title_match_detailed,
-)
 from app.services.contact_queue_service import ContactQueueService
 from app.services.idempotency_service import (
     IdempotencyConflictError,
@@ -67,6 +62,12 @@ from app.services.idempotency_service import (
     normalize_idempotency_key,
     store_idempotency_response,
 )
+from app.services.title_match_service import (
+    compute_title_rule_stats,
+    rematch_discovered_contacts,
+    seed_title_rules,
+    test_title_match_detailed,
+)
 from app.tasks.contacts import verify_contacts_batch
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
@@ -74,7 +75,7 @@ router = APIRouter(prefix="/v1", tags=["contacts"])
 _ALLOWED_CONTACT_STAGE_FILTERS = frozenset({"all", "fetched", "verified", "campaign_ready"})
 _ALLOWED_MATCH_GAP_FILTERS = frozenset({"all", "contacts_no_match", "matched_no_email", "ready_candidates"})
 _IMPACT_SOURCE_VALUES = frozenset({"snov", "apollo", "both"})
-_IMPACT_PROVIDER_STALE_DEFAULT_DAYS: dict[str, int] = {"snov": 30, "apollo": 45}
+_IMPACT_PROVIDER_STALE_DEFAULT_DAYS: dict[str, int] = {"snov": 30, "apollo": 30}
 
 
 def _validate_contact_stage_filter(stage_filter: str) -> str:
@@ -260,6 +261,7 @@ def _enqueue_contact_fetches(
     pipeline_run_id: UUID | None = None,
     trigger_source: str = "manual",
     auto_enqueued: bool = False,
+    force_refresh: bool = False,
 ) -> ContactFetchResult:
     normalized_provider = (provider or "snov").strip().lower()
     normalized_next_provider = (next_provider or "").strip().lower() or None
@@ -279,12 +281,15 @@ def _enqueue_contact_fetches(
         pipeline_run_id=pipeline_run_id,
         trigger_source=trigger_source,
         auto_enqueued=auto_enqueued,
+        force_refresh=force_refresh,
     )
     return ContactFetchResult(
         requested_count=result.requested_count,
         queued_count=result.queued_count,
         already_fetching_count=result.already_fetching_count,
         queued_job_ids=result.queued_job_ids,
+        reused_count=result.reused_count,
+        stale_reused_count=result.stale_reused_count,
         batch_id=result.batch_id,
     )
 
@@ -310,13 +315,12 @@ def _build_stale_condition(
     source: Literal["snov", "apollo", "both"],
     stale_days: int | None,
 ):
-    source_expr = func.lower(func.coalesce(col(ProspectContact.source), ""))
+    source_expr = func.lower(func.coalesce(col(DiscoveredContact.provider), ""))
     if stale_days is not None:
         stale_cutoff = utcnow() - timedelta(days=stale_days)
         stale_base = and_(
-            col(ProspectContact.title_match).is_(True),
-            col(ProspectContact.email).is_not(None),
-            col(ProspectContact.updated_at) <= stale_cutoff,
+            col(DiscoveredContact.title_match).is_(True),
+            col(DiscoveredContact.last_seen_at) <= stale_cutoff,
         )
         if source == "both":
             return stale_base
@@ -326,15 +330,15 @@ def _build_stale_condition(
     apollo_cutoff = utcnow() - timedelta(days=_IMPACT_PROVIDER_STALE_DEFAULT_DAYS["apollo"])
     snov_stale = and_(
         source_expr == "snov",
-        col(ProspectContact.updated_at) <= snov_cutoff,
+        col(DiscoveredContact.last_seen_at) <= snov_cutoff,
     )
     apollo_stale = and_(
         source_expr == "apollo",
-        col(ProspectContact.updated_at) <= apollo_cutoff,
+        col(DiscoveredContact.last_seen_at) <= apollo_cutoff,
     )
     fallback_stale = and_(
         source_expr.notin_(["snov", "apollo"]),
-        col(ProspectContact.updated_at) <= snov_cutoff,
+        col(DiscoveredContact.last_seen_at) <= snov_cutoff,
     )
     stale_by_source = (
         snov_stale
@@ -344,8 +348,7 @@ def _build_stale_condition(
         else or_(snov_stale, apollo_stale, fallback_stale)
     )
     return and_(
-        col(ProspectContact.title_match).is_(True),
-        col(ProspectContact.email).is_not(None),
+        col(DiscoveredContact.title_match).is_(True),
         stale_by_source,
     )
 
@@ -366,27 +369,27 @@ def _title_rule_impact_targets(
         stale_days=stale_days,
     )
     if force_refresh:
-        target_condition = col(ProspectContact.title_match).is_(True)
+        target_condition = col(DiscoveredContact.title_match).is_(True)
     elif include_stale:
         target_condition = or_(
-            col(ProspectContact.email).is_(None),
+            col(DiscoveredContact.is_active).is_(True),
             stale_condition,
         )
     else:
-        target_condition = col(ProspectContact.email).is_(None)
+        target_condition = col(DiscoveredContact.is_active).is_(True)
     impacted_contacts_stmt = (
-        select(func.count(ProspectContact.id))
-        .join(Company, col(Company.id) == col(ProspectContact.company_id))
+        select(func.count(DiscoveredContact.id))
+        .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
         .where(
             scope,
-            col(ProspectContact.title_match).is_(True),
+            col(DiscoveredContact.title_match).is_(True),
             target_condition,
         )
     )
     impacted_contact_count = session.exec(impacted_contacts_stmt).one() or 0
     stale_contact_count_stmt = (
-        select(func.count(ProspectContact.id))
-        .join(Company, col(Company.id) == col(ProspectContact.company_id))
+        select(func.count(DiscoveredContact.id))
+        .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
         .where(
             scope,
             stale_condition,
@@ -395,14 +398,14 @@ def _title_rule_impact_targets(
     stale_contact_count = session.exec(stale_contact_count_stmt).one() or 0
     impacted_company_ids = list(
         session.exec(
-            select(ProspectContact.company_id)
-            .join(Company, col(Company.id) == col(ProspectContact.company_id))
+            select(DiscoveredContact.company_id)
+            .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
             .where(
                 scope,
-                col(ProspectContact.title_match).is_(True),
+                col(DiscoveredContact.title_match).is_(True),
                 target_condition,
             )
-            .group_by(ProspectContact.company_id)
+            .group_by(DiscoveredContact.company_id)
         )
     )
     companies = (
@@ -427,6 +430,7 @@ def _title_rule_impact_targets(
 def fetch_contacts_for_company(
     company_id: UUID,
     campaign_id: UUID = Query(...),
+    force_refresh: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
     _campaign_or_404(session=session, campaign_id=campaign_id)
@@ -444,6 +448,7 @@ def fetch_contacts_for_company(
         provider="snov",
         campaign_id=campaign_id,
         trigger_source="manual_company",
+        force_refresh=force_refresh,
     )
 
 
@@ -455,6 +460,7 @@ def fetch_contacts_for_company(
 def fetch_apollo_contacts_for_company(
     company_id: UUID,
     campaign_id: UUID = Query(...),
+    force_refresh: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
     _campaign_or_404(session=session, campaign_id=campaign_id)
@@ -472,6 +478,7 @@ def fetch_apollo_contacts_for_company(
         provider="apollo",
         campaign_id=campaign_id,
         trigger_source="manual_company",
+        force_refresh=force_refresh,
     )
 
 
@@ -483,6 +490,7 @@ def fetch_apollo_contacts_for_company(
 def fetch_contacts_for_run(
     run_id: UUID,
     campaign_id: UUID = Query(...),
+    force_refresh: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
     _campaign_or_404(session=session, campaign_id=campaign_id)
@@ -514,6 +522,7 @@ def fetch_contacts_for_run(
         provider="snov",
         campaign_id=campaign_id,
         trigger_source="manual_run",
+        force_refresh=force_refresh,
     )
 
 
@@ -525,6 +534,7 @@ def fetch_contacts_for_run(
 def fetch_apollo_contacts_for_run(
     run_id: UUID,
     campaign_id: UUID = Query(...),
+    force_refresh: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
     _campaign_or_404(session=session, campaign_id=campaign_id)
@@ -556,6 +566,7 @@ def fetch_apollo_contacts_for_run(
         provider="apollo",
         campaign_id=campaign_id,
         trigger_source="manual_run",
+        force_refresh=force_refresh,
     )
 
 
@@ -616,10 +627,13 @@ def fetch_contacts_selected(
                 next_provider="apollo",
                 campaign_id=payload.campaign_id,
                 trigger_source="manual_selection",
+                force_refresh=payload.force_refresh,
             )
             total_queued = r.queued_count
             total_already_fetching = r.already_fetching_count
             all_job_ids = list(r.queued_job_ids)
+            reused_count = r.reused_count
+            stale_reused_count = r.stale_reused_count
         else:
             r = _enqueue_contact_fetches(
                 session=session,
@@ -627,16 +641,21 @@ def fetch_contacts_selected(
                 provider=payload.source,
                 campaign_id=payload.campaign_id,
                 trigger_source="manual_selection",
+                force_refresh=payload.force_refresh,
             )
             total_queued = r.queued_count
             total_already_fetching = r.already_fetching_count
             all_job_ids = list(r.queued_job_ids)
+            reused_count = r.reused_count
+            stale_reused_count = r.stale_reused_count
 
         result = ContactFetchResult(
             requested_count=len(companies),
             queued_count=total_queued,
             already_fetching_count=total_already_fetching,
             queued_job_ids=all_job_ids,
+            reused_count=reused_count,
+            stale_reused_count=stale_reused_count,
             batch_id=r.batch_id,
             idempotency_key=idempotency_key,
             idempotency_replayed=False,
@@ -1233,10 +1252,16 @@ def verify_contacts(
 
 
 @router.get("/title-match-rules", response_model=list[TitleMatchRuleRead])
-def list_title_rules(session: Session = Depends(get_session)) -> list[TitleMatchRuleRead]:
+def list_title_rules(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> list[TitleMatchRuleRead]:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
     rules = list(
         session.exec(
-            select(TitleMatchRule).order_by(col(TitleMatchRule.rule_type), col(TitleMatchRule.created_at))
+            select(TitleMatchRule)
+            .where(col(TitleMatchRule.campaign_id) == campaign_id)
+            .order_by(col(TitleMatchRule.rule_type), col(TitleMatchRule.created_at))
         ).all()
     )
     return [TitleMatchRuleRead.model_validate(rule, from_attributes=True) for rule in rules]
@@ -1247,35 +1272,48 @@ def create_title_rule(
     payload: TitleMatchRuleCreate,
     session: Session = Depends(get_session),
 ) -> TitleMatchRuleRead:
-    rule = TitleMatchRule(rule_type=payload.rule_type, keywords=payload.keywords, match_type=payload.match_type)
+    _campaign_or_404(session=session, campaign_id=payload.campaign_id)
+    rule = TitleMatchRule(
+        campaign_id=payload.campaign_id,
+        rule_type=payload.rule_type,
+        keywords=payload.keywords,
+        match_type=payload.match_type,
+    )
     session.add(rule)
     session.commit()
     session.refresh(rule)
-    rematch_existing_contacts(session)
+    rematch_discovered_contacts(session, campaign_id=payload.campaign_id)
     return TitleMatchRuleRead.model_validate(rule, from_attributes=True)
 
 
 @router.delete("/title-match-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_title_rule(
     rule_id: UUID,
+    campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> None:
     rule = session.get(TitleMatchRule, rule_id)
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found.")
+    if rule.campaign_id != campaign_id:
+        raise HTTPException(status_code=422, detail="rule_id is not assigned to the selected campaign.")
     session.delete(rule)
     session.commit()
-    rematch_existing_contacts(session)
+    rematch_discovered_contacts(session, campaign_id=campaign_id)
 
 
 @router.post("/title-match-rules/rematch", response_model=RematchResult)
-def rematch_contacts(session: Session = Depends(get_session)) -> RematchResult:
-    updated, _company_ids = rematch_existing_contacts(session)
+def rematch_contacts(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> RematchResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    updated = rematch_discovered_contacts(session, campaign_id=campaign_id)
     return RematchResult(
         updated=updated,
         fetch_jobs_queued=0,
         message=(
-            f"Re-evaluated all contacts; {updated} title_match flags changed, no fetch jobs queued."
+            f"Re-evaluated discovered contacts for this campaign; {updated} title_match flags changed."
         ),
     )
 
@@ -1363,10 +1401,13 @@ def queue_title_rule_impact_fetch(
             next_provider="apollo",
             campaign_id=campaign_id,
             trigger_source="rule_impact",
+            force_refresh=force_refresh,
         )
         total_queued = result.queued_count
         total_already_fetching = result.already_fetching_count
         all_job_ids = list(result.queued_job_ids)
+        reused_count = result.reused_count
+        stale_reused_count = result.stale_reused_count
     else:
         result = _enqueue_contact_fetches(
             session=session,
@@ -1374,22 +1415,31 @@ def queue_title_rule_impact_fetch(
             provider=normalized_source,
             campaign_id=campaign_id,
             trigger_source="rule_impact",
+            force_refresh=force_refresh,
         )
         total_queued = result.queued_count
         total_already_fetching = result.already_fetching_count
         all_job_ids = list(result.queued_job_ids)
+        reused_count = result.reused_count
+        stale_reused_count = result.stale_reused_count
     return ContactFetchResult(
         requested_count=len(companies),
         queued_count=total_queued,
         already_fetching_count=total_already_fetching,
         queued_job_ids=all_job_ids,
+        reused_count=reused_count,
+        stale_reused_count=stale_reused_count,
         batch_id=result.batch_id,
     )
 
 
 @router.post("/title-match-rules/seed", response_model=TitleRuleSeedResult)
-def seed_rules(session: Session = Depends(get_session)) -> TitleRuleSeedResult:
-    inserted = seed_title_rules(session)
+def seed_rules(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> TitleRuleSeedResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    inserted = seed_title_rules(session, campaign_id=campaign_id)
     return TitleRuleSeedResult(
         inserted=inserted,
         message=f"Inserted {inserted} new rules (duplicates skipped).",
@@ -1401,11 +1451,16 @@ def run_title_test(
     payload: TitleTestRequest,
     session: Session = Depends(get_session),
 ) -> TitleTestResult:
-    result = test_title_match_detailed(payload.title, session)
+    _campaign_or_404(session=session, campaign_id=payload.campaign_id)
+    result = test_title_match_detailed(payload.title, session, campaign_id=payload.campaign_id)
     return TitleTestResult.model_validate(result)
 
 
 @router.get("/title-match-rules/stats", response_model=TitleRuleStatsResponse)
-def get_title_rule_stats(session: Session = Depends(get_session)) -> TitleRuleStatsResponse:
-    result = compute_title_rule_stats(session)
+def get_title_rule_stats(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> TitleRuleStatsResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    result = compute_title_rule_stats(session, campaign_id=campaign_id)
     return TitleRuleStatsResponse.model_validate(result)

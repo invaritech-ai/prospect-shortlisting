@@ -122,7 +122,7 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_foreign_key(
-        "fk_contact_fetch_jobs_contact_fetch_batch_id_contact_fetch_batches",
+        "fk_contact_fetch_jobs_batch_id_batches",
         "contact_fetch_jobs",
         "contact_fetch_batches",
         ["contact_fetch_batch_id"],
@@ -183,7 +183,7 @@ def downgrade() -> None:
     op.drop_table("contact_provider_attempts")
 
     op.drop_constraint(
-        "fk_contact_fetch_jobs_contact_fetch_batch_id_contact_fetch_batches",
+        "fk_contact_fetch_jobs_batch_id_batches",
         "contact_fetch_jobs",
         type_="foreignkey",
     )

@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     contact_auto_enqueue_max_batch_size: int = 25
     contact_auto_enqueue_max_active_per_run: int = 10
     contact_dispatcher_batch_size: int = 50
+    contact_reveal_dispatcher_batch_size: int = 50
+    contact_discovery_freshness_days: int = 30
     contact_provider_circuit_threshold: int = 3
     contact_provider_cooldown_sec: int = 120
     contact_provider_retry_delay_sec: int = 60

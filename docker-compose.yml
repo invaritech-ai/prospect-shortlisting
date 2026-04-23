@@ -119,6 +119,48 @@ services:
       api:
         condition: service_healthy
 
+  worker-contact-reveal-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_reveal_orchestrator", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-contact-reveal-apollo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_reveal_apollo", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  worker-contact-reveal-snov:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_reveal_snov", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
   beat:
     build:
       context: .
