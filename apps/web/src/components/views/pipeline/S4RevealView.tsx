@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import type { DiscoveredContactListResponse, DiscoveredContactCountsResponse, DiscoveredContactRead } from '../../../lib/types'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Pager } from '../../ui/Pager'
+import { ConfirmDialog } from '../../ui/ConfirmDialog'
 
 interface S4RevealViewProps {
   campaignId: string | null
@@ -88,6 +90,7 @@ export function S4RevealView({
   isLoading,
   isRevealing,
 }: S4RevealViewProps) {
+  const [showRevealConfirm, setShowRevealConfirm] = useState(false)
   const items: DiscoveredContactRead[] = contacts?.items ?? []
   const visibleIds = items.map((c) => c.id)
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id))
@@ -239,7 +242,7 @@ export function S4RevealView({
       >
         <button
           type="button"
-          onClick={onRevealSelected}
+          onClick={() => setShowRevealConfirm(true)}
           disabled={selectedIds.length === 0 || isRevealing}
           className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
           style={{ backgroundColor: 'var(--s4)' }}
@@ -247,6 +250,21 @@ export function S4RevealView({
           {isRevealing ? '…' : 'Reveal Emails'}
         </button>
       </SelectionBar>
+
+      <ConfirmDialog
+        open={showRevealConfirm}
+        title="Reveal email addresses?"
+        confirmLabel="Reveal"
+        isConfirming={isRevealing}
+        onClose={() => setShowRevealConfirm(false)}
+        onConfirm={() => { setShowRevealConfirm(false); onRevealSelected() }}
+      >
+        <p className="text-sm text-(--oc-muted)">
+          This will fetch email addresses for{' '}
+          <strong className="text-(--oc-text)">{selectedIds.length} contact{selectedIds.length !== 1 ? 's' : ''}</strong>{' '}
+          using Snov.io and/or Apollo credits. This action cannot be undone.
+        </p>
+      </ConfirmDialog>
     </div>
   )
 }

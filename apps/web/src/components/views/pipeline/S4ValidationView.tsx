@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type {
   ContactCountsResponse,
   ContactListResponse,
@@ -10,6 +11,7 @@ import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
+import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
 interface S4ValidationViewProps {
@@ -116,6 +118,7 @@ export function S4ValidationView({
   sortDir,
   onSort,
 }: S4ValidationViewProps) {
+  const [showVerifyConfirm, setShowVerifyConfirm] = useState(false)
   const selectedSet = new Set(selectedContactIds)
 
   // Server applies both verification and letter filters for paginated correctness.
@@ -249,7 +252,7 @@ export function S4ValidationView({
       >
         <button
           type="button"
-          onClick={onValidateSelected}
+          onClick={() => setShowVerifyConfirm(true)}
           disabled={isValidating || selectedContactIds.length === 0}
           className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
           style={{ backgroundColor: 'var(--s4)' }}
@@ -257,6 +260,21 @@ export function S4ValidationView({
           {isValidating ? 'Queuing…' : 'Validate with ZeroBounce'}
         </button>
       </SelectionBar>
+
+      <ConfirmDialog
+        open={showVerifyConfirm}
+        title="Validate with ZeroBounce?"
+        confirmLabel="Validate"
+        isConfirming={isValidating}
+        onClose={() => setShowVerifyConfirm(false)}
+        onConfirm={() => { setShowVerifyConfirm(false); onValidateSelected() }}
+      >
+        <p className="text-sm text-(--oc-muted)">
+          This will validate{' '}
+          <strong className="text-(--oc-text)">{selectedContactIds.length} email{selectedContactIds.length !== 1 ? 's' : ''}</strong>{' '}
+          using ZeroBounce credits. This action cannot be undone.
+        </p>
+      </ConfirmDialog>
       </div>{/* ── /sticky controls ── */}
 
       {/* Table */}

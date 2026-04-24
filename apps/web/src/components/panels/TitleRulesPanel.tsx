@@ -29,7 +29,9 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   const [newMatchType, setNewMatchType] = useState<'keyword' | 'regex' | 'seniority'>('keyword')
   const [newKeywords, setNewKeywords] = useState('')
   const [isAdding, setIsAdding] = useState(false)
+  const [isSeeding, setIsSeeding] = useState(false)
   const [deletingIds, setDeletingIds] = useState(new Set<string>())
+  const [pendingDeleteRuleId, setPendingDeleteRuleId] = useState<string | null>(null)
   const [error, setError] = useState('')
 
   const loadAll = useCallback(async () => {
@@ -101,11 +103,14 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
 
   const onSeedRules = async () => {
     if (!campaignId) return
+    setIsSeeding(true)
     try {
       await seedTitleMatchRules(campaignId)
       await loadAll()
     } catch {
       setError('Failed to seed rules')
+    } finally {
+      setIsSeeding(false)
     }
   }
 
@@ -213,14 +218,23 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
                     {getMatchCount(r.id)}
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void onDeleteRule(r.id)}
-                  disabled={deletingIds.has(r.id)}
-                  className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50"
-                >
-                  ✕
-                </button>
+                {pendingDeleteRuleId === r.id ? (
+                  <>
+                    <button type="button" onClick={() => { setPendingDeleteRuleId(null); void onDeleteRule(r.id) }} disabled={deletingIds.has(r.id)}
+                      className="text-[10px] font-bold text-rose-600 transition hover:text-rose-800 disabled:opacity-50">
+                      {deletingIds.has(r.id) ? '…' : 'Confirm'}
+                    </button>
+                    <button type="button" onClick={() => setPendingDeleteRuleId(null)}
+                      className="text-[10px] text-(--oc-muted) transition hover:text-(--oc-text)">
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => setPendingDeleteRuleId(r.id)} disabled={deletingIds.has(r.id)}
+                    className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50">
+                    ✕
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -246,14 +260,23 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
                     {getMatchCount(r.id)} blocked
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void onDeleteRule(r.id)}
-                  disabled={deletingIds.has(r.id)}
-                  className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50"
-                >
-                  ✕
-                </button>
+                {pendingDeleteRuleId === r.id ? (
+                  <>
+                    <button type="button" onClick={() => { setPendingDeleteRuleId(null); void onDeleteRule(r.id) }} disabled={deletingIds.has(r.id)}
+                      className="text-[10px] font-bold text-rose-600 transition hover:text-rose-800 disabled:opacity-50">
+                      {deletingIds.has(r.id) ? '…' : 'Confirm'}
+                    </button>
+                    <button type="button" onClick={() => setPendingDeleteRuleId(null)}
+                      className="text-[10px] text-(--oc-muted) transition hover:text-(--oc-text)">
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => setPendingDeleteRuleId(r.id)} disabled={deletingIds.has(r.id)}
+                    className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50">
+                    ✕
+                  </button>
+                )}
               </div>
             ))}
             {excludeRules.length === 0 && !isLoading && (
@@ -333,10 +356,10 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
         <button
           type="button"
           onClick={() => void onSeedRules()}
-          disabled={isLoading || isAdding}
+          disabled={isLoading || isAdding || isSeeding}
           className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Seed default rules
+          {isSeeding ? 'Seeding…' : 'Seed default rules'}
         </button>
       </div>
     </Drawer>

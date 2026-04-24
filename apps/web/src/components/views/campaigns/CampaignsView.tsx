@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { CampaignRead, PipelineCostSummaryRead, PipelineRunProgressRead, UploadRead } from '../../../lib/types'
+import { ConfirmDialog } from '../../ui/ConfirmDialog'
 
 interface CampaignsViewProps {
   campaigns: CampaignRead[]
@@ -37,6 +38,7 @@ export function CampaignsView({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [selectedUploadIds, setSelectedUploadIds] = useState<string[]>([])
+  const [pendingDeleteCampaignId, setPendingDeleteCampaignId] = useState<string | null>(null)
   const selectedCampaign = useMemo(
     () => campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? null,
     [campaigns, selectedCampaignId],
@@ -198,8 +200,9 @@ export function CampaignsView({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onDeleteCampaign(campaign.id)}
-                        className="rounded-lg border border-rose-300 px-2 py-1 text-xs text-rose-700"
+                        onClick={() => setPendingDeleteCampaignId(campaign.id)}
+                        disabled={isSaving}
+                        className="rounded-lg border border-rose-300 px-2 py-1 text-xs text-rose-700 disabled:opacity-50"
                       >
                         Delete
                       </button>
@@ -254,6 +257,25 @@ export function CampaignsView({
           </>
         )}
       </section>
+
+      <ConfirmDialog
+        open={pendingDeleteCampaignId !== null}
+        title="Delete campaign?"
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        isConfirming={isSaving}
+        onClose={() => setPendingDeleteCampaignId(null)}
+        onConfirm={() => {
+          if (pendingDeleteCampaignId) {
+            onDeleteCampaign(pendingDeleteCampaignId)
+            setPendingDeleteCampaignId(null)
+          }
+        }}
+      >
+        <p className="text-sm text-(--oc-muted)">
+          This will permanently delete the campaign and all associated data. This cannot be undone.
+        </p>
+      </ConfirmDialog>
     </div>
   )
 }
