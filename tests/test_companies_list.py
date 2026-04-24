@@ -10,7 +10,7 @@ from sqlmodel import Session, col, delete
 from app.api.routes.campaigns import create_campaign
 from app.api.routes.companies import get_company_counts, get_letter_counts, list_companies, list_company_ids
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, CompanyFeedback, ContactFetchJob, ScrapeJob, Upload
+from app.models import Company, CompanyFeedback, ContactFetchJob, DiscoveredContact, ProspectContact, ScrapeJob, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState, utcnow
 
 
@@ -110,6 +110,86 @@ def test_list_companies_search_is_server_filtered(sqlite_session: Session) -> No
         assert letter_counts.counts["a"] == 1
         assert letter_counts.counts["b"] == 1
         assert letter_counts.counts["g"] == 0
+    finally:
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_list_companies_exposes_discovered_and_revealed_contact_counts(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Company Contact Count Split"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "contact-count-split.csv", campaign_id=campaign.id)
+    try:
+        discovered_only = _seed_company(sqlite_session, upload_id=upload.id, domain="discovered-only.example")
+        revealed = _seed_company(sqlite_session, upload_id=upload.id, domain="revealed.example")
+        discovered_job = ContactFetchJob(company_id=discovered_only.id, provider="snov")
+        revealed_job = ContactFetchJob(company_id=revealed.id, provider="snov")
+        sqlite_session.add_all([discovered_job, revealed_job])
+        sqlite_session.flush()
+        sqlite_session.add_all(
+            [
+                DiscoveredContact(
+                    company_id=discovered_only.id,
+                    contact_fetch_job_id=discovered_job.id,
+                    provider="snov",
+                    provider_person_id="disc-1",
+                    first_name="Dana",
+                    last_name="Discovery",
+                    title="Marketing Director",
+                    title_match=True,
+                ),
+                DiscoveredContact(
+                    company_id=discovered_only.id,
+                    contact_fetch_job_id=discovered_job.id,
+                    provider="snov",
+                    provider_person_id="disc-2",
+                    first_name="Uma",
+                    last_name="Unmatched",
+                    title="Assistant",
+                    title_match=False,
+                ),
+                DiscoveredContact(
+                    company_id=revealed.id,
+                    contact_fetch_job_id=revealed_job.id,
+                    provider="snov",
+                    provider_person_id="rev-1",
+                    first_name="Rae",
+                    last_name="Reveal",
+                    title="Marketing Director",
+                    title_match=True,
+                ),
+                ProspectContact(
+                    company_id=revealed.id,
+                    contact_fetch_job_id=revealed_job.id,
+                    source="snov",
+                    first_name="Rae",
+                    last_name="Reveal",
+                    title="Marketing Director",
+                    title_match=True,
+                    email="rae@revealed.example",
+                ),
+            ]
+        )
+        sqlite_session.commit()
+
+        response = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+
+        by_domain = {item.domain: item for item in response.items}
+        assert by_domain["discovered-only.example"].contact_count == 0
+        assert by_domain["discovered-only.example"].revealed_contact_count == 0
+        assert by_domain["discovered-only.example"].discovered_contact_count == 2
+        assert by_domain["discovered-only.example"].discovered_title_matched_count == 1
+        assert by_domain["revealed.example"].contact_count == 1
+        assert by_domain["revealed.example"].revealed_contact_count == 1
+        assert by_domain["revealed.example"].discovered_contact_count == 1
+        assert by_domain["revealed.example"].discovered_title_matched_count == 1
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))

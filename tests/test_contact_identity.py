@@ -126,3 +126,28 @@ def test_discovered_persistence_skips_synthetic_ids_and_reactivates_native_match
         )
     )
     assert len(rows) == 1
+
+
+def test_snov_fetch_paginates_until_reported_total(monkeypatch) -> None:
+    pages = {
+        1: [{"id": f"snov-{idx}", "first_name": "Person", "last_name": str(idx), "position": "Director"} for idx in range(1, 21)],
+        2: [{"id": f"snov-{idx}", "first_name": "Person", "last_name": str(idx), "position": "Director"} for idx in range(21, 41)],
+        3: [{"id": f"snov-{idx}", "first_name": "Person", "last_name": str(idx), "position": "Director"} for idx in range(41, 61)],
+        4: [{"id": f"snov-{idx}", "first_name": "Person", "last_name": str(idx), "position": "Director"} for idx in range(61, 67)],
+    }
+    requested_pages: list[int] = []
+
+    def fake_search_prospects(domain: str, page: int = 1):
+        requested_pages.append(page)
+        return pages.get(page, []), 66, None
+
+    monkeypatch.setattr("app.services.contact_service._snov.search_prospects", fake_search_prospects)
+
+    result = ContactService()._fetch_snov_contacts(
+        domain="avalonh2o.com",
+        include_rules=[],
+        exclude_words=[],
+    )
+
+    assert len(result.contacts) == 66
+    assert requested_pages == [1, 2, 3, 4]

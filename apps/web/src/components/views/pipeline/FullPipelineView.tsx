@@ -45,7 +45,7 @@ function s2Status(c: CompanyListItem): CellStatus {
 }
 
 function s3Status(c: CompanyListItem): CellStatus {
-  if (c.contact_count > 0) return { label: `${c.contact_count} contacts`, variant: 'ok' }
+  if ((c.discovered_contact_count ?? 0) > 0) return { label: `${c.discovered_contact_count} discovered`, variant: 'ok' }
   const cs = c.contact_fetch_status?.toLowerCase()
   if (cs === 'running' || cs === 'queued') return { label: 'Fetching…', variant: 'run' }
   if (cs === 'succeeded') return { label: 'Fetched (0)', variant: 'neu' }
@@ -54,8 +54,8 @@ function s3Status(c: CompanyListItem): CellStatus {
 }
 
 function s4Status(c: CompanyListItem): CellStatus {
-  if (c.pipeline_stage === 'contact_ready' && c.contact_count > 0) {
-    return { label: `${c.contact_count} to verify`, variant: 'neu' }
+  if ((c.discovered_title_matched_count ?? 0) > 0) {
+    return { label: `${c.discovered_title_matched_count} to reveal`, variant: 'neu' }
   }
   return { label: '—', variant: 'neu' }
 }
@@ -92,8 +92,8 @@ function StatusBadge({ label, variant }: CellStatus) {
 const STAGES = [
   { num: 1, label: 'Scraping',     colorVar: '--s1', bgVar: '--s1-bg', textVar: '--s1-text' },
   { num: 2, label: 'AI Decision',  colorVar: '--s2', bgVar: '--s2-bg', textVar: '--s2-text' },
-  { num: 3, label: 'Contact Fetch',colorVar: '--s3', bgVar: '--s3-bg', textVar: '--s3-text' },
-  { num: 4, label: 'Validation',   colorVar: '--s5', bgVar: '--s5-bg', textVar: '--s5-text' },
+  { num: 3, label: 'Discovery',     colorVar: '--s3', bgVar: '--s3-bg', textVar: '--s3-text' },
+  { num: 4, label: 'Reveal',        colorVar: '--s4', bgVar: '--s4-bg', textVar: '--s4-text' },
 ] as const
 
 const STATUS_FILTERS: Array<{ value: FullPipelineStatusFilter; label: string }> = [

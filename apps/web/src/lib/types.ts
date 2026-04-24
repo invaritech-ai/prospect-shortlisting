@@ -96,6 +96,9 @@ export type CompanyListItem = {
   feedback_manual_label: 'possible' | 'unknown' | 'crap' | null
   latest_scrape_error_code: string | null
   contact_count: number
+  discovered_contact_count: number
+  discovered_title_matched_count: number
+  revealed_contact_count: number
   contact_fetch_status: string | null
 }
 

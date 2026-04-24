@@ -391,7 +391,8 @@ class ContactService:
         exclude_words: list[str],
     ) -> DiscoveryProviderFetchResult:
         all_prospects: list[dict[str, Any]] = []
-        for page in range(1, 4):
+        page = 1
+        while True:
             prospects, total, error_code = _snov.search_prospects(domain, page=page)
             if error_code:
                 return DiscoveryProviderFetchResult(
@@ -403,6 +404,7 @@ class ContactService:
             all_prospects.extend(prospects)
             if len(all_prospects) >= total or len(prospects) == 0:
                 break
+            page += 1
 
         contacts_to_write: list[dict[str, Any]] = []
         title_matched_count = 0
@@ -894,4 +896,3 @@ class ContactService:
             fetch_contacts_apollo_attempt.delay(str(attempt.id))
         else:
             fetch_contacts_snov_attempt.delay(str(attempt.id))
-

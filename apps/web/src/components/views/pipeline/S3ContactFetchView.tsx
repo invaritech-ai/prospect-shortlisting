@@ -4,11 +4,11 @@ import type {
   CompanyListItem,
   ContactCompanyListResponse,
   ContactCompanySummary,
-  ContactCountsResponse,
+  DiscoveredContactCountsResponse,
   DecisionFilter,
   StatsResponse,
 } from '../../../lib/types'
-import { listContactCompanies } from '../../../lib/api'
+import { listDiscoveredCompanies } from '../../../lib/api'
 import { parseApiError } from '../../../lib/utils'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
@@ -22,7 +22,7 @@ type AuditMode = 'off' | 'no_matches' | 'matched'
 
 const AUDIT_PAGE_SIZE = 50
 
-/** Build the minimal `CompanyListItem` shape the contacts drawer needs (id/domain/contact_count). */
+/** Build the minimal `CompanyListItem` shape the contacts drawer needs. */
 function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
   return {
     id: summary.company_id,
@@ -47,7 +47,10 @@ function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
     feedback_comment: null,
     feedback_manual_label: null,
     latest_scrape_error_code: null,
-    contact_count: summary.total_count,
+    contact_count: summary.email_count,
+    discovered_contact_count: summary.total_count,
+    discovered_title_matched_count: summary.title_matched_count,
+    revealed_contact_count: summary.email_count,
     contact_fetch_status: null,
   }
 }
@@ -64,7 +67,7 @@ interface S3ContactFetchViewProps {
   isLoading: boolean
   isFetching: boolean
   isSelectingAll: boolean
-  contactCounts: ContactCountsResponse | null
+  discoveredCounts: DiscoveredContactCountsResponse | null
   stats: StatsResponse | null
   onDecisionFilterChange: (filter: DecisionFilter) => void
   onSearchChange: (value: string) => void
@@ -110,7 +113,7 @@ export function S3ContactFetchView({
   isLoading,
   isFetching,
   isSelectingAll,
-  contactCounts,
+  discoveredCounts,
   stats,
   onDecisionFilterChange,
   onSearchChange,
@@ -135,7 +138,7 @@ export function S3ContactFetchView({
 }: S3ContactFetchViewProps) {
   const selectedSet = new Set(selectedIds)
 
-  // ── Title-match audit: list companies with contacts fetched but 0/>0 title matches ──
+  // ── Title-match audit: list companies with discovered contacts but 0/>0 title matches ──
   const [auditMode, setAuditMode] = useState<AuditMode>('off')
   const [auditSearch, setAuditSearch] = useState('')
   const [auditOffset, setAuditOffset] = useState(0)
@@ -172,7 +175,7 @@ export function S3ContactFetchView({
       ? { matchGapFilter: 'contacts_no_match' as const }
       : { titleMatch: true }
     const trimmed = auditSearch.trim()
-    listContactCompanies({
+    listDiscoveredCompanies({
       campaignId,
       ...gapOptions,
       limit: AUDIT_PAGE_SIZE,
@@ -223,9 +226,9 @@ export function S3ContactFetchView({
       <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
         <div className="flex items-center gap-2">
           <div className="flex-1">
-            <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
+            <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Discovery</h2>
             <p className="text-xs" style={{ color: 'var(--s3-text)', opacity: 0.7 }}>
-              Find contacts at any company · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+              Discover possible contacts without revealing emails · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
             </p>
           </div>
         {/* Search */}
@@ -275,13 +278,13 @@ export function S3ContactFetchView({
       </div>
 
       {/* Contact stats bar */}
-      {contactCounts && (
+      {discoveredCounts && (
         <div className="flex flex-wrap gap-2">
           {[
-            { label: 'Total contacts', value: contactCounts.total, color: '#14532d', bg: '#dcfce7' },
-            { label: 'Verified', value: contactCounts.verified, color: '#0369a1', bg: '#dbeafe' },
-            { label: 'Eligible to verify', value: contactCounts.eligible_verify, color: '#6b21a8', bg: '#f3e8ff' },
-            { label: 'Campaign ready', value: contactCounts.campaign_ready, color: '#92400e', bg: '#fef3c7' },
+            { label: 'Discovered', value: discoveredCounts.total, color: '#14532d', bg: '#dcfce7' },
+            { label: 'Title matched', value: discoveredCounts.matched, color: '#0f766e', bg: '#ccfbf1' },
+            { label: 'Fresh', value: discoveredCounts.fresh, color: '#0369a1', bg: '#dbeafe' },
+            { label: 'Stale', value: discoveredCounts.stale, color: '#92400e', bg: '#fef3c7' },
           ].map(({ label, value, color, bg }) => (
             <div
               key={label}
@@ -311,8 +314,8 @@ export function S3ContactFetchView({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-(--oc-muted)">Title-match audit</span>
           {([
           { value: 'off', label: 'Off' },
-          { value: 'no_matches', label: 'Fetched · 0 matches' },
-          { value: 'matched', label: 'Fetched · has matches' },
+          { value: 'no_matches', label: 'Discovered · 0 matches' },
+          { value: 'matched', label: 'Discovered · has matches' },
         ] as const).map(({ value, label }) => (
           <button
             key={value}
@@ -337,7 +340,7 @@ export function S3ContactFetchView({
         {isAuditActive && (
           <span className="ml-1 text-[11px] text-(--oc-muted)">
             {auditMode === 'no_matches'
-              ? 'Companies whose fetched contacts contain zero title matches — audit the match criteria.'
+              ? 'Companies whose discovered contacts contain zero title matches — audit the match criteria.'
               : 'Companies with at least one title-matched contact.'}
           </span>
         )}
@@ -388,7 +391,7 @@ export function S3ContactFetchView({
               className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
               style={{ backgroundColor: 'var(--s3)' }}
             >
-              {isFetching ? '…' : 'Fetch Contacts'}
+              {isFetching ? '…' : 'Discover Contacts'}
             </button>
           </SelectionBar>
         </>
@@ -439,10 +442,10 @@ export function S3ContactFetchView({
             <thead>
               <tr className="border-b border-(--oc-border) text-xs text-(--oc-muted)">
                 <th className="p-3 text-left font-semibold">Domain</th>
-                <th className="p-3 text-right font-semibold">Contacts</th>
+                <th className="p-3 text-right font-semibold">Discovered</th>
                 <th className="p-3 text-right font-semibold">Title matched</th>
                 <th className="p-3 text-right font-semibold">With email</th>
-                <th className="p-3 text-right font-semibold">Last fetched</th>
+                <th className="p-3 text-right font-semibold">Last discovered</th>
                 <th className="p-3 text-left font-semibold">Actions</th>
               </tr>
             </thead>
@@ -462,13 +465,13 @@ export function S3ContactFetchView({
                   <td colSpan={6} className="px-6 py-10 text-center">
                     <p className="text-sm font-semibold text-(--oc-text)">
                       {auditMode === 'no_matches'
-                        ? 'No companies with fetched contacts and zero title matches.'
+                        ? 'No companies with discovered contacts and zero title matches.'
                         : 'No companies have title-matched contacts yet.'}
                     </p>
                     <p className="mt-1 text-xs text-(--oc-muted)">
                       {auditMode === 'no_matches'
-                        ? 'Either the match criteria are catching everything or contacts have not been fetched.'
-                        : 'Try fetching contacts for more companies or broadening your title rules.'}
+                        ? 'Either the match criteria are catching everything or contacts have not been discovered.'
+                        : 'Try discovering contacts for more companies or broadening your title rules.'}
                     </p>
                   </td>
                 </tr>
@@ -515,7 +518,7 @@ export function S3ContactFetchView({
                         disabled={controlsDisabled}
                         className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
                       >
-                        View contacts
+                        View emails
                       </button>
                     </td>
                   </tr>
@@ -542,7 +545,7 @@ export function S3ContactFetchView({
               <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
               <SortableHeader label="Activity" field="last_activity" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
               <SortableHeader label="Decision" field="decision" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
-              <SortableHeader label="Contacts" field="contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
+              <SortableHeader label="Discovered" field="discovered_contact_count" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={controlsDisabled} />
               <th className="p-3 text-left font-semibold">Actions</th>
             </tr>
           </thead>
@@ -611,16 +614,23 @@ export function S3ContactFetchView({
                     </Badge>
                   ) : <span className="text-xs text-(--oc-muted)">—</span>}
                 </td>
-                <td className="p-3 text-xs font-mono">{c.contact_count ?? 0}</td>
+                <td className="p-3 text-xs">
+                  <div className="font-mono font-semibold">{(c.discovered_contact_count ?? 0).toLocaleString()}</div>
+                  {(c.discovered_title_matched_count ?? 0) > 0 && (
+                    <div className="text-[10px] text-(--oc-muted)">
+                      {(c.discovered_title_matched_count ?? 0).toLocaleString()} matched
+                    </div>
+                  )}
+                </td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-1">
                     <button
                       type="button"
                       onClick={() => onViewContacts(c)}
-                      disabled={controlsDisabled || (c.contact_count ?? 0) === 0}
+                      disabled={controlsDisabled || (c.revealed_contact_count ?? c.contact_count ?? 0) === 0}
                       className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text) disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      View
+                      Emails
                     </button>
                     <button
                       type="button"
@@ -629,7 +639,7 @@ export function S3ContactFetchView({
                       className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition"
                       style={{ backgroundColor: 'var(--s3)' }}
                     >
-                      Fetch
+                      Discover
                     </button>
                   </div>
                 </td>

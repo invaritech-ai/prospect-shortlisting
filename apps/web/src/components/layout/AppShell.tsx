@@ -72,7 +72,7 @@ const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: n
   'full-pipeline': { label: 'Full Pipeline', Icon: IconSliders },
   's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
   's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
-  's3-contacts': { label: 'S3 · Contact Fetch', Icon: IconUsers },
+  's3-contacts': { label: 'S3 · Contact Discovery', Icon: IconUsers },
   's4-reveal': { label: 'S4 · Reveal', Icon: IconZap },
   's5-validation': { label: 'S5 · Validation', Icon: IconCheck },
   'queue-history': { label: 'Queue History', Icon: IconHistory },

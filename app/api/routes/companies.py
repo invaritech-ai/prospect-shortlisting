@@ -30,6 +30,7 @@ from app.models import (
     ContactFetchJob,
     CrawlArtifact,
     CrawlJob,
+    DiscoveredContact,
     JobEvent,
     ProspectContact,
     ScrapeJob,
@@ -105,6 +106,22 @@ def _contact_count_subquery():
             func.count().label("contact_count"),
         )
         .group_by(ProspectContact.company_id)
+        .subquery()
+    )
+
+
+def _discovered_contact_count_subquery():
+    return (
+        select(
+            DiscoveredContact.company_id.label("company_id"),
+            func.count().label("discovered_contact_count"),
+            func.coalesce(
+                func.sum(case((col(DiscoveredContact.title_match).is_(True), 1), else_=0)),
+                0,
+            ).label("discovered_title_matched_count"),
+        )
+        .where(col(DiscoveredContact.is_active).is_(True))
+        .group_by(DiscoveredContact.company_id)
         .subquery()
     )
 
@@ -365,6 +382,7 @@ _COMPANY_SORT_FIELDS = frozenset(
         "confidence",
         "scrape_status",
         "contact_count",
+        "discovered_contact_count",
     }
 )
 
@@ -426,6 +444,7 @@ def list_companies(
     latest_scrape = _latest_scrape_subquery()
     latest_analysis = _latest_analysis_subquery()
     contact_counts = _contact_count_subquery()
+    discovered_contact_counts = _discovered_contact_count_subquery()
     latest_contact_fetch = _latest_contact_fetch_subquery()
     latest_decision_text = latest_classification.c.predicted_label
     latest_confidence = latest_classification.c.confidence
@@ -473,6 +492,8 @@ def list_companies(
             CompanyFeedback.manual_label,
             latest_scrape.c.last_error_code,
             func.coalesce(contact_counts.c.contact_count, 0),
+            func.coalesce(discovered_contact_counts.c.discovered_contact_count, 0),
+            func.coalesce(discovered_contact_counts.c.discovered_title_matched_count, 0),
             latest_contact_fetch.c.state,
             last_activity_expr.label("last_activity"),
         )
@@ -482,6 +503,7 @@ def list_companies(
         .outerjoin(latest_analysis, latest_analysis.c.company_id == Company.id)
         .outerjoin(CompanyFeedback, CompanyFeedback.company_id == Company.id)
         .outerjoin(contact_counts, contact_counts.c.company_id == Company.id)
+        .outerjoin(discovered_contact_counts, discovered_contact_counts.c.company_id == Company.id)
         .outerjoin(latest_contact_fetch, latest_contact_fetch.c.company_id == Company.id)
     )
     statement = statement.where(col(Upload.campaign_id) == campaign_id)
@@ -521,6 +543,7 @@ def list_companies(
         "confidence": latest_confidence,
         "scrape_status": latest_scrape.c.status,
         "contact_count": func.coalesce(contact_counts.c.contact_count, 0),
+        "discovered_contact_count": func.coalesce(discovered_contact_counts.c.discovered_contact_count, 0),
     }
     _primary = _sort_col_map[_sort_by]
     _primary_expr = _primary.desc() if _sort_dir == "desc" else _primary.asc()
@@ -585,8 +608,11 @@ def list_companies(
             feedback_manual_label=str(row[19]) if row[19] is not None else None,
             latest_scrape_error_code=str(row[20]) if row[20] is not None else None,
             contact_count=int(row[21]) if row[21] is not None else 0,
-            contact_fetch_status=str(row[22]) if row[22] is not None else None,
-            last_activity=row[23],
+            revealed_contact_count=int(row[21]) if row[21] is not None else 0,
+            discovered_contact_count=int(row[22]) if row[22] is not None else 0,
+            discovered_title_matched_count=int(row[23]) if row[23] is not None else 0,
+            contact_fetch_status=str(row[24]) if row[24] is not None else None,
+            last_activity=row[25],
         )
         for row in page_rows
     ]

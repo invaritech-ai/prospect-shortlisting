@@ -310,7 +310,7 @@ export function S4ValidationView({
           ) : contacts != null && contacts.total === 0 ? (
             <div className="space-y-1">
               <p className="text-sm font-semibold text-(--oc-text)">No contacts fetched yet</p>
-              <p className="text-xs text-(--oc-muted)">Go to S3 to fetch contacts for classified companies.</p>
+              <p className="text-xs text-(--oc-muted)">Reveal emails in S4 before validating them here.</p>
             </div>
           ) : (
             <p className="text-sm text-(--oc-muted)">No contacts match this filter.</p>

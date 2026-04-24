@@ -16,6 +16,7 @@ import {
   getCostStats,
   getCompanyCounts,
   getContactCounts,
+  getDiscoveredContactCounts,
   getIntegrationsHealth,
   getPipelineRunProgress,
   getStats,
@@ -34,6 +35,7 @@ import type {
   CompanyCounts,
   CompanyListItem,
   ContactCountsResponse,
+  DiscoveredContactCountsResponse,
   IntegrationHealthItem,
   UploadRead,
   RunRead,
@@ -119,6 +121,7 @@ function App() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [companyCounts, setCompanyCounts] = useState<CompanyCounts | null>(null)
   const [contactCounts, setContactCounts] = useState<ContactCountsResponse | null>(null)
+  const [discoveredContactCounts, setDiscoveredContactCounts] = useState<DiscoveredContactCountsResponse | null>(null)
 
   // ── Recent data (for Dashboard) ───────────────────────────────────────────
   const [recentScrapeJobs, setRecentScrapeJobs] = useState<ScrapeJobRead[]>([])
@@ -262,6 +265,21 @@ function App() {
     try {
       const data = await getContactCounts(selectedCampaignId)
       setContactCounts(data)
+    } catch { /* non-critical */ }
+  }, [authRequestsEnabled, selectedCampaignId])
+
+  const loadDiscoveredContactCounts = useCallback(async () => {
+    if (!authRequestsEnabled) {
+      setDiscoveredContactCounts(null)
+      return
+    }
+    if (!selectedCampaignId) {
+      setDiscoveredContactCounts(null)
+      return
+    }
+    try {
+      const data = await getDiscoveredContactCounts(selectedCampaignId)
+      setDiscoveredContactCounts(data)
     } catch { /* non-critical */ }
   }, [authRequestsEnabled, selectedCampaignId])
 
@@ -422,16 +440,18 @@ function App() {
     void loadStats()
     void loadCompanyCounts()
     void loadContactCounts()
+    void loadDiscoveredContactCounts()
     void loadRecentActivity()
     const timer = window.setInterval(() => {
       void loadStats()
       void loadCompanyCounts()
       void loadContactCounts()
+      void loadDiscoveredContactCounts()
       void loadCampaignCostSummary(selectedCampaignId)
       void loadCampaignCostBreakdown(selectedCampaignId)
     }, 10000)
     return () => window.clearInterval(timer)
-  }, [authRequestsEnabled, loadStats, loadCompanyCounts, loadContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
+  }, [authRequestsEnabled, loadStats, loadCompanyCounts, loadContactCounts, loadDiscoveredContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
 
   useEffect(() => {
     if (!authRequestsEnabled) return
@@ -660,10 +680,10 @@ function App() {
     try {
       const result = await fetchContactsForCompany(selectedCampaignId, company.id)
       const msg = result.queued_count > 0
-        ? `Queued contact fetch for ${company.domain}.`
+        ? `Queued contact discovery for ${company.domain}.`
         : result.already_fetching_count > 0
-          ? `Contact fetch already in progress for ${company.domain}.`
-          : `No contacts queued for ${company.domain}.`
+          ? `Contact discovery already in progress for ${company.domain}.`
+          : `No discovery queued for ${company.domain}.`
       setNotice(msg)
     } catch (err) { setError(parseApiError(err)) }
   }
@@ -1095,7 +1115,7 @@ function App() {
             isLoading={pipeline.isPipelineLoading}
             isFetching={pipeline.isPipelineFetching}
             isSelectingAll={pipeline.isPipelineSelectingAll}
-            contactCounts={contactCounts}
+            discoveredCounts={discoveredContactCounts}
             stats={stats}
             onDecisionFilterChange={pipeline.onPipelineDecisionFilterChange}
             onSearchChange={pipeline.onPipelineSearchChange}

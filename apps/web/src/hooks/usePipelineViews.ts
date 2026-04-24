@@ -838,7 +838,7 @@ export function usePipelineViews(
       try {
         const result = await fetchContactsSelected(selectedCampaignId, pipelineSelectedIds)
         setNotice(
-          `Queued contact fetch for ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'}.`,
+          `Queued contact discovery for ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'}.`,
         )
         setPipelineSelectedIds([])
       } catch (err) {
@@ -1305,7 +1305,7 @@ export function usePipelineViews(
       if (resumeStage === 'S3') {
         setAction('Resuming S3…')
         const result = await fetchContactsSelected(selectedCampaignId, [company.id])
-        setNotice(`Resumed S3 for ${company.domain}. Queued ${result.queued_count} contact fetch job(s).`)
+        setNotice(`Resumed S3 for ${company.domain}. Queued ${result.queued_count} contact discovery job(s).`)
         return
       }
       setNotice(`No failed stage to resume for ${company.domain}.`)

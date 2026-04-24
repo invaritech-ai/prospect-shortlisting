@@ -330,7 +330,7 @@ export function S4RevealView({
           ) : (
             <div className="space-y-1">
               <p className="text-sm font-semibold text-(--oc-text)">No discovered contacts yet</p>
-              <p className="text-xs text-(--oc-muted)">Run S3 contact fetch first, then come back here to review and reveal emails.</p>
+              <p className="text-xs text-(--oc-muted)">Run S3 contact discovery first, then come back here to review and reveal emails.</p>
             </div>
           )}
         </div>

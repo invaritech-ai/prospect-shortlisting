@@ -31,6 +31,9 @@ function row(partial: Partial<CompanyListItem>): CompanyListItem {
     feedback_manual_label: null,
     latest_scrape_error_code: null,
     contact_count: 0,
+    discovered_contact_count: 0,
+    discovered_title_matched_count: 0,
+    revealed_contact_count: 0,
     contact_fetch_status: null,
     ...partial,
   }

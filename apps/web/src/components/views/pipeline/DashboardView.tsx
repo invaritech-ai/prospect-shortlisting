@@ -96,11 +96,11 @@ export function DashboardView({
     },
     {
       view: 's3-contacts',
-      label: 'S3 · Contact Fetch',
+      label: 'S3 · Contact Discovery',
       stageColor: '--s3',
       stageBg: '--s3-bg',
       count: companyCounts?.classified ?? null,
-      hint: 'Classified, awaiting contacts',
+      hint: 'Classified, awaiting contact discovery',
     },
     {
       view: 's4-reveal',

@@ -183,6 +183,8 @@ def list_discovered_contacts(
     session: Session = Depends(get_session),
 ) -> DiscoveredContactListResponse:
     _campaign_or_404(session, campaign_id)
+    if not isinstance(stale_email_only, bool):
+        stale_email_only = bool(getattr(stale_email_only, "default", False))
     if not isinstance(sort_by, str):
         sort_by = getattr(sort_by, "default", "last_seen_at")
     if not isinstance(sort_dir, str):
@@ -303,6 +305,8 @@ def list_discovered_contact_ids(
     session: Session = Depends(get_session),
 ) -> DiscoveredContactIdsResult:
     _campaign_or_404(session, campaign_id)
+    if not isinstance(stale_email_only, bool):
+        stale_email_only = bool(getattr(stale_email_only, "default", False))
     letter_values = _parse_letters(letters)
 
     stmt = select(DiscoveredContact.id).join(Company, col(Company.id) == col(DiscoveredContact.company_id))
