@@ -333,7 +333,8 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
         <button
           type="button"
           onClick={() => void onSeedRules()}
-          className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800"
+          disabled={isLoading || isAdding}
+          className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Seed default rules
         </button>
