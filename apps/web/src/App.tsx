@@ -828,6 +828,9 @@ function App() {
         activeView={activeView}
         setActiveView={navigateToView}
         activeCampaignName={activeCampaignName}
+        campaigns={campaigns}
+        selectedCampaignId={selectedCampaignId}
+        onSelectCampaign={(id) => setSelectedCampaignIdAndCancel(id)}
         stats={stats}
         onOpenPromptLibrary={activeView === 's1-scraping' ? scrapePromptMgmt.openScrapePromptSheet : promptMgmt.openPromptSheet}
         authEnabled={AUTH_REQUIRED}

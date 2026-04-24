@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { StatsResponse } from '../../lib/types'
+import type { CampaignRead, StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
@@ -11,6 +11,9 @@ interface AppShellProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
   activeCampaignName?: string | null
+  campaigns: CampaignRead[]
+  selectedCampaignId: string | null
+  onSelectCampaign: (id: string) => void
   stats: StatsResponse | null
   onOpenPromptLibrary: () => void
   authEnabled?: boolean
@@ -81,6 +84,9 @@ export function AppShell({
   activeView,
   setActiveView,
   activeCampaignName,
+  campaigns,
+  selectedCampaignId,
+  onSelectCampaign,
   stats,
   onOpenPromptLibrary,
   authEnabled = false,
@@ -114,7 +120,9 @@ export function AppShell({
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
-        activeCampaignName={activeCampaignName}
+        campaigns={campaigns}
+        selectedCampaignId={selectedCampaignId}
+        onSelectCampaign={onSelectCampaign}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />

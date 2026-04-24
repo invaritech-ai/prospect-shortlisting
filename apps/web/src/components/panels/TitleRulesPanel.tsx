@@ -57,6 +57,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
     if (!testTitleValue.trim() || !campaignId) return
     setIsTesting(true)
     setTestResult(null)
+    setError('')
     try {
       setTestResult(await testTitleMatch(campaignId, testTitleValue.trim()))
     } catch {
@@ -115,6 +116,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   }
 
 
+  const isBusy = isAdding || isSeeding || isTesting || deletingIds.size > 0
   const includeRules = rules.filter((r) => r.rule_type === 'include')
   const excludeRules = rules.filter((r) => r.rule_type === 'exclude')
 
@@ -220,7 +222,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
                 )}
                 {pendingDeleteRuleId === r.id ? (
                   <>
-                    <button type="button" onClick={() => { setPendingDeleteRuleId(null); void onDeleteRule(r.id) }} disabled={deletingIds.has(r.id)}
+                    <button type="button" onClick={() => { setPendingDeleteRuleId(null); void onDeleteRule(r.id) }} disabled={isBusy}
                       className="text-[10px] font-bold text-rose-600 transition hover:text-rose-800 disabled:opacity-50">
                       {deletingIds.has(r.id) ? '…' : 'Confirm'}
                     </button>
@@ -230,7 +232,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
                     </button>
                   </>
                 ) : (
-                  <button type="button" onClick={() => setPendingDeleteRuleId(r.id)} disabled={deletingIds.has(r.id)}
+                  <button type="button" onClick={() => setPendingDeleteRuleId(r.id)} disabled={isBusy}
                     className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50">
                     ✕
                   </button>
@@ -262,7 +264,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
                 )}
                 {pendingDeleteRuleId === r.id ? (
                   <>
-                    <button type="button" onClick={() => { setPendingDeleteRuleId(null); void onDeleteRule(r.id) }} disabled={deletingIds.has(r.id)}
+                    <button type="button" onClick={() => { setPendingDeleteRuleId(null); void onDeleteRule(r.id) }} disabled={isBusy}
                       className="text-[10px] font-bold text-rose-600 transition hover:text-rose-800 disabled:opacity-50">
                       {deletingIds.has(r.id) ? '…' : 'Confirm'}
                     </button>
@@ -272,7 +274,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
                     </button>
                   </>
                 ) : (
-                  <button type="button" onClick={() => setPendingDeleteRuleId(r.id)} disabled={deletingIds.has(r.id)}
+                  <button type="button" onClick={() => setPendingDeleteRuleId(r.id)} disabled={isBusy}
                     className="text-xs text-rose-400 transition hover:text-rose-600 disabled:opacity-50">
                     ✕
                   </button>
@@ -342,7 +344,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
             <button
               type="button"
               onClick={() => void onAddRule()}
-              disabled={isAdding || !newKeywords.trim()}
+              disabled={isBusy || !newKeywords.trim()}
               className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
             >
               {isAdding ? '…' : 'Add'}
@@ -356,7 +358,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
         <button
           type="button"
           onClick={() => void onSeedRules()}
-          disabled={isLoading || isAdding || isSeeding}
+          disabled={isLoading || isBusy}
           className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSeeding ? 'Seeding…' : 'Seed default rules'}
