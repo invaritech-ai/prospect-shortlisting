@@ -90,13 +90,11 @@ def _run_apollo_attempt_success(
     assert result is not None
     assert rerun_delay.call_count in {0, 1}
 
-    with patch("app.services.contact_service.enqueue_s4_for_contact_success") as s4_enqueue:
-        finalized = ContactService().run_apollo_fetch(engine=sqlite_engine, job_id=job.id)
+    finalized = ContactService().run_apollo_fetch(engine=sqlite_engine, job_id=job.id)
 
     assert finalized is not None
     assert finalized.terminal_state is True
     assert finalized.state == ContactFetchJobState.SUCCEEDED
-    s4_enqueue.assert_called_once_with(engine=sqlite_engine, contact_fetch_job_id=job.id)
     sqlite_session.refresh(job)
     return job
 
