@@ -1,7 +1,7 @@
 # Local testing override — adds Redis, keeps the API private to the server,
 # and exposes it on loopback for host-side testing.
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.local.yml up api worker-analysis --build
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up api worker-analysis worker-contact-orchestrator worker-contact-reveal-orchestrator worker-contact-reveal-apollo worker-contact-reveal-snov --build
 #
 # Logs:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f worker-analysis
@@ -57,6 +57,33 @@ services:
         condition: service_started
 
   worker-contact-verify:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-contact-reveal-orchestrator:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-contact-reveal-apollo:
+    environment:
+      PS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker-contact-reveal-snov:
     environment:
       PS_REDIS_URL: redis://redis:6379/0
     depends_on:

@@ -290,10 +290,6 @@ def update_contact_runtime_control(
         from app.tasks.contacts import dispatch_contact_fetch_jobs
 
         dispatch_contact_fetch_jobs.delay()
-    if control.reveal_enabled and not control.reveal_paused:
-        from app.tasks.contacts import dispatch_contact_reveal_jobs
-
-        dispatch_contact_reveal_jobs.delay()
     return ContactRuntimeControlRead.model_validate(control, from_attributes=True)
 
 

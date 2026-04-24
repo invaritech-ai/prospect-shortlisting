@@ -518,6 +518,7 @@ class ContactRevealBatch(SQLModel, table=True):
         default=ContactFetchBatchState.QUEUED,
         sa_column=Column(Text, nullable=False, index=True),
     )
+    selected_count: int = Field(default=0, ge=0)
     requested_count: int = Field(default=0, ge=0)
     queued_count: int = Field(default=0, ge=0)
     already_revealing_count: int = Field(default=0, ge=0)
