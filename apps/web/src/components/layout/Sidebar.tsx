@@ -8,6 +8,7 @@ import {
   IconPulse,
   IconCog,
   IconUsers,
+  IconHistory,
   IconTimeline,
   IconSliders,
   IconCheck,
@@ -42,6 +43,7 @@ const NAV_ITEMS: Array<{
   { value: 's3-contacts', label: 'S3 · Contacts', stageColor: 'var(--s3)', Icon: IconUsers },
   { value: 's4-reveal', label: 'S4 · Reveal', stageColor: 'var(--s4)', Icon: IconZap },
   { value: 's5-validation', label: 'S5 · Validation', stageColor: 'var(--s5)', Icon: IconCheck },
+  { value: 'queue-history', label: 'Queue History', Icon: IconHistory },
 ]
 
 export function Sidebar({

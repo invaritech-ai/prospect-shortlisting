@@ -65,6 +65,7 @@ import { S4RevealView } from './components/views/pipeline/S4RevealView'
 import { S4ValidationView } from './components/views/pipeline/S4ValidationView'
 import { CampaignsView } from './components/views/campaigns/CampaignsView'
 import { OperationsLogView } from './components/views/OperationsLogView'
+import { QueueHistoryView } from './components/views/QueueHistoryView'
 import { LoginView } from './components/views/auth/LoginView'
 import { SettingsView } from './components/views/settings/SettingsView'
 import { buildOperationsEvents } from './lib/telemetry'
@@ -1181,6 +1182,10 @@ function App() {
             sortDir={pipeline.s4SortDir}
             onSort={pipeline.onS4Sort}
           />
+        )}
+
+        {activeView === 'queue-history' && (
+          <QueueHistoryView campaignId={selectedCampaignId} />
         )}
       </AppShell>
 

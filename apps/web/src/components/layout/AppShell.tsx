@@ -4,7 +4,7 @@ import type { CampaignRead, StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconZap, IconCog } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconZap, IconCog, IconHistory } from '../ui/icons'
 
 interface AppShellProps {
   className?: string
@@ -75,6 +75,7 @@ const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: n
   's3-contacts': { label: 'S3 · Contact Fetch', Icon: IconUsers },
   's4-reveal': { label: 'S4 · Reveal', Icon: IconZap },
   's5-validation': { label: 'S5 · Validation', Icon: IconCheck },
+  'queue-history': { label: 'Queue History', Icon: IconHistory },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'

@@ -793,3 +793,19 @@ export type IntegrationHealthItem = {
   error_code: string
   message: string
 }
+
+export type QueueHistoryItem = {
+  id: string
+  stage: 's1' | 's2' | 's3' | 's4' | 's5'
+  company_domain: string | null
+  state: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  error_code: string | null
+}
+
+export type QueueHistoryResponse = {
+  items: QueueHistoryItem[]
+  total: number
+}

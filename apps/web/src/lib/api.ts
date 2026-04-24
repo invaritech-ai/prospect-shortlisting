@@ -31,6 +31,7 @@ import type {
   IntegrationsStatusResponse,
   IntegrationHealthItem,
   IntegrationProviderId,
+  QueueHistoryResponse,
   IntegrationProviderStatus,
   IntegrationProviderUpdateRequest,
   IntegrationTestResponse,
@@ -890,6 +891,23 @@ export async function testIntegrationProvider(
 
 export async function getIntegrationsHealth(): Promise<IntegrationHealthItem[]> {
   return request<IntegrationHealthItem[]>('/v1/settings/integrations/health')
+}
+
+export async function getQueueHistory(params: {
+  campaignId?: string | null
+  stage?: string
+  view?: string
+  limit?: number
+  offset?: number
+}): Promise<QueueHistoryResponse> {
+  const q = new URLSearchParams()
+  if (params.campaignId) q.set('campaign_id', params.campaignId)
+  if (params.stage && params.stage !== 'all') q.set('stage', params.stage)
+  if (params.view && params.view !== 'all') q.set('view', params.view)
+  if (params.limit !== undefined) q.set('limit', String(params.limit))
+  if (params.offset !== undefined) q.set('offset', String(params.offset))
+  const qs = q.toString()
+  return request<QueueHistoryResponse>(`/v1/queue-history${qs ? `?${qs}` : ''}`)
 }
 
 export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {

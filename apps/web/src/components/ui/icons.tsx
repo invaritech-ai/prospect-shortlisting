@@ -232,6 +232,16 @@ export function IconExternalLink({ className = '', size = 20 }: IconProps) {
   )
 }
 
+export function IconHistory({ className = '', size = 20 }: IconProps) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 10a7 7 0 1 0 7-7 7 7 0 0 0-5 2.1L3 7"/>
+      <path d="M3 3v4h4"/>
+      <path d="M10 6v4l3 2"/>
+    </svg>
+  )
+}
+
 export function IconUsers({ className = '', size = 20 }: IconProps) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
