@@ -227,6 +227,7 @@ export function S4ValidationView({
         counts={letterCounts}
         onToggle={onToggleLetter}
         onClear={onClearLetters}
+        disabled={isLoading || isValidating}
       />
 
       {/* Verification filter chips + pager */}
@@ -237,7 +238,8 @@ export function S4ValidationView({
               key={f.value}
               type="button"
               onClick={() => onVerifFilterChange(f.value)}
-              className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
+              disabled={isLoading}
+              className={`rounded-full px-3 py-1 text-[11px] font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 verifFilter === f.value
                   ? 'text-white'
                   : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s4) hover:text-(--s4-text)'
@@ -252,7 +254,7 @@ export function S4ValidationView({
             </button>
           ))}
         </div>
-        <Pager offset={offset} pageSize={pageSize} total={contacts?.total ?? null} hasMore={contacts?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+        <Pager offset={offset} pageSize={pageSize} total={contacts?.total ?? null} hasMore={contacts?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} disabled={isLoading} />
       </div>
 
       {/* Selection bar */}
@@ -328,21 +330,22 @@ export function S4ValidationView({
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
+                    disabled={isLoading || isValidating}
                     ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
                     onChange={() =>
                       onToggleAll(allVisibleSelected ? [] : visibleContacts.map((c) => c.id))
                     }
-                    className="cursor-pointer"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                   />
                 </th>
-                <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <th className="p-3 text-left font-semibold">Email</th>
-                <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <th className="p-3 text-left font-semibold">Last validated</th>
-                <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
               </tr>
             </thead>
             <tbody>
@@ -360,8 +363,9 @@ export function S4ValidationView({
                       <input
                         type="checkbox"
                         checked={selectedSet.has(contact.id)}
+                        disabled={isLoading || isValidating}
                         onChange={() => onToggleContact(contact.id)}
-                        className="cursor-pointer"
+                        className="cursor-pointer disabled:cursor-not-allowed"
                       />
                     </td>
                     <td className="p-3">
