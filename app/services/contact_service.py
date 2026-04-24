@@ -97,17 +97,24 @@ def _provider_person_id(provider: str, payload: dict[str, Any]) -> str:
         if linkedin:
             return linkedin
     if normalized_provider == "snov":
+        for key in ("id", "user_id"):
+            provider_id = str(payload.get(key) or "").strip()
+            if provider_id:
+                return provider_id
         search_url = str(payload.get("search_emails_start") or "").strip()
         if search_url:
-            return search_url.rstrip("/").rsplit("/", 1)[-1]
+            search_tail = search_url.rstrip("/").rsplit("/", 1)[-1].strip()
+            if search_tail:
+                return search_tail
         source_page = str(payload.get("source_page") or "").strip().lower()
         if source_page:
             return source_page
     first_name = _normalize_name(payload.get("first_name"))
     last_name = _normalize_name(payload.get("last_name"))
     title = _normalize_name(payload.get("title") or payload.get("position"))
-    fallback = "|".join(part for part in [first_name, last_name, title] if part)
-    return fallback or str(uuid4())
+    if first_name and last_name and title:
+        return f"{first_name}|{last_name}|{title}"
+    return ""
 
 
 def _company_campaign_id(session: Session, *, company_id: UUID) -> UUID | None:

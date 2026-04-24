@@ -141,61 +141,40 @@ export function S4ValidationView({
   return (
     <div className="space-y-3">
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
-      {validation && (vHasActivity || vCompleted > 0 || vFailed > 0) && (
-        <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
-                Validation Queue
-              </span>
-              {vHasActivity && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                  Active
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-(--oc-muted)">
-              {vProcessed.toLocaleString()} / {vTotal.toLocaleString()} processed
-            </span>
-          </div>
-          <p className="mb-2 text-[11px] text-(--oc-muted)">
-            <RelativeTimeLabel timestamp={stats?.as_of} />
-          </p>
-          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${Math.min(vPct, 100)}%`,
-                background: vHasActivity ? 'linear-gradient(90deg, var(--s4), #a855f7)' : '#16a34a',
-              }}
-            />
-          </div>
-          <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-            {vRunning > 0 && <span className="font-bold text-amber-600">{vRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
-            {vQueued > 0 && <span className="font-bold text-(--oc-muted)">{vQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
-            <span className="font-bold text-emerald-700">{vCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-            {vFailed > 0 && <span className="font-bold text-rose-600">{vFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
-          </div>
-        </div>
-      )}
       {/* Header */}
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
-        <div className="flex-1">
-          <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S4 · Validation</h2>
-          <p className="text-xs" style={{ color: 'var(--s4-text)', opacity: 0.7 }}>
-            Validate contact emails with ZeroBounce ·{' '}
-            {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
-          </p>
+      <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S5 · Validation</h2>
+            <p className="text-xs" style={{ color: 'var(--s4-text)', opacity: 0.7 }}>
+              Validate contact emails with ZeroBounce ·{' '}
+              {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
+            </p>
+          </div>
+          {exportUrl && (
+            <a
+              href={exportUrl}
+              className="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+              style={{ borderColor: 'var(--s4)', color: 'var(--s4-text)' }}
+            >
+              Export CSV
+            </a>
+          )}
         </div>
-        {exportUrl && (
-          <a
-            href={exportUrl}
-            className="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-            style={{ borderColor: 'var(--s4)', color: 'var(--s4-text)' }}
-          >
-            Export CSV
-          </a>
+        {validation && (vHasActivity || vCompleted > 0 || vFailed > 0) && (
+          <div className="mt-2 flex items-center gap-3 border-t border-(--oc-border) pt-1.5 text-xs text-(--oc-muted)">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${vHasActivity ? 'animate-pulse bg-amber-400' : 'bg-(--oc-border)'}`} />
+            <span className="flex items-center gap-1">
+              {vRunning > 0 && <span className="text-amber-600"><strong>{vRunning.toLocaleString()}</strong> running ·</span>}
+              {vQueued > 0 && <span><strong>{vQueued.toLocaleString()}</strong> queued ·</span>}
+              {vCompleted > 0 && <span className="text-emerald-600"><strong>{vCompleted.toLocaleString()}</strong> done</span>}
+              {vFailed > 0 && <span className="text-red-500"> · <strong>{vFailed.toLocaleString()}</strong> failed</span>}
+            </span>
+            <div className="flex-1 h-1 overflow-hidden rounded-full bg-(--oc-border)">
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(vPct, 100)}%`, backgroundColor: 'var(--s4)' }} />
+            </div>
+            <span className="tabular-nums shrink-0">{vProcessed.toLocaleString()} / {vTotal.toLocaleString()}</span>
+          </div>
         )}
       </div>
 

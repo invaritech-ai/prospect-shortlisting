@@ -235,13 +235,6 @@ export function S4RevealView({
       >
         <button
           type="button"
-          onClick={onOpenTitleRules}
-          className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s4) hover:text-(--s4-text)"
-        >
-          Edit title rules
-        </button>
-        <button
-          type="button"
           onClick={onRevealSelected}
           disabled={selectedIds.length === 0 || isRevealing}
           className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"

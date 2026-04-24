@@ -159,7 +159,6 @@ def upgrade() -> None:
     # Step 4: Clean up staging table
     op.execute("DROP TABLE IF EXISTS _dc_backfill")
 
-
 def downgrade() -> None:
     """Data migrations are not reversed."""
     pass

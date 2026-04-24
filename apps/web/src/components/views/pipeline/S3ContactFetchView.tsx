@@ -77,7 +77,6 @@ interface S3ContactFetchViewProps {
   onFetchOne: (company: CompanyListItem) => void
   onFetchSelected: () => void
   onViewContacts: (company: CompanyListItem) => void
-  onOpenTitleRules: () => void
   offset: number
   pageSize: number
   onPagePrev: () => void
@@ -123,7 +122,6 @@ export function S3ContactFetchView({
   onFetchOne,
   onFetchSelected,
   onViewContacts,
-  onOpenTitleRules,
   offset,
   pageSize,
   onPagePrev,
@@ -219,52 +217,15 @@ export function S3ContactFetchView({
   return (
     <div className="space-y-3">
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
-      {contactFetch && (cfHasActivity || cfCompleted > 0 || cfFailed > 0) && (
-        <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
-                Contact Fetch Queue
-              </span>
-              {cfHasActivity && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                  Active
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-(--oc-muted)">
-              {cfProcessed.toLocaleString()} / {cfTotal.toLocaleString()} processed
-            </span>
-          </div>
-          <p className="mb-2 text-[11px] text-(--oc-muted)">
-            <RelativeTimeLabel timestamp={stats?.as_of} />
-          </p>
-          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${Math.min(cfPct, 100)}%`,
-                background: cfHasActivity ? 'linear-gradient(90deg, var(--s3), #0ea5e9)' : '#16a34a',
-              }}
-            />
-          </div>
-          <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-            {cfRunning > 0 && <span className="font-bold text-amber-600">{cfRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
-            {cfQueued > 0 && <span className="font-bold text-(--oc-muted)">{cfQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
-            <span className="font-bold text-emerald-700">{cfCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-            {cfFailed > 0 && <span className="font-bold text-rose-600">{cfFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
-          </div>
-        </div>
-      )}
       {/* Header */}
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
-        <div className="flex-1">
-          <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
-          <p className="text-xs" style={{ color: 'var(--s3-text)', opacity: 0.7 }}>
-            Find contacts at any company · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
-          </p>
-        </div>
+      <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s3)', backgroundColor: 'var(--s3-bg)' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <h2 className="text-base font-bold" style={{ color: 'var(--s3-text)' }}>S3 · Contact Fetch</h2>
+            <p className="text-xs" style={{ color: 'var(--s3-text)', opacity: 0.7 }}>
+              Find contacts at any company · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+            </p>
+          </div>
         {/* Search */}
         <div className="relative">
           <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -284,14 +245,22 @@ export function S3ContactFetchView({
             style={{ width: 180 }}
           />
         </div>
-        <button
-          type="button"
-          onClick={onOpenTitleRules}
-          disabled={controlsDisabled}
-          className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text) whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Title Rules
-        </button>
+        </div>
+        {contactFetch && (cfHasActivity || cfCompleted > 0 || cfFailed > 0) && (
+          <div className="mt-2 flex items-center gap-3 border-t border-(--oc-border) pt-1.5 text-xs text-(--oc-muted)">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${cfHasActivity ? 'animate-pulse bg-amber-400' : 'bg-(--oc-border)'}`} />
+            <span className="flex items-center gap-1">
+              {cfRunning > 0 && <span className="text-amber-600"><strong>{cfRunning.toLocaleString()}</strong> running ·</span>}
+              {cfQueued > 0 && <span><strong>{cfQueued.toLocaleString()}</strong> queued ·</span>}
+              {cfCompleted > 0 && <span className="text-emerald-600"><strong>{cfCompleted.toLocaleString()}</strong> done</span>}
+              {cfFailed > 0 && <span className="text-red-500"> · <strong>{cfFailed.toLocaleString()}</strong> failed</span>}
+            </span>
+            <div className="flex-1 h-1 overflow-hidden rounded-full bg-(--oc-border)">
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(cfPct, 100)}%`, backgroundColor: 'var(--s3)' }} />
+            </div>
+            <span className="tabular-nums shrink-0">{cfProcessed.toLocaleString()} / {cfTotal.toLocaleString()}</span>
+          </div>
+        )}
       </div>
 
       {/* Contact stats bar */}
@@ -422,14 +391,6 @@ export function S3ContactFetchView({
               : '—'}
           </p>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenTitleRules}
-              disabled={controlsDisabled}
-              className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
-            >
-              Edit title rules
-            </button>
             <button
               type="button"
               disabled={auditOffset === 0 || controlsDisabled}

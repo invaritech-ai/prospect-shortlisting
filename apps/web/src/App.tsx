@@ -1077,7 +1077,6 @@ function App() {
             onFetchOne={(c) => void onFetchContacts(c)}
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onViewContacts={(company) => void panels.openCompanyContacts(company)}
-            onOpenTitleRules={() => setIsTitleRulesOpen(true)}
             offset={pipeline.pipelineOffset}
             pageSize={pipeline.pipelinePageSize}
             onPagePrev={pipeline.onPipelinePagePrev}
