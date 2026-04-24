@@ -17,7 +17,7 @@ from app.api.routes.contacts import (
     list_contacts_by_company,
     verify_contacts,
 )
-from app.api.routes.discovered_contacts import reveal_discovered_contact_emails
+from app.api.routes.discovered_contacts import list_discovered_contacts, reveal_discovered_contact_emails
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import (
     BulkContactFetchRequest,
@@ -185,6 +185,30 @@ def test_s4_reveal_route_scopes_to_title_matched_discovered_contacts(sqlite_sess
     assert call_kwargs["reveal_scope"] == "selected"
     mock_dispatch.assert_not_called()
     mock_verify.assert_not_called()
+
+
+def test_s4_list_route_handles_utc_freshness(sqlite_session: Session) -> None:
+    campaign, company = _seed_campaign_company(sqlite_session, domain="list-fresh.example", campaign_name="List Fresh")
+    _seed_discovered_contact(sqlite_session, company=company, title_match=True, title="Director")
+    sqlite_session.commit()
+
+    result = list_discovered_contacts(
+        campaign_id=campaign.id,
+        title_match=None,
+        provider=None,
+        company_id=None,
+        search=None,
+        limit=50,
+        offset=0,
+        letters=None,
+        count_by_letters=False,
+        session=sqlite_session,
+    )
+
+    assert result.total == 1
+    assert result.items[0].freshness_status == "fresh"
+    assert result.items[0].last_seen_at.tzinfo is not None
+    assert result.items[0].created_at.tzinfo is not None
 
 
 def test_s4_reveal_route_rejects_ineligible_contacts(sqlite_session: Session) -> None:

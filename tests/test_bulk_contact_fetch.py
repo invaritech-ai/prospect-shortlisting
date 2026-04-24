@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -61,8 +61,8 @@ def test_bulk_fetch_queues_both_providers(sqlite_session: Session) -> None:
 
 
 def test_bulk_fetch_reuses_fresh_cache(sqlite_session: Session, monkeypatch) -> None:
-    naive_now = datetime.utcnow()
-    monkeypatch.setattr("app.services.contact_queue_service.utcnow", lambda: naive_now)
+    aware_now = datetime.now(timezone.utc)
+    monkeypatch.setattr("app.services.contact_queue_service.utcnow", lambda: aware_now)
 
     campaign_id, company = _company(sqlite_session, domain="fresh.example", stage=CompanyPipelineStage.CONTACT_READY)
     for provider in ("snov", "apollo"):
@@ -73,7 +73,7 @@ def test_bulk_fetch_reuses_fresh_cache(sqlite_session: Session, monkeypatch) -> 
                 provider_person_id=f"pid-{provider}",
                 first_name="Test",
                 last_name="Person",
-                last_seen_at=naive_now,
+                last_seen_at=aware_now,
             )
         )
     sqlite_session.commit()
@@ -90,8 +90,8 @@ def test_bulk_fetch_reuses_fresh_cache(sqlite_session: Session, monkeypatch) -> 
 
 
 def test_bulk_fetch_force_refresh_skips_fresh_cache(sqlite_session: Session, monkeypatch) -> None:
-    naive_now = datetime.utcnow()
-    monkeypatch.setattr("app.services.contact_queue_service.utcnow", lambda: naive_now)
+    aware_now = datetime.now(timezone.utc)
+    monkeypatch.setattr("app.services.contact_queue_service.utcnow", lambda: aware_now)
 
     campaign_id, company = _company(sqlite_session, domain="refresh.example", stage=CompanyPipelineStage.CONTACT_READY)
     for provider in ("snov", "apollo"):
@@ -102,7 +102,7 @@ def test_bulk_fetch_force_refresh_skips_fresh_cache(sqlite_session: Session, mon
                 provider_person_id=f"pid-{provider}",
                 first_name="Test",
                 last_name="Person",
-                last_seen_at=naive_now,
+                last_seen_at=aware_now,
             )
         )
     sqlite_session.commit()

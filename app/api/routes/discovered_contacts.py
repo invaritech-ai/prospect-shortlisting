@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -20,7 +20,7 @@ from app.api.schemas.contacts import (
 from app.core.config import settings
 from app.db.session import get_session
 from app.models import Campaign, Company, DiscoveredContact, ProspectContact, Upload
-from app.models.pipeline import utcnow
+from app.models.pipeline import coerce_utc_datetime, utcnow
 from app.services.contact_reveal_queue_service import ContactRevealQueueService, discovered_group_key
 from app.services.idempotency_service import (
     IdempotencyConflictError,
@@ -47,7 +47,7 @@ def _campaign_upload_scope(campaign_id: UUID):
     return col(Company.upload_id).in_(select(Upload.id).where(col(Upload.campaign_id) == campaign_id))
 
 
-def _freshness_cutoff() -> object:
+def _freshness_cutoff() -> datetime:
     return utcnow() - timedelta(days=max(1, int(settings.contact_discovery_freshness_days)))
 
 
@@ -148,7 +148,7 @@ def list_discovered_contacts(
             {
                 **contact.model_dump(),
                 "domain": domain,
-                "freshness_status": "fresh" if contact.last_seen_at >= cutoff else "stale",
+                "freshness_status": "fresh" if coerce_utc_datetime(contact.last_seen_at) >= cutoff else "stale",
                 "group_key": discovered_group_key(contact),
             }
         )

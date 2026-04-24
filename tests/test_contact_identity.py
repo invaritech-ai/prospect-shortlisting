@@ -101,6 +101,8 @@ def test_discovered_persistence_skips_synthetic_ids_and_reactivates_native_match
             col(DiscoveredContact.provider_person_id) == "apollo-123",
         )
     ).one()
+    assert row.created_at.tzinfo is not None
+    assert row.last_seen_at.tzinfo is not None
     assert row.is_active is True
     assert row.backfilled is True
     assert row.first_name == "New"

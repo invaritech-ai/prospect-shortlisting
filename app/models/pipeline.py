@@ -6,7 +6,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint, event
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlmodel import Field, SQLModel
 
 
@@ -778,3 +779,31 @@ class TitleMatchRule(SQLModel, table=True):
     # Comma-separated keywords, regex pattern, or seniority preset name
     keywords: str = Field(max_length=255)
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+def coerce_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _normalize_model_datetimes(target: Any) -> None:
+    mapper = getattr(target, "__mapper__", None)
+    if mapper is None:
+        return
+    for prop in mapper.column_attrs:
+        value = getattr(target, prop.key, None)
+        if isinstance(value, datetime):
+            normalized = coerce_utc_datetime(value)
+            if normalized != value:
+                set_committed_value(target, prop.key, normalized)
+
+
+@event.listens_for(SQLModel, "load", propagate=True)
+def _normalize_loaded_model_datetimes(target: Any, _context: Any) -> None:
+    _normalize_model_datetimes(target)
+
+
+@event.listens_for(SQLModel, "refresh", propagate=True)
+def _normalize_refreshed_model_datetimes(target: Any, _context: Any, _attrs: Any) -> None:
+    _normalize_model_datetimes(target)
