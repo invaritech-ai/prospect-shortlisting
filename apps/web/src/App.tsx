@@ -16,6 +16,7 @@ import {
   getCostStats,
   getCompanyCounts,
   getContactCounts,
+  getIntegrationsHealth,
   getPipelineRunProgress,
   getStats,
   loginWithPassword,
@@ -32,6 +33,7 @@ import type {
   CompanyCounts,
   CompanyListItem,
   ContactCountsResponse,
+  IntegrationHealthItem,
   UploadRead,
   RunRead,
   ScrapeJobRead,
@@ -160,6 +162,10 @@ function App() {
   const [actionState, setActionState] = useState<Record<string, string>>({})
   const [analysisActionState, setAnalysisActionState] = useState<Record<string, string>>({})
 
+  // ── Services health ───────────────────────────────────────────────────────
+  const [servicesHealth, setServicesHealth] = useState<IntegrationHealthItem[] | null>(null)
+  const [isLoadingHealth, setIsLoadingHealth] = useState(false)
+
   // ── Pipeline ops ──────────────────────────────────────────────────────────
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
@@ -195,6 +201,15 @@ function App() {
   const panels = usePanels(setError, setNotice, selectedCampaignId, refreshPipelineView)
 
   // ── Load functions ────────────────────────────────────────────────────────
+
+  const loadServicesHealth = useCallback(async () => {
+    if (!authRequestsEnabled) return
+    setIsLoadingHealth(true)
+    try {
+      setServicesHealth(await getIntegrationsHealth())
+    } catch { /* non-critical */ }
+    finally { setIsLoadingHealth(false) }
+  }, [authRequestsEnabled])
 
   const loadStats = useCallback(async () => {
     if (!authRequestsEnabled) {
@@ -395,6 +410,10 @@ function App() {
     if (!authRequestsEnabled) return
     void loadCampaignData()
   }, [authRequestsEnabled, loadCampaignData])
+
+  useEffect(() => {
+    void loadServicesHealth()
+  }, [loadServicesHealth])
 
   useEffect(() => {
     if (!authRequestsEnabled) return
@@ -858,6 +877,8 @@ function App() {
             stats={stats}
             recentScrapeJobs={recentScrapeJobs}
             recentRuns={recentRuns}
+            servicesHealth={servicesHealth}
+            isLoadingHealth={isLoadingHealth}
             file={file}
             isUploading={isUploading}
             isDragActive={isDragActive}
@@ -868,6 +889,7 @@ function App() {
             onNavigate={(view) => navigateToView(view)}
             onOpenCampaigns={() => navigateToView('campaigns')}
             onOpenOperations={() => navigateToView('operations')}
+            onOpenSettings={() => navigateToView('settings')}
           />
         )}
 

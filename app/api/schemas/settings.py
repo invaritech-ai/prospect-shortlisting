@@ -49,3 +49,12 @@ class IntegrationTestResponse(BaseModel):
     source: CredentialSource = ""
     error_code: str = ""
     message: str = ""
+
+
+class IntegrationHealthItem(BaseModel):
+    provider: str
+    label: str
+    connected: bool
+    credits_remaining: float | None = None
+    error_code: str = ""
+    message: str = ""

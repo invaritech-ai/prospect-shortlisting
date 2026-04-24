@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import httpx
@@ -9,6 +10,7 @@ from sqlmodel import Session
 
 from app.api.schemas.settings import (
     IntegrationFieldStatus,
+    IntegrationHealthItem,
     IntegrationProviderStatus,
     IntegrationProviderUpdateRequest,
     IntegrationsStatusResponse,
@@ -353,6 +355,118 @@ def update_integration_provider(
         updated_fields=[field.field for field in payload.fields],
     )
     return _build_provider_status(session, provider)
+
+
+def _health_openrouter() -> IntegrationHealthItem:
+    api_key, _ = credentials_resolver.resolve_with_source("openrouter", "api_key")
+    if not api_key:
+        return IntegrationHealthItem(provider="openrouter", label="OpenRouter", connected=False,
+                                     error_code=ERR_API_KEY_MISSING, message="API key not configured.")
+    base = settings.openrouter_base_url.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "HTTP-Referer": settings.openrouter_site_url,
+        "X-Title": settings.openrouter_app_name,
+    }
+    try:
+        # Verify key is valid first
+        auth_resp = httpx.get(f"{base}/auth/key", headers=headers, timeout=10.0)
+        if auth_resp.status_code in {401, 403}:
+            return IntegrationHealthItem(provider="openrouter", label="OpenRouter", connected=False,
+                                         error_code="openrouter_auth_failed", message="API key rejected.")
+        if not auth_resp.is_success:
+            return IntegrationHealthItem(provider="openrouter", label="OpenRouter", connected=False,
+                                         error_code="openrouter_test_failed", message=f"HTTP {auth_resp.status_code}")
+
+        # Fetch available credits: total_credits - total_usage
+        credits: float | None = None
+        try:
+            credits_resp = httpx.get(f"{base}/credits", headers=headers, timeout=10.0)
+            if credits_resp.is_success:
+                cdata = credits_resp.json().get("data", {})
+                total = cdata.get("total_credits")
+                used = cdata.get("total_usage")
+                if total is not None and used is not None:
+                    credits = round(float(total) - float(used), 4)
+        except Exception:  # noqa: BLE001
+            pass
+
+        return IntegrationHealthItem(provider="openrouter", label="OpenRouter", connected=True,
+                                     credits_remaining=credits)
+    except Exception as exc:  # noqa: BLE001
+        return IntegrationHealthItem(provider="openrouter", label="OpenRouter", connected=False,
+                                     error_code="openrouter_test_failed", message=str(exc))
+
+
+def _health_snov() -> IntegrationHealthItem:
+    ok, _, error_code, message = _check_snov()
+    if not ok:
+        return IntegrationHealthItem(provider="snov", label="Snov.io", connected=False,
+                                     error_code=error_code, message=message)
+    try:
+        credits, _ = SnovClient().get_balance()
+    except Exception:  # noqa: BLE001
+        credits = None
+    return IntegrationHealthItem(provider="snov", label="Snov.io", connected=True,
+                                 credits_remaining=float(credits) if credits is not None else None)
+
+
+def _health_apollo() -> IntegrationHealthItem:
+    ok, _, error_code, message = _check_apollo()
+    return IntegrationHealthItem(provider="apollo", label="Apollo", connected=ok,
+                                 error_code=error_code if not ok else "",
+                                 message=message if not ok else "")
+
+
+def _health_zerobounce() -> IntegrationHealthItem:
+    api_key, _ = credentials_resolver.resolve_with_source("zerobounce", "api_key")
+    if not api_key:
+        return IntegrationHealthItem(provider="zerobounce", label="ZeroBounce", connected=False,
+                                     error_code=ERR_ZEROBOUNCE_KEY_MISSING, message="API key not configured.")
+    try:
+        resp = httpx.get("https://api.zerobounce.net/v2/getcredits",
+                         params={"api_key": api_key}, timeout=10.0)
+        if resp.status_code in {401, 403}:
+            return IntegrationHealthItem(provider="zerobounce", label="ZeroBounce", connected=False,
+                                         error_code=ERR_ZEROBOUNCE_AUTH_FAILED, message="API key rejected.")
+        if not resp.is_success:
+            return IntegrationHealthItem(provider="zerobounce", label="ZeroBounce", connected=False,
+                                         error_code=ERR_ZEROBOUNCE_FAILED, message=f"HTTP {resp.status_code}")
+        payload = resp.json()
+        raw_credits = payload.get("Credits") if isinstance(payload, dict) else None
+        if raw_credits == -1:
+            return IntegrationHealthItem(provider="zerobounce", label="ZeroBounce", connected=False,
+                                         error_code=ERR_ZEROBOUNCE_AUTH_FAILED, message="API key rejected.")
+        credits = float(raw_credits) if raw_credits is not None else None
+        return IntegrationHealthItem(provider="zerobounce", label="ZeroBounce", connected=True,
+                                     credits_remaining=credits)
+    except Exception as exc:  # noqa: BLE001
+        return IntegrationHealthItem(provider="zerobounce", label="ZeroBounce", connected=False,
+                                     error_code=ERR_ZEROBOUNCE_FAILED, message=str(exc))
+
+
+@router.get("/integrations/health", response_model=list[IntegrationHealthItem])
+def get_integrations_health() -> list[IntegrationHealthItem]:
+    """Parallel connectivity + credits check for all four providers."""
+    checkers = {
+        "openrouter": _health_openrouter,
+        "snov": _health_snov,
+        "apollo": _health_apollo,
+        "zerobounce": _health_zerobounce,
+    }
+    results: dict[str, IntegrationHealthItem] = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(fn): key for key, fn in checkers.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception as exc:  # noqa: BLE001
+                results[key] = IntegrationHealthItem(
+                    provider=key, label=_PROVIDERS[key]["label"],
+                    connected=False, error_code="health_check_failed", message=str(exc),
+                )
+    return [results[k] for k in ("openrouter", "snov", "apollo", "zerobounce")]
 
 
 @router.post("/integrations/{provider}/test", response_model=IntegrationTestResponse)

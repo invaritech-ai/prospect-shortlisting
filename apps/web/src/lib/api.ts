@@ -28,6 +28,7 @@ import type {
   FeedbackRead,
   FeedbackUpsert,
   IntegrationsStatusResponse,
+  IntegrationHealthItem,
   IntegrationProviderId,
   IntegrationProviderStatus,
   IntegrationProviderUpdateRequest,
@@ -858,6 +859,10 @@ export async function testIntegrationProvider(
   return request<IntegrationTestResponse>(`/v1/settings/integrations/${encodeURIComponent(provider)}/test`, {
     method: 'POST',
   })
+}
+
+export async function getIntegrationsHealth(): Promise<IntegrationHealthItem[]> {
+  return request<IntegrationHealthItem[]>('/v1/settings/integrations/health')
 }
 
 export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {

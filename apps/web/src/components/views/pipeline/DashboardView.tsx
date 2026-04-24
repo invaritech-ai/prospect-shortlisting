@@ -1,5 +1,5 @@
 import type { DragEvent, FormEvent } from 'react'
-import type { CompanyCounts, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
+import type { CompanyCounts, IntegrationHealthItem, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
 import { IconUpload } from '../../ui/icons'
 
 function LiveDot({ color }: { color: string }) {
@@ -18,6 +18,8 @@ interface DashboardViewProps {
   stats: StatsResponse | null
   recentScrapeJobs: ScrapeJobRead[]
   recentRuns: RunRead[]
+  servicesHealth: IntegrationHealthItem[] | null
+  isLoadingHealth: boolean
   // Upload
   file: File | null
   isUploading: boolean
@@ -30,6 +32,7 @@ interface DashboardViewProps {
   onNavigate: (view: PipelineStageView) => void
   onOpenCampaigns: () => void
   onOpenOperations: () => void
+  onOpenSettings: () => void
 }
 
 interface StageCardDef {
@@ -41,11 +44,27 @@ interface StageCardDef {
   hint: string
 }
 
+const SERVICE_META: Record<string, { initials: string; color: string }> = {
+  openrouter: { initials: 'OR', color: 'var(--oc-accent)' },
+  snov:       { initials: 'SN', color: 'var(--s3)' },
+  apollo:     { initials: 'AP', color: 'var(--s2)' },
+  zerobounce: { initials: 'ZB', color: 'var(--s4)' },
+}
+
+function formatCredits(n: number | null): string {
+  if (n === null) return '—'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 export function DashboardView({
   companyCounts,
   stats,
   recentScrapeJobs,
   recentRuns,
+  servicesHealth,
+  isLoadingHealth,
   file,
   isUploading,
   isDragActive,
@@ -56,6 +75,7 @@ export function DashboardView({
   onNavigate,
   onOpenCampaigns,
   onOpenOperations,
+  onOpenSettings,
 }: DashboardViewProps) {
   const cards: StageCardDef[] = [
     {
@@ -131,6 +151,58 @@ export function DashboardView({
           </button>
         </section>
       )}
+
+      {/* Services health */}
+      <section>
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-(--oc-muted)">Services</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {isLoadingHealth && !servicesHealth
+            ? Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="oc-panel animate-pulse space-y-2 p-3">
+                  <div className="h-8 w-8 rounded-full bg-(--oc-border)" />
+                  <div className="h-3 w-16 rounded bg-(--oc-border)" />
+                  <div className="h-3 w-10 rounded bg-(--oc-border)" />
+                </div>
+              ))
+            : (servicesHealth ?? []).map((svc) => {
+                const meta = SERVICE_META[svc.provider] ?? { initials: svc.provider.slice(0, 2).toUpperCase(), color: 'var(--oc-muted)' }
+                return (
+                  <div key={svc.provider} className="oc-panel flex flex-col gap-2 p-3">
+                    <div className="flex items-center justify-between">
+                      <div
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-black text-white"
+                        style={{ backgroundColor: meta.color }}
+                      >
+                        {meta.initials}
+                      </div>
+                      <span
+                        className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                        style={svc.connected
+                          ? { backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)' }
+                          : { backgroundColor: 'var(--oc-surface-strong)', color: 'var(--oc-muted)' }}
+                      >
+                        {svc.connected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-(--oc-text)">{svc.label}</p>
+                    <p className="text-xs text-(--oc-muted)">
+                      {svc.connected
+                        ? svc.credits_remaining !== null
+                          ? <><span className="font-semibold text-(--oc-text)">{formatCredits(svc.credits_remaining)}</span> credits</>
+                          : svc.message || 'Connected'
+                        : svc.message || 'Not configured'}
+                    </p>
+                    {!svc.connected && (
+                      <button type="button" onClick={onOpenSettings}
+                        className="mt-auto self-start text-[11px] text-(--oc-accent) underline underline-offset-2 transition hover:text-(--oc-accent-ink)">
+                        Configure →
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+        </div>
+      </section>
 
       {/* Pipeline stage cards */}
       <section>

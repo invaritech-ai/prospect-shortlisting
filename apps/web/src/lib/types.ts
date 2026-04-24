@@ -779,3 +779,12 @@ export type IntegrationTestResponse = {
   error_code: string
   message: string
 }
+
+export type IntegrationHealthItem = {
+  provider: string
+  label: string
+  connected: boolean
+  credits_remaining: number | null
+  error_code: string
+  message: string
+}

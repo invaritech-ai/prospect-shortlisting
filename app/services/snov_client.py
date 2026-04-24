@@ -280,6 +280,24 @@ class SnovClient:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    def get_balance(self) -> tuple[int | None, str]:
+        """Return (credits_remaining, error_code). credits=None on error.
+
+        Uses GET /v1/get-balance?access_token=TOKEN.
+        Response: {"success": true, "data": {"balance": "25000.00", ...}}
+        """
+        token, err = self._get_access_token()
+        if err:
+            return None, err
+        data, err = self._get(f"/v1/get-balance?access_token={token}")
+        if err:
+            return None, err
+        raw = (data.get("data") or {}).get("balance")
+        try:
+            return (int(float(raw)) if raw is not None else None), ""
+        except (TypeError, ValueError):
+            return None, ""
+
     def get_domain_email_count(self, domain: str) -> tuple[int, str]:
         """Free check: how many emails Snov has for this domain.
 
