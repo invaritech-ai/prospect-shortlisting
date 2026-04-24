@@ -19,6 +19,7 @@ export type UploadRead = {
 export type UploadCreateResult = {
   upload: UploadRead
   validation_errors: UploadValidationError[]
+  already_in_campaign_count: number
 }
 
 export type UploadDetail = UploadCreateResult

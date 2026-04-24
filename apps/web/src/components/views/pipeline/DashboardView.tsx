@@ -263,11 +263,11 @@ export function DashboardView({
           >
             <IconUpload size={24} className="text-(--oc-muted)" />
             <p className="text-sm text-(--oc-muted)">
-              {file ? file.name : 'Drop a CSV file here, or click to browse'}
+              {file ? file.name : 'Drop a file here, or click to browse (CSV, TXT, XLS, XLSX)'}
             </p>
             <input
               type="file"
-              accept=".csv"
+              accept=".csv,.txt,.xls,.xlsx"
               className="hidden"
               id="csv-upload"
               onChange={(e) => onSetFile(e.target.files?.[0] ?? null)}

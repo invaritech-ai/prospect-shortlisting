@@ -268,11 +268,9 @@ function App() {
       return
     }
     try {
-      const runRows = await listRuns(200, 0)
-      // ScrapeJob rows lack campaign identifiers, so keep operations strictly scoped
-      // by suppressing scrape timeline rows until a campaign-scoped scrape endpoint exists.
+      const runRows = await listRuns(selectedCampaignId ?? undefined, 50, 0)
       setRecentScrapeJobs([])
-      setRecentRuns(runRows.filter((run) => scopedUploadIds.has(run.upload_id)).slice(0, 50))
+      setRecentRuns(runRows)
     } catch { /* non-critical */ }
   }, [authRequestsEnabled, selectedCampaignId, uploads])
 
@@ -512,17 +510,23 @@ function App() {
     if (!file) { setError('Choose a file first.'); return }
     setError(''); setNotice(''); setIsUploading(true)
     try {
-      await uploadFileToCampaign(file, selectedCampaignId || undefined)
+      const result = await uploadFileToCampaign(file, selectedCampaignId || undefined)
       setFile(null)
       void loadCompanyCounts()
       refreshPipelineView()
       void loadRecentActivity()
       void loadCampaignData()
-      setNotice(
-        selectedCampaignId
-          ? 'Upload assigned to selected campaign and companies refreshed.'
-          : 'Upload parsed and companies refreshed.',
-      )
+      const reused = result.already_in_campaign_count ?? 0
+      const newCount = (result.upload.valid_count ?? 0) - reused
+      if (selectedCampaignId && reused > 0) {
+        setNotice(`${newCount} new domain${newCount !== 1 ? 's' : ''} added, ${reused} already in campaign and skipped.`)
+      } else {
+        setNotice(
+          selectedCampaignId
+            ? 'Upload assigned to selected campaign and companies refreshed.'
+            : 'Upload parsed and companies refreshed.',
+        )
+      }
     } catch (err) { setError(parseApiError(err)) }
     finally { setIsUploading(false) }
   }

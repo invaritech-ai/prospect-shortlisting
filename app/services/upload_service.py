@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pandas as pd
 import polars as pl
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.models import Company, Upload
 from app.services.url_utils import domain_from_url, normalize_url
@@ -37,7 +37,8 @@ class UploadService:
         filename: str,
         raw_bytes: bytes,
         campaign_id: UUID | None = None,
-    ) -> tuple[Upload, list[UploadIssue]]:
+    ) -> tuple[Upload, list[UploadIssue], int]:
+        """Returns (upload, issues, already_in_campaign_count)."""
         if not raw_bytes:
             raise ValueError("Uploaded file is empty.")
         if len(raw_bytes) > MAX_UPLOAD_BYTES:
@@ -118,6 +119,19 @@ class UploadService:
             seen_normalized.add(normalized)
             company_rows.append((raw_url, normalized, domain, row_number))
 
+        # Cross-upload dedup: find URLs already in this campaign (any prior upload).
+        already_in_campaign: set[str] = set()
+        if campaign_id and company_rows:
+            existing = session.exec(
+                select(Company.normalized_url)
+                .join(Upload, Upload.id == Company.upload_id)
+                .where(col(Upload.campaign_id) == campaign_id)
+            )
+            already_in_campaign = set(existing)
+
+        new_company_rows = [row for row in company_rows if row[1] not in already_in_campaign]
+        already_in_campaign_count = len(company_rows) - len(new_company_rows)
+
         upload = Upload(
             campaign_id=campaign_id,
             filename=filename or "upload",
@@ -141,8 +155,8 @@ class UploadService:
         # Insert in batches to avoid accumulating all Company objects in the
         # SQLAlchemy identity map simultaneously (OOM risk for large uploads).
         batch_size = 1000
-        for i in range(0, len(company_rows), batch_size):
-            for raw_url, normalized_url, domain, source_row_number in company_rows[i : i + batch_size]:
+        for i in range(0, len(new_company_rows), batch_size):
+            for raw_url, normalized_url, domain, source_row_number in new_company_rows[i : i + batch_size]:
                 session.add(
                     Company(
                         upload_id=upload.id,
@@ -157,7 +171,7 @@ class UploadService:
 
         session.commit()
         session.refresh(upload)
-        return upload, issues
+        return upload, issues, already_in_campaign_count
 
     def _extension(self, filename: str) -> str:
         name = (filename or "").strip().lower()

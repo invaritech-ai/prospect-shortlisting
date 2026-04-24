@@ -443,8 +443,10 @@ export async function getCampaignCosts(campaignId: string): Promise<PipelineCost
   return request<PipelineCostSummaryRead>(`/v1/campaigns/${encodeURIComponent(campaignId)}/costs`)
 }
 
-export async function listRuns(limit = 25, offset = 0): Promise<RunRead[]> {
-  return request<RunRead[]>(`/v1/runs?limit=${limit}&offset=${offset}`)
+export async function listRuns(campaignId?: string, limit = 25, offset = 0): Promise<RunRead[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (campaignId) params.set('campaign_id', campaignId)
+  return request<RunRead[]>(`/v1/runs?${params.toString()}`)
 }
 
 export async function listRunJobs(runId: string, limit = 500, offset = 0): Promise<AnalysisRunJobRead[]> {

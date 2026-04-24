@@ -52,11 +52,12 @@ def test_upload_service_respects_campaign_id(sqlite_session: Session) -> None:
     campaign = create_campaign(payload=CampaignCreate(name="Upload Scope"), session=sqlite_session)
     service = UploadService()
     payload = b"website\nhttps://example.com\n"
-    upload, issues = service.create_upload_from_file(
+    upload, issues, reused = service.create_upload_from_file(
         session=sqlite_session,
         filename="test.csv",
         raw_bytes=payload,
         campaign_id=campaign.id,
     )
     assert issues == []
+    assert reused == 0
     assert upload.campaign_id == campaign.id
