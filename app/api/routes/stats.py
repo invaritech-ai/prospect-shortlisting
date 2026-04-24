@@ -101,6 +101,22 @@ def _campaign_upload_ids_subquery(campaign_id: UUID):
     return select(Upload.id).where(col(Upload.campaign_id) == campaign_id)
 
 
+def _campaign_company_count(
+    session: Session,
+    campaign_id: UUID,
+    upload_id: UUID | None = None,
+) -> int:
+    """Total companies in campaign (or upload). Used as the stats denominator."""
+    stmt = (
+        select(func.count(Company.id))
+        .join(Upload, Upload.id == Company.upload_id)
+        .where(col(Upload.campaign_id) == campaign_id)
+    )
+    if upload_id:
+        stmt = stmt.where(col(Company.upload_id) == upload_id)
+    return session.exec(stmt).one() or 0
+
+
 def _scrape_stats(
     session: Session,
     campaign_id: UUID,
@@ -115,6 +131,7 @@ def _scrape_stats(
     now = _utcnow()
     stuck_cutoff = now - timedelta(minutes=SCRAPE_RUNNING_STUCK_MINUTES)
     campaign_run_ids = select(PipelineRun.id).where(col(PipelineRun.campaign_id) == campaign_id)
+    total_companies = _campaign_company_count(session, campaign_id, upload_id)
 
     # Subquery: pick one row per normalized_url.
     # Priority: non-terminal jobs first (they represent current work), then
@@ -180,13 +197,15 @@ def _scrape_stats(
         ).select_from(latest_only)
     ).one()
 
-    total = row.total or 0
+    # job-based counts from the dedup window query
     completed = row.completed or 0
     site_unavailable = row.site_unavailable or 0
     failed = row.failed or 0
     running = row.running or 0
     queued = row.queued or 0
     stuck_count = row.stuck_count or 0
+    # total = all companies in campaign (not just those with a job)
+    total = total_companies
 
     # Prefer started_at/finished_at; fall back to created_at/updated_at for
     # jobs completed before the Celery migration added those timestamps.
@@ -284,6 +303,7 @@ def _scrape_stats(
 
 def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
     now = _utcnow()
+    total_companies = _campaign_company_count(session, campaign_id, upload_id)
 
     base = select(
         func.count().label("total"),
@@ -308,12 +328,13 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
         base = base.where(col(AnalysisJob.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
     row = session.exec(base).one()
 
-    total = row.total or 0
     completed = row.completed or 0
     failed = row.failed or 0
     running = row.running or 0
     queued = row.queued or 0
     stuck_count = row.stuck_count or 0
+    # total = all companies in campaign (not just those with an analysis job)
+    total = total_companies
 
     recent_stmt = (
         select(AnalysisJob.started_at, AnalysisJob.finished_at)

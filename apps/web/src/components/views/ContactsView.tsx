@@ -505,16 +505,21 @@ export function ContactsView({ campaignId = null }: { campaignId?: string | null
   }, [notice])
 
   const loadRules = useCallback(async () => {
+    if (!campaignId) {
+      setRules([])
+      setRulesError('')
+      return
+    }
     setIsRulesLoading(true)
     try {
-      setRules(await listTitleMatchRules())
+      setRules(await listTitleMatchRules(campaignId))
       setRulesError('')
     } catch (err) {
       setRulesError(parseError(err))
     } finally {
       setIsRulesLoading(false)
     }
-  }, [])
+  }, [campaignId])
 
   const handleSelectCompany = (company: ContactCompanySummary) => {
     setSelectedCompany(company)
@@ -522,8 +527,12 @@ export function ContactsView({ campaignId = null }: { campaignId?: string | null
   }
 
   const handleAddRule = async (rule_type: 'include' | 'exclude', keywords: string) => {
+    if (!campaignId) {
+      setRulesError('Select a campaign first.')
+      return
+    }
     try {
-      await createTitleMatchRule({ rule_type, keywords })
+      await createTitleMatchRule({ campaign_id: campaignId, rule_type, keywords })
       await loadRules()
       await loadCompanies(offset)
     } catch (err) {
@@ -532,10 +541,14 @@ export function ContactsView({ campaignId = null }: { campaignId?: string | null
   }
 
   const handleDeleteRule = async (id: string) => {
+    if (!campaignId) {
+      setRulesError('Select a campaign first.')
+      return
+    }
     if (deletingRuleIds.has(id)) return
     setDeletingRuleIds((prev) => new Set([...prev, id]))
     try {
-      await deleteTitleMatchRule(id)
+      await deleteTitleMatchRule(id, campaignId)
       setRules((r) => r.filter((rule) => rule.id !== id))
       await loadCompanies(offset)
     } catch (err) {
@@ -550,9 +563,13 @@ export function ContactsView({ campaignId = null }: { campaignId?: string | null
   }
 
   const handleSeed = async () => {
+    if (!campaignId) {
+      setRulesError('Select a campaign first.')
+      return
+    }
     setIsSeeding(true)
     try {
-      await seedTitleMatchRules()
+      await seedTitleMatchRules(campaignId)
       await loadRules()
       await loadCompanies(offset)
       setRulesError('')

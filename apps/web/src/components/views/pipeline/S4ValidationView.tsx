@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type {
   ContactCountsResponse,
   ContactListResponse,
@@ -10,6 +11,7 @@ import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
+import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
 interface S4ValidationViewProps {
@@ -116,6 +118,7 @@ export function S4ValidationView({
   sortDir,
   onSort,
 }: S4ValidationViewProps) {
+  const [showVerifyConfirm, setShowVerifyConfirm] = useState(false)
   const selectedSet = new Set(selectedContactIds)
 
   // Server applies both verification and letter filters for paginated correctness.
@@ -141,61 +144,40 @@ export function S4ValidationView({
   return (
     <div className="space-y-3">
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
-      {validation && (vHasActivity || vCompleted > 0 || vFailed > 0) && (
-        <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
-                Validation Queue
-              </span>
-              {vHasActivity && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                  Active
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-(--oc-muted)">
-              {vProcessed.toLocaleString()} / {vTotal.toLocaleString()} processed
-            </span>
-          </div>
-          <p className="mb-2 text-[11px] text-(--oc-muted)">
-            <RelativeTimeLabel timestamp={stats?.as_of} />
-          </p>
-          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${Math.min(vPct, 100)}%`,
-                background: vHasActivity ? 'linear-gradient(90deg, var(--s4), #a855f7)' : '#16a34a',
-              }}
-            />
-          </div>
-          <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-            {vRunning > 0 && <span className="font-bold text-amber-600">{vRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
-            {vQueued > 0 && <span className="font-bold text-(--oc-muted)">{vQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
-            <span className="font-bold text-emerald-700">{vCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-            {vFailed > 0 && <span className="font-bold text-rose-600">{vFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
-          </div>
-        </div>
-      )}
       {/* Header */}
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
-        <div className="flex-1">
-          <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S4 · Validation</h2>
-          <p className="text-xs" style={{ color: 'var(--s4-text)', opacity: 0.7 }}>
-            Validate contact emails with ZeroBounce ·{' '}
-            {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
-          </p>
+      <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s5)', backgroundColor: 'var(--s5-bg)' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <h2 className="text-base font-bold" style={{ color: 'var(--s5-text)' }}>S5 · Validation</h2>
+            <p className="text-xs" style={{ color: 'var(--s5-text)', opacity: 0.7 }}>
+              Validate contact emails with ZeroBounce ·{' '}
+              {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
+            </p>
+          </div>
+          {exportUrl && (
+            <a
+              href={exportUrl}
+              className="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+              style={{ borderColor: 'var(--s5)', color: 'var(--s5-text)' }}
+            >
+              Export CSV
+            </a>
+          )}
         </div>
-        {exportUrl && (
-          <a
-            href={exportUrl}
-            className="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-            style={{ borderColor: 'var(--s4)', color: 'var(--s4-text)' }}
-          >
-            Export CSV
-          </a>
+        {validation && (vHasActivity || vCompleted > 0 || vFailed > 0) && (
+          <div className="mt-2 flex items-center gap-3 border-t border-(--oc-border) pt-1.5 text-xs text-(--oc-muted)">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${vHasActivity ? 'animate-pulse bg-amber-400' : 'bg-(--oc-border)'}`} />
+            <span className="flex items-center gap-1">
+              {vRunning > 0 && <span className="text-amber-600"><strong>{vRunning.toLocaleString()}</strong> running ·</span>}
+              {vQueued > 0 && <span><strong>{vQueued.toLocaleString()}</strong> queued ·</span>}
+              {vCompleted > 0 && <span className="text-emerald-600"><strong>{vCompleted.toLocaleString()}</strong> done</span>}
+              {vFailed > 0 && <span className="text-red-500"> · <strong>{vFailed.toLocaleString()}</strong> failed</span>}
+            </span>
+            <div className="flex-1 h-1 overflow-hidden rounded-full bg-(--oc-border)">
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(vPct, 100)}%`, backgroundColor: 'var(--s5)' }} />
+            </div>
+            <span className="tabular-nums shrink-0">{vProcessed.toLocaleString()} / {vTotal.toLocaleString()}</span>
+          </div>
         )}
       </div>
 
@@ -227,6 +209,7 @@ export function S4ValidationView({
         counts={letterCounts}
         onToggle={onToggleLetter}
         onClear={onClearLetters}
+        disabled={isLoading || isValidating}
       />
 
       {/* Verification filter chips + pager */}
@@ -237,14 +220,15 @@ export function S4ValidationView({
               key={f.value}
               type="button"
               onClick={() => onVerifFilterChange(f.value)}
-              className={`rounded-full px-3 py-1 text-[11px] font-bold transition ${
+              disabled={isLoading}
+              className={`rounded-full px-3 py-1 text-[11px] font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 verifFilter === f.value
                   ? 'text-white'
-                  : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s4) hover:text-(--s4-text)'
+                  : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s5) hover:text-(--s5-text)'
               }`}
               style={
                 verifFilter === f.value
-                  ? { backgroundColor: f.color ?? 'var(--s4)' }
+                  ? { backgroundColor: f.color ?? 'var(--s5)' }
                   : {}
               }
             >
@@ -252,13 +236,13 @@ export function S4ValidationView({
             </button>
           ))}
         </div>
-        <Pager offset={offset} pageSize={pageSize} total={contacts?.total ?? null} hasMore={contacts?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} />
+        <Pager offset={offset} pageSize={pageSize} total={contacts?.total ?? null} hasMore={contacts?.has_more ?? false} onPrev={onPagePrev} onNext={onPageNext} onPageSizeChange={onPageSizeChange} disabled={isLoading} />
       </div>
 
       {/* Selection bar */}
       <SelectionBar
-        stageColor="--s4"
-        stageBg="--s4-bg"
+        stageColor="--s5"
+        stageBg="--s5-bg"
         selectedCount={selectedContactIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
@@ -268,14 +252,29 @@ export function S4ValidationView({
       >
         <button
           type="button"
-          onClick={onValidateSelected}
+          onClick={() => setShowVerifyConfirm(true)}
           disabled={isValidating || selectedContactIds.length === 0}
           className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
-          style={{ backgroundColor: 'var(--s4)' }}
+          style={{ backgroundColor: 'var(--s5)' }}
         >
           {isValidating ? 'Queuing…' : 'Validate with ZeroBounce'}
         </button>
       </SelectionBar>
+
+      <ConfirmDialog
+        open={showVerifyConfirm}
+        title="Validate with ZeroBounce?"
+        confirmLabel="Validate"
+        isConfirming={isValidating}
+        onClose={() => setShowVerifyConfirm(false)}
+        onConfirm={() => { setShowVerifyConfirm(false); onValidateSelected() }}
+      >
+        <p className="text-sm text-(--oc-muted)">
+          This will validate{' '}
+          <strong className="text-(--oc-text)">{selectedContactIds.length} email{selectedContactIds.length !== 1 ? 's' : ''}</strong>{' '}
+          using ZeroBounce credits. This action cannot be undone.
+        </p>
+      </ConfirmDialog>
       </div>{/* ── /sticky controls ── */}
 
       {/* Table */}
@@ -328,22 +327,22 @@ export function S4ValidationView({
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
+                    disabled={isLoading || isValidating}
                     ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
                     onChange={() =>
                       onToggleAll(allVisibleSelected ? [] : visibleContacts.map((c) => c.id))
                     }
-                    className="cursor-pointer"
+                    className="cursor-pointer disabled:cursor-not-allowed"
                   />
                 </th>
-                <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <th className="p-3 text-left font-semibold">Email</th>
-                <th className="p-3 text-left font-semibold">Source</th>
-                <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
-                <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <th className="p-3 text-left font-semibold">Last validated</th>
-                <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+                <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
               </tr>
             </thead>
             <tbody>
@@ -355,14 +354,15 @@ export function S4ValidationView({
                   <tr
                     key={contact.id}
                     className="border-b border-(--oc-border) last:border-0 transition"
-                    style={selectedSet.has(contact.id) ? { backgroundColor: 'var(--s4-bg)' } : {}}
+                    style={selectedSet.has(contact.id) ? { backgroundColor: 'var(--s5-bg)' } : {}}
                   >
                     <td className="p-3">
                       <input
                         type="checkbox"
                         checked={selectedSet.has(contact.id)}
+                        disabled={isLoading || isValidating}
                         onChange={() => onToggleContact(contact.id)}
-                        className="cursor-pointer"
+                        className="cursor-pointer disabled:cursor-not-allowed"
                       />
                     </td>
                     <td className="p-3">
@@ -377,7 +377,7 @@ export function S4ValidationView({
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-mono text-[11px] font-medium hover:underline"
-                        style={{ color: 'var(--s4-text)' }}
+                        style={{ color: 'var(--s5-text)' }}
                       >
                         {contact.domain}
                       </a>
@@ -391,11 +391,6 @@ export function S4ValidationView({
                       ) : (
                         <span className="text-xs text-(--oc-muted) italic">No email</span>
                       )}
-                    </td>
-                    <td className="p-3">
-                      <span className="inline-flex items-center rounded-md border border-(--oc-border) bg-(--oc-surface) px-1.5 py-0.5 text-[10px] font-bold text-(--oc-muted)">
-                        {contact.source}
-                      </span>
                     </td>
                     <td className="p-3">
                       {contact.title_match ? (

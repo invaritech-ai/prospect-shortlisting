@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -13,6 +13,7 @@ from app.api.schemas.contacts import (
     ContactCompanyListResponse,
     ContactCompanySummary,
     DiscoveredContactCountsResponse,
+    DiscoveredContactIdsResult,
     DiscoveredContactListResponse,
     DiscoveredContactRead,
     MatchGapFilter,
@@ -20,7 +21,7 @@ from app.api.schemas.contacts import (
 from app.core.config import settings
 from app.db.session import get_session
 from app.models import Campaign, Company, DiscoveredContact, ProspectContact, Upload
-from app.models.pipeline import utcnow
+from app.models.pipeline import coerce_utc_datetime, utcnow
 from app.services.contact_reveal_queue_service import ContactRevealQueueService, discovered_group_key
 from app.services.idempotency_service import (
     IdempotencyConflictError,
@@ -34,6 +35,18 @@ from app.services.idempotency_service import (
 router = APIRouter(prefix="/v1", tags=["discovered-contacts"])
 
 _ALLOWED_MATCH_GAP_FILTERS = frozenset({"all", "contacts_no_match", "matched_no_email", "ready_candidates"})
+_DISCOVERED_CONTACT_SORT_FIELDS = frozenset(
+    {
+        "first_name",
+        "domain",
+        "title",
+        "provider",
+        "title_match",
+        "provider_has_email",
+        "last_seen_at",
+        "created_at",
+    }
+)
 
 
 def _campaign_or_404(session: Session, campaign_id: UUID) -> Campaign:
@@ -47,7 +60,7 @@ def _campaign_upload_scope(campaign_id: UUID):
     return col(Company.upload_id).in_(select(Upload.id).where(col(Upload.campaign_id) == campaign_id))
 
 
-def _freshness_cutoff() -> object:
+def _freshness_cutoff() -> datetime:
     return utcnow() - timedelta(days=max(1, int(settings.contact_discovery_freshness_days)))
 
 
@@ -69,10 +82,32 @@ def _parse_letters(letters: str | None) -> list[str]:
     return [ltr for ltr in normalized if len(ltr) == 1 and "a" <= ltr <= "z"]
 
 
+def _discovered_contact_sort_expr(sort_by: str):
+    if sort_by not in _DISCOVERED_CONTACT_SORT_FIELDS:
+        raise HTTPException(status_code=422, detail="Invalid sort_by.")
+    return {
+        "first_name": col(DiscoveredContact.first_name),
+        "domain": col(Company.domain),
+        "title": col(DiscoveredContact.title),
+        "provider": col(DiscoveredContact.provider),
+        "title_match": col(DiscoveredContact.title_match),
+        "provider_has_email": col(DiscoveredContact.provider_has_email),
+        "last_seen_at": col(DiscoveredContact.last_seen_at),
+        "created_at": col(DiscoveredContact.created_at),
+    }[sort_by]
+
+
+def _normalize_sort_dir(sort_dir: str) -> str:
+    normalized = (sort_dir or "desc").strip().lower()
+    if normalized not in {"asc", "desc"}:
+        raise HTTPException(status_code=422, detail="Invalid sort_dir.")
+    return normalized
+
+
 def _apply_discovered_filters(
     stmt,
     *,
-    matched_only: bool = False,
+    title_match: bool | None = None,
     provider: str | None = None,
     search: str | None = None,
     company_id: UUID | None = None,
@@ -80,8 +115,8 @@ def _apply_discovered_filters(
     letters: list[str] | None = None,
 ):
     stmt = stmt.where(col(DiscoveredContact.is_active).is_(True))
-    if matched_only:
-        stmt = stmt.where(col(DiscoveredContact.title_match).is_(True))
+    if title_match is not None:
+        stmt = stmt.where(col(DiscoveredContact.title_match) == title_match)
     if provider:
         stmt = stmt.where(col(DiscoveredContact.provider) == provider.strip().lower())
     if company_id is not None:
@@ -103,41 +138,82 @@ def _apply_discovered_filters(
     return stmt
 
 
+_EMAIL_STALE_DAYS = 30
+
+
+def _stale_email_subquery(stale_days: int = _EMAIL_STALE_DAYS):
+    """Subquery returning DiscoveredContact IDs that have a stale revealed email.
+
+    A contact is stale when the most recent ProspectContact created for it
+    is older than `stale_days` days (email may have changed).
+    """
+    cutoff = utcnow() - timedelta(days=stale_days)
+    return (
+        sa_select(DiscoveredContact.id)
+        .join(ProspectContact, (
+            (col(ProspectContact.company_id) == col(DiscoveredContact.company_id)) &
+            (col(ProspectContact.source) == col(DiscoveredContact.provider)) &
+            (func.lower(func.trim(col(ProspectContact.first_name))) ==
+             func.lower(func.trim(col(DiscoveredContact.first_name)))) &
+            (func.lower(func.trim(col(ProspectContact.last_name))) ==
+             func.lower(func.trim(col(DiscoveredContact.last_name))))
+        ))
+        .where(
+            col(ProspectContact.email).is_not(None),
+            col(ProspectContact.created_at) <= cutoff,
+        )
+        .correlate(DiscoveredContact)
+    )
+
+
 @router.get("/discovered-contacts", response_model=DiscoveredContactListResponse)
 def list_discovered_contacts(
     campaign_id: UUID = Query(...),
-    matched_only: bool = Query(default=False),
+    title_match: bool | None = Query(default=None),
     provider: str | None = Query(default=None),
     company_id: UUID | None = Query(default=None),
     search: str | None = Query(default=None),
+    stale_email_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    sort_by: str = Query(default="last_seen_at"),
+    sort_dir: str = Query(default="desc"),
     letters: str | None = Query(default=None),
     count_by_letters: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> DiscoveredContactListResponse:
     _campaign_or_404(session, campaign_id)
+    if not isinstance(sort_by, str):
+        sort_by = getattr(sort_by, "default", "last_seen_at")
+    if not isinstance(sort_dir, str):
+        sort_dir = getattr(sort_dir, "default", "desc")
     letter_values = _parse_letters(letters)
     cutoff = _freshness_cutoff()
+    sort_expr = _discovered_contact_sort_expr(sort_by)
+    sort_dir_normalized = _normalize_sort_dir(sort_dir)
+    sort_order = sort_expr.desc() if sort_dir_normalized == "desc" else sort_expr.asc()
 
     stmt = select(DiscoveredContact, Company.domain).join(Company, col(Company.id) == col(DiscoveredContact.company_id))
     stmt = stmt.where(_campaign_upload_scope(campaign_id))
     stmt = _apply_discovered_filters(
         stmt,
-        matched_only=matched_only,
+        title_match=title_match,
         provider=provider,
         search=search,
         company_id=company_id,
         letters=letter_values or None,
     )
+    if stale_email_only:
+        stmt = stmt.where(col(DiscoveredContact.id).in_(_stale_email_subquery()))
 
     total = session.exec(select(func.count()).select_from(stmt.subquery())).one()
     rows = list(
         session.exec(
             stmt.order_by(
-                col(DiscoveredContact.title_match).desc(),
+                sort_order,
                 col(DiscoveredContact.last_seen_at).desc(),
                 col(DiscoveredContact.created_at).desc(),
+                col(DiscoveredContact.id).asc(),
             )
             .offset(offset)
             .limit(limit)
@@ -148,7 +224,7 @@ def list_discovered_contacts(
             {
                 **contact.model_dump(),
                 "domain": domain,
-                "freshness_status": "fresh" if contact.last_seen_at >= cutoff else "stale",
+                "freshness_status": "fresh" if coerce_utc_datetime(contact.last_seen_at) >= cutoff else "stale",
                 "group_key": discovered_group_key(contact),
             }
         )
@@ -157,20 +233,21 @@ def list_discovered_contacts(
 
     letter_counts: dict[str, int] | None = None
     if count_by_letters:
+        letter_expr = _domain_first_letter_expr()
         letter_stmt = (
-            select(_domain_first_letter_expr().label("letter"), func.count().label("cnt"))
+            select(letter_expr.label("letter"), func.count().label("cnt"))
             .select_from(DiscoveredContact)
             .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
-            .where(_campaign_upload_scope(campaign_id), _domain_first_letter_expr().between("a", "z"))
+            .where(_campaign_upload_scope(campaign_id), letter_expr.between("a", "z"))
         )
         letter_stmt = _apply_discovered_filters(
             letter_stmt,
-            matched_only=matched_only,
+            title_match=title_match,
             provider=provider,
             search=search,
             company_id=company_id,
         )
-        letter_stmt = letter_stmt.group_by(_domain_first_letter_expr())
+        letter_stmt = letter_stmt.group_by(letter_expr)
         letter_counts = {chr(ord("a") + i): 0 for i in range(26)}
         for letter, count in session.exec(letter_stmt):
             if letter in letter_counts:
@@ -190,7 +267,7 @@ def list_discovered_contacts(
 def list_company_discovered_contacts(
     company_id: UUID,
     campaign_id: UUID = Query(...),
-    matched_only: bool = Query(default=False),
+    title_match: bool | None = Query(default=None),
     provider: str | None = Query(default=None),
     search: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -202,7 +279,7 @@ def list_company_discovered_contacts(
         raise HTTPException(status_code=404, detail="Company not found.")
     return list_discovered_contacts(
         campaign_id=campaign_id,
-        matched_only=matched_only,
+        title_match=title_match,
         provider=provider,
         company_id=company_id,
         search=search,
@@ -212,6 +289,37 @@ def list_company_discovered_contacts(
         count_by_letters=False,
         session=session,
     )
+
+
+@router.get("/discovered-contacts/ids", response_model=DiscoveredContactIdsResult)
+def list_discovered_contact_ids(
+    campaign_id: UUID = Query(...),
+    title_match: bool | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    company_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None),
+    stale_email_only: bool = Query(default=False),
+    letters: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> DiscoveredContactIdsResult:
+    _campaign_or_404(session, campaign_id)
+    letter_values = _parse_letters(letters)
+
+    stmt = select(DiscoveredContact.id).join(Company, col(Company.id) == col(DiscoveredContact.company_id))
+    stmt = stmt.where(_campaign_upload_scope(campaign_id))
+    stmt = _apply_discovered_filters(
+        stmt,
+        title_match=title_match,
+        provider=provider,
+        search=search,
+        company_id=company_id,
+        letters=letter_values or None,
+    )
+    if stale_email_only:
+        stmt = stmt.where(col(DiscoveredContact.id).in_(_stale_email_subquery()))
+
+    ids = list(session.exec(stmt.order_by(col(DiscoveredContact.id).asc())))
+    return DiscoveredContactIdsResult(ids=ids, total=len(ids))
 
 
 @router.get("/discovered-contacts/counts", response_model=DiscoveredContactCountsResponse)
@@ -253,7 +361,7 @@ def get_discovered_contact_counts(
 def list_discovered_companies(
     campaign_id: UUID = Query(...),
     search: str | None = Query(default=None),
-    matched_only: bool = Query(default=False),
+    title_match: bool | None = Query(default=None),
     match_gap_filter: str = Query(default="all"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -315,8 +423,8 @@ def list_discovered_companies(
     )
     if search:
         stmt = stmt.where(func.lower(col(Company.domain)).like(f"%{search.lower()}%"))
-    if matched_only:
-        stmt = stmt.where(col(DiscoveredContact.title_match).is_(True))
+    if title_match is not None:
+        stmt = stmt.where(col(DiscoveredContact.title_match) == title_match)
     if gap_filter == "contacts_no_match":
         stmt = stmt.having(func.coalesce(func.sum(col(DiscoveredContact.title_match).cast(Integer)), 0) == 0)
     elif gap_filter == "matched_no_email":

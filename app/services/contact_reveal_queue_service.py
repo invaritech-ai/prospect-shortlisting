@@ -62,6 +62,7 @@ class ContactRevealQueueService:
             trigger_source=trigger_source,
             reveal_scope=reveal_scope,
             state=ContactFetchBatchState.QUEUED,
+            selected_count=len(discovered_contacts),
             requested_count=len(grouped),
             queued_count=0,
             already_revealing_count=0,
@@ -117,30 +118,6 @@ class ContactRevealQueueService:
             queued_job_ids=queued_job_ids,
             batch_id=batch.id,
         )
-
-    def dispatch_queued_jobs(self, *, session: Session, limit: int | None = None) -> int:
-        control = self._runtime.get_or_create_control(session)
-        if not control.reveal_enabled or control.reveal_paused:
-            return 0
-        dispatch_limit = limit or control.reveal_dispatcher_batch_size
-        if dispatch_limit <= 0:
-            return 0
-        jobs = list(
-            session.exec(
-                select(ContactRevealJob)
-                .where(
-                    col(ContactRevealJob.terminal_state).is_(False),
-                    col(ContactRevealJob.state) == ContactFetchJobState.QUEUED,
-                )
-                .order_by(col(ContactRevealJob.created_at).asc())
-                .limit(dispatch_limit)
-            )
-        )
-        if not jobs:
-            return 0
-        queued_job_ids = [job.id for job in jobs if job.id]
-        self._dispatch_jobs(job_ids=queued_job_ids)
-        return len(queued_job_ids)
 
     @staticmethod
     def _requested_providers(contacts: Iterable[DiscoveredContact]) -> list[str]:

@@ -8,16 +8,15 @@ import {
   createRuns,
   createScrapeJob,
   deleteCampaign,
-  fetchContactsSelected,
   drainQueue,
   fetchContactsForCompany,
-  fetchContactsForCompanyApollo,
   getCurrentUser,
   getContactsExportUrl,
   getCampaignCosts,
   getCostStats,
   getCompanyCounts,
   getContactCounts,
+  getIntegrationsHealth,
   getPipelineRunProgress,
   getStats,
   loginWithPassword,
@@ -34,6 +33,7 @@ import type {
   CompanyCounts,
   CompanyListItem,
   ContactCountsResponse,
+  IntegrationHealthItem,
   UploadRead,
   RunRead,
   ScrapeJobRead,
@@ -61,9 +61,11 @@ import { FullPipelineView } from './components/views/pipeline/FullPipelineView'
 import { S1ScrapingView } from './components/views/pipeline/S1ScrapingView'
 import { S2AIDecisionView } from './components/views/pipeline/S2AIDecisionView'
 import { S3ContactFetchView } from './components/views/pipeline/S3ContactFetchView'
+import { S4RevealView } from './components/views/pipeline/S4RevealView'
 import { S4ValidationView } from './components/views/pipeline/S4ValidationView'
 import { CampaignsView } from './components/views/campaigns/CampaignsView'
 import { OperationsLogView } from './components/views/OperationsLogView'
+import { QueueHistoryView } from './components/views/QueueHistoryView'
 import { LoginView } from './components/views/auth/LoginView'
 import { SettingsView } from './components/views/settings/SettingsView'
 import { buildOperationsEvents } from './lib/telemetry'
@@ -161,6 +163,10 @@ function App() {
   const [actionState, setActionState] = useState<Record<string, string>>({})
   const [analysisActionState, setAnalysisActionState] = useState<Record<string, string>>({})
 
+  // ── Services health ───────────────────────────────────────────────────────
+  const [servicesHealth, setServicesHealth] = useState<IntegrationHealthItem[] | null>(null)
+  const [isLoadingHealth, setIsLoadingHealth] = useState(false)
+
   // ── Pipeline ops ──────────────────────────────────────────────────────────
   const [isDrainingQueue, setIsDrainingQueue] = useState(false)
   const [isResettingStuck, setIsResettingStuck] = useState(false)
@@ -196,6 +202,15 @@ function App() {
   const panels = usePanels(setError, setNotice, selectedCampaignId, refreshPipelineView)
 
   // ── Load functions ────────────────────────────────────────────────────────
+
+  const loadServicesHealth = useCallback(async () => {
+    if (!authRequestsEnabled) return
+    setIsLoadingHealth(true)
+    try {
+      setServicesHealth(await getIntegrationsHealth())
+    } catch { /* non-critical */ }
+    finally { setIsLoadingHealth(false) }
+  }, [authRequestsEnabled])
 
   const loadStats = useCallback(async () => {
     if (!authRequestsEnabled) {
@@ -269,11 +284,9 @@ function App() {
       return
     }
     try {
-      const runRows = await listRuns(200, 0)
-      // ScrapeJob rows lack campaign identifiers, so keep operations strictly scoped
-      // by suppressing scrape timeline rows until a campaign-scoped scrape endpoint exists.
+      const runRows = await listRuns(selectedCampaignId ?? undefined, 50, 0)
       setRecentScrapeJobs([])
-      setRecentRuns(runRows.filter((run) => scopedUploadIds.has(run.upload_id)).slice(0, 50))
+      setRecentRuns(runRows)
     } catch { /* non-critical */ }
   }, [authRequestsEnabled, selectedCampaignId, uploads])
 
@@ -400,6 +413,10 @@ function App() {
   }, [authRequestsEnabled, loadCampaignData])
 
   useEffect(() => {
+    void loadServicesHealth()
+  }, [loadServicesHealth])
+
+  useEffect(() => {
     if (!authRequestsEnabled) return
     void loadStats()
     void loadCompanyCounts()
@@ -423,7 +440,8 @@ function App() {
       's1-scraping',
       's2-ai',
       's3-contacts',
-      's4-validation',
+      's4-reveal',
+      's5-validation',
     ]
     if (!livePipelineViews.includes(activeView)) return
     const timer = window.setInterval(() => {
@@ -512,17 +530,23 @@ function App() {
     if (!file) { setError('Choose a file first.'); return }
     setError(''); setNotice(''); setIsUploading(true)
     try {
-      await uploadFileToCampaign(file, selectedCampaignId || undefined)
+      const result = await uploadFileToCampaign(file, selectedCampaignId || undefined)
       setFile(null)
       void loadCompanyCounts()
       refreshPipelineView()
       void loadRecentActivity()
       void loadCampaignData()
-      setNotice(
-        selectedCampaignId
-          ? 'Upload assigned to selected campaign and companies refreshed.'
-          : 'Upload parsed and companies refreshed.',
-      )
+      const reused = result.already_in_campaign_count ?? 0
+      const newCount = (result.upload.valid_count ?? 0) - reused
+      if (selectedCampaignId && reused > 0) {
+        setNotice(`${newCount} new domain${newCount !== 1 ? 's' : ''} added, ${reused} already in campaign and skipped.`)
+      } else {
+        setNotice(
+          selectedCampaignId
+            ? 'Upload assigned to selected campaign and companies refreshed.'
+            : 'Upload parsed and companies refreshed.',
+        )
+      }
     } catch (err) { setError(parseApiError(err)) }
     finally { setIsUploading(false) }
   }
@@ -643,41 +667,7 @@ function App() {
     } catch (err) { setError(parseApiError(err)) }
   }
 
-  const onFetchContactsApollo = async (company: CompanyListItem) => {
-    if (!selectedCampaignId) {
-      setError('Select a campaign first.')
-      return
-    }
-    setError(''); setNotice('')
-    try {
-      const result = await fetchContactsForCompanyApollo(selectedCampaignId, company.id)
-      const msg = result.queued_count > 0
-        ? `Queued Apollo fetch for ${company.domain}.`
-        : result.already_fetching_count > 0
-          ? `Apollo fetch already in progress for ${company.domain}.`
-          : `No Apollo contacts queued for ${company.domain}.`
-      setNotice(msg)
-    } catch (err) { setError(parseApiError(err)) }
-  }
-
-  const onFetchContactsBoth = async (company: CompanyListItem) => {
-    if (!selectedCampaignId) {
-      setError('Select a campaign first.')
-      return
-    }
-    setError(''); setNotice('')
-    try {
-      const result = await fetchContactsSelected(selectedCampaignId, [company.id], 'both')
-      const msg = result.queued_count > 0
-        ? `Queued sequential both-provider fetch for ${company.domain} (Snov first, Apollo follow-up).`
-        : result.already_fetching_count > 0
-          ? `Contact fetch already in progress for ${company.domain}; Apollo follow-up will be chained.`
-          : `No contacts queued for ${company.domain}.`
-      setNotice(msg)
-    } catch (err) { setError(parseApiError(err)) }
-  }
-
-  // ── Pipeline ops ──────────────────────────────────────────────────────────
+// ── Pipeline ops ──────────────────────────────────────────────────────────
 
   const onDrainQueue = async () => {
     if (!window.confirm('Cancel all queued jobs? This removes them from Redis and marks them as cancelled.')) return
@@ -858,6 +848,9 @@ function App() {
         activeView={activeView}
         setActiveView={navigateToView}
         activeCampaignName={activeCampaignName}
+        campaigns={campaigns}
+        selectedCampaignId={selectedCampaignId}
+        onSelectCampaign={(id) => setSelectedCampaignIdAndCancel(id)}
         stats={stats}
         onOpenPromptLibrary={activeView === 's1-scraping' ? scrapePromptMgmt.openScrapePromptSheet : promptMgmt.openPromptSheet}
         authEnabled={AUTH_REQUIRED}
@@ -885,6 +878,8 @@ function App() {
             stats={stats}
             recentScrapeJobs={recentScrapeJobs}
             recentRuns={recentRuns}
+            servicesHealth={servicesHealth}
+            isLoadingHealth={isLoadingHealth}
             file={file}
             isUploading={isUploading}
             isDragActive={isDragActive}
@@ -895,6 +890,7 @@ function App() {
             onNavigate={(view) => navigateToView(view)}
             onOpenCampaigns={() => navigateToView('campaigns')}
             onOpenOperations={() => navigateToView('operations')}
+            onOpenSettings={() => navigateToView('settings')}
           />
         )}
 
@@ -1108,14 +1104,9 @@ function App() {
             onToggleAll={pipeline.onPipelineToggleAll}
             onSelectAllMatching={pipeline.onPipelineSelectAllMatching}
             onClearSelection={pipeline.onPipelineClearSelection}
-            onFetchOne={(c, source) => {
-              if (source === 'snov') { void onFetchContacts(c) }
-              else if (source === 'apollo') { void onFetchContactsApollo(c) }
-              else { void onFetchContactsBoth(c) }
-            }}
+            onFetchOne={(c) => void onFetchContacts(c)}
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onViewContacts={(company) => void panels.openCompanyContacts(company)}
-            onOpenTitleRules={() => setIsTitleRulesOpen(true)}
             offset={pipeline.pipelineOffset}
             pageSize={pipeline.pipelinePageSize}
             onPagePrev={pipeline.onPipelinePagePrev}
@@ -1127,7 +1118,42 @@ function App() {
           />
         )}
 
-        {selectedCampaignId && activeView === 's4-validation' && (
+        {selectedCampaignId && activeView === 's4-reveal' && (
+          <S4RevealView
+            contacts={pipeline.s4DiscoveredContacts}
+            counts={pipeline.s4DiscoveredCounts}
+            letterCounts={pipeline.s4RevealLetterCounts}
+            activeLetters={pipeline.s4RevealActiveLetters}
+            selectedIds={pipeline.s4DiscoveredSelectedIds}
+            matchFilter={pipeline.s4MatchFilter}
+            search={pipeline.s4RevealSearch}
+            isSelectingAll={pipeline.isS4RevealSelectingAllMatching}
+            sortBy={pipeline.s4RevealSortBy}
+            sortDir={pipeline.s4RevealSortDir}
+            staleEmailOnly={pipeline.s4StaleEmailOnly}
+            onStaleEmailOnlyChange={pipeline.onS4StaleEmailOnlyChange}
+            onMatchFilterChange={pipeline.onS4MatchFilterChange}
+            onSearchChange={pipeline.onS4RevealSearchChange}
+            onToggleLetter={pipeline.onS4RevealToggleLetter}
+            onClearLetters={pipeline.onS4RevealClearLetters}
+            onToggle={pipeline.onS4ToggleDiscovered}
+            onToggleAll={pipeline.onS4ToggleAllDiscovered}
+            onSelectAllMatching={pipeline.onS4RevealSelectAllMatching}
+            onClearSelection={pipeline.onS4ClearDiscoveredSelection}
+            onRevealSelected={pipeline.onS4RevealSelected}
+            onOpenTitleRules={() => setIsTitleRulesOpen(true)}
+            offset={pipeline.s4RevealOffset}
+            pageSize={pipeline.s4RevealPageSize}
+            onPagePrev={pipeline.onS4RevealPagePrev}
+            onPageNext={pipeline.onS4RevealPageNext}
+            onPageSizeChange={pipeline.onS4RevealPageSizeChange}
+            onSort={pipeline.onS4RevealSort}
+            isLoading={pipeline.isS4RevealLoading}
+            isRevealing={pipeline.isS4Revealing}
+          />
+        )}
+
+        {selectedCampaignId && activeView === 's5-validation' && (
           <S4ValidationView
             contacts={pipeline.s4Contacts}
             letterCounts={pipeline.s4LetterCounts}
@@ -1158,6 +1184,10 @@ function App() {
             sortDir={pipeline.s4SortDir}
             onSort={pipeline.onS4Sort}
           />
+        )}
+
+        {activeView === 'queue-history' && (
+          <QueueHistoryView campaignId={selectedCampaignId} />
         )}
       </AppShell>
 

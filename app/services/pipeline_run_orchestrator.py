@@ -11,18 +11,14 @@ from app.models import (
     ClassificationResult,
     Company,
     ContactFetchJob,
-    ContactVerifyJob,
     PipelineRun,
     PipelineRunEvent,
     Prompt,
-    ProspectContact,
     ScrapeJob,
 )
 from app.models.pipeline import (
     AnalysisJobState,
     CompanyPipelineStage,
-    ContactFetchJobState,
-    ContactVerifyJobState,
     PipelineStage,
     PredictedLabel,
 )
@@ -193,53 +189,3 @@ def enqueue_s3_for_analysis_success(engine: Engine, analysis_job_id: UUID) -> No
             )
         )
         session.commit()
-
-
-def enqueue_s4_for_contact_success(engine: Engine, contact_fetch_job_id: UUID) -> None:
-    with Session(engine) as session:
-        fetch_job = session.get(ContactFetchJob, contact_fetch_job_id)
-        if (
-            fetch_job is None
-            or fetch_job.pipeline_run_id is None
-            or not fetch_job.terminal_state
-            or fetch_job.state != ContactFetchJobState.SUCCEEDED
-        ):
-            return
-        contact_ids = [
-            str(contact_id)
-            for contact_id in session.exec(
-                select(ProspectContact.id).where(col(ProspectContact.contact_fetch_job_id) == fetch_job.id)
-            ).all()
-        ]
-        if not contact_ids:
-            return
-
-        verify_job = ContactVerifyJob(
-            pipeline_run_id=fetch_job.pipeline_run_id,
-            state=ContactVerifyJobState.QUEUED,
-            terminal_state=False,
-            contact_ids_json=contact_ids,
-            selected_count=len(contact_ids),
-            verified_count=0,
-            skipped_count=0,
-            filter_snapshot_json={"trigger": "pipeline_orchestrator", "contact_fetch_job_id": str(fetch_job.id)},
-        )
-        session.add(verify_job)
-        session.flush()
-        session.add(
-            PipelineRunEvent(
-                pipeline_run_id=fetch_job.pipeline_run_id,
-                company_id=fetch_job.company_id,
-                stage=PipelineStage.S4_VALIDATION.value,
-                event_type="s3_to_s4_queued",
-                payload_json={
-                    "contact_fetch_job_id": str(fetch_job.id),
-                    "contact_verify_job_id": str(verify_job.id),
-                    "selected_count": len(contact_ids),
-                },
-            )
-        )
-        session.commit()
-        from app.tasks.contacts import verify_contacts_batch
-
-        verify_contacts_batch.delay(str(verify_job.id))

@@ -111,6 +111,7 @@ def create_runs(payload: RunCreateRequest, session: Session = Depends(get_sessio
 @router.get("/runs", response_model=list[RunRead])
 def list_runs(
     session: Session = Depends(get_session),
+    campaign_id: UUID | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunRead]:
@@ -120,15 +121,16 @@ def list_runs(
             cast(Prompt.name, String()).label("prompt_name"),
         ).subquery()
     )
-    rows = list(
-        session.exec(
-            select(Run, prompt_name_subquery.c.prompt_name)
-            .join(prompt_name_subquery, prompt_name_subquery.c.prompt_id == Run.prompt_id)
-            .order_by(col(Run.created_at).desc())
-            .offset(offset)
-            .limit(limit)
-        )
+    stmt = (
+        select(Run, prompt_name_subquery.c.prompt_name)
+        .join(prompt_name_subquery, prompt_name_subquery.c.prompt_id == Run.prompt_id)
+        .order_by(col(Run.created_at).desc())
+        .offset(offset)
+        .limit(limit)
     )
+    if campaign_id is not None:
+        stmt = stmt.join(Upload, Upload.id == Run.upload_id).where(col(Upload.campaign_id) == campaign_id)
+    rows = list(session.exec(stmt))
     return [_as_run_read(run, prompt_name) for run, prompt_name in rows]
 
 

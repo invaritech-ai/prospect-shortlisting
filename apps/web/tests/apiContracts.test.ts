@@ -15,6 +15,8 @@ import {
   listCompanyIds,
   listContactCompanies,
   listContacts,
+  listDiscoveredContactIds,
+  listDiscoveredContacts,
   listScrapePrompts,
   startPipelineRun,
   scrapeAllCompanies,
@@ -165,6 +167,55 @@ test('listContacts serializes letters and upload_id query params', async () => {
   assert.match(requested, /letters=w%2Cx/)
   assert.match(requested, /upload_id=upload-1/)
   assert.match(requested, /stale_days=30/)
+})
+
+test('listDiscoveredContacts serializes reveal filters, sorting, and letter counts', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return { total: 0, has_more: false, limit: 25, offset: 50, items: [], letter_counts: {} }
+  })
+
+  await listDiscoveredContacts({
+    campaignId: 'camp-1',
+    titleMatch: true,
+    search: ' alice ',
+    limit: 25,
+    offset: 50,
+    sortBy: 'last_seen_at',
+    sortDir: 'desc',
+    letters: ['a', 'b'],
+    countByLetters: true,
+  })
+
+  assert.match(requested, /title_match=true/)
+  assert.match(requested, /search=alice/)
+  assert.match(requested, /limit=25/)
+  assert.match(requested, /offset=50/)
+  assert.match(requested, /sort_by=last_seen_at/)
+  assert.match(requested, /sort_dir=desc/)
+  assert.match(requested, /letters=a%2Cb/)
+  assert.match(requested, /count_by_letters=true/)
+})
+
+test('listDiscoveredContactIds serializes reveal bulk-selection filters', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return { ids: [], total: 0 }
+  })
+
+  await listDiscoveredContactIds({
+    campaignId: 'camp-1',
+    titleMatch: false,
+    search: ' beta ',
+    letters: ['b', 'c'],
+  })
+
+  assert.match(requested, /\/v1\/discovered-contacts\/ids\?/)
+  assert.match(requested, /title_match=false/)
+  assert.match(requested, /search=beta/)
+  assert.match(requested, /letters=b%2Cc/)
 })
 
 test('listCompanies serializes multi-letter filters', async () => {

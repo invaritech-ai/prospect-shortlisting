@@ -31,6 +31,7 @@ class UploadRead(UTCReadModel):
 class UploadCreateResult(BaseModel):
     upload: UploadRead
     validation_errors: list[UploadValidationError]
+    already_in_campaign_count: int = 0
 
 
 class UploadDetail(BaseModel):

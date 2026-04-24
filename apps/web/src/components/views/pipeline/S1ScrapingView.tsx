@@ -153,91 +153,62 @@ export function S1ScrapingView({
         className="sticky top-0 z-10 space-y-2 border-b border-transparent pb-2"
         style={{ backgroundColor: 'var(--oc-bg)' }}
       >
-        {scrape && (hasActivity || counts != null) && (
-          <div className="rounded-2xl border border-(--oc-border) bg-white p-4 shadow-sm">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
-                  Scraping Pipeline
-                </span>
-                {hasActivity && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                    Active
-                  </span>
-                )}
-              </div>
-              <span className="text-[11px] text-(--oc-muted)">
-                {counts ? `${counts.scrape_done.toLocaleString()} done / ${counts.total.toLocaleString()} total` : `${scrape?.completed ?? 0} / ${total.toLocaleString()}`}
-              </span>
-            </div>
-            <p className="mb-2 text-[11px] text-(--oc-muted)">
-              <RelativeTimeLabel timestamp={stats?.as_of} />
-            </p>
-            <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.min(pctDone, 100)}%`,
-                background: hasActivity ? 'linear-gradient(90deg, var(--s1), #3b82f6)' : '#16a34a',
-              }}
-              />
-            </div>
-            <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
-              {summaryCounts ? (
-                <>
-                  <span className="font-bold text-slate-600">{summaryCounts.scrape_not_started.toLocaleString()} <span className="font-normal text-(--oc-muted)">not started</span></span>
-                  <span className="font-bold text-amber-600">{summaryCounts.scrape_in_progress.toLocaleString()} <span className="font-normal text-(--oc-muted)">in progress</span></span>
-                  <span className="font-bold text-emerald-700">{summaryCounts.scrape_done.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-                  <span className="font-bold text-slate-500">{summaryCounts.scrape_cancelled.toLocaleString()} <span className="font-normal text-(--oc-muted)">cancelled</span></span>
-                  <span className="font-bold text-orange-700">{summaryCounts.scrape_permanent_fail.toLocaleString()} <span className="font-normal text-(--oc-muted)">permanent fail</span></span>
-                  <span className="font-bold text-rose-600">{summaryCounts.scrape_soft_fail.toLocaleString()} <span className="font-normal text-(--oc-muted)">soft fail</span></span>
-                </>
-              ) : (
-                <span className="text-(--oc-muted)">No summary available.</span>
-              )}
-              {scrape.stuck_count > 0 && (
-                <button type="button" onClick={onResetStuck} disabled={isLoading || isResettingStuck}
-                  className="ml-auto text-[11px] text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">
-                  {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Header — mobile-first: stack title, full-width search, then prompt link */}
         <div
-          className="flex flex-col gap-3 rounded-xl px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2"
+          className="rounded-xl px-3 py-2.5"
           style={{ borderLeft: '3px solid var(--s1)', backgroundColor: 'var(--s1-bg)' }}
         >
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
-            <p className="text-xs" style={{ color: 'var(--s1-text)', opacity: 0.7 }}>
-              Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
-            </p>
-          </div>
-          <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
-            <div className="relative min-w-0 w-full sm:w-[180px] sm:shrink-0">
-              <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg>
-              <input type="text" value={search} onChange={(e) => onSearchChange(e.target.value)} disabled={isLoading}
-                placeholder="Search domains…"
-                className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60" />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-bold" style={{ color: 'var(--s1-text)' }}>S1 · Scraping</h2>
+              <p className="text-xs" style={{ color: 'var(--s1-text)', opacity: 0.7 }}>
+                Web content extraction · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={onOpenPromptLibrary}
-              disabled={isLoading}
-              title={selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Open scrape prompt library'}
-              className="min-w-0 w-full text-left text-xs text-(--oc-muted) underline underline-offset-2 transition hover:text-(--oc-text) disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:max-w-[min(20rem,45vw)] sm:shrink-0 sm:text-right"
-            >
-              <span className="block min-w-0 truncate sm:whitespace-nowrap">
-                {selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Select prompt…'}
-              </span>
-            </button>
+            <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 w-full sm:w-[180px] sm:shrink-0">
+                <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" value={search} onChange={(e) => onSearchChange(e.target.value)} disabled={isLoading}
+                  placeholder="Search domains…"
+                  className="w-full rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s1) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60" />
+              </div>
+              <button
+                type="button"
+                onClick={onOpenPromptLibrary}
+                disabled={isLoading}
+                title={selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Open scrape prompt library'}
+                className="min-w-0 w-full text-left text-xs text-(--oc-muted) underline underline-offset-2 transition hover:text-(--oc-text) disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:max-w-[min(20rem,45vw)] sm:shrink-0 sm:text-right"
+              >
+                <span className="block min-w-0 truncate sm:whitespace-nowrap">
+                  {selectedScrapePrompt ? `Prompt: ${selectedScrapePrompt.name}` : 'Select prompt…'}
+                </span>
+              </button>
+            </div>
           </div>
+          {scrape && (hasActivity || (summaryCounts?.scrape_done ?? 0) > 0 || (summaryCounts?.scrape_soft_fail ?? 0) + (summaryCounts?.scrape_permanent_fail ?? 0) > 0) && (
+            <div className="mt-2 flex items-center gap-3 border-t border-(--oc-border) pt-1.5 text-xs text-(--oc-muted)">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${hasActivity ? 'animate-pulse bg-amber-400' : 'bg-(--oc-border)'}`} />
+              <span className="flex items-center gap-1">
+                {(summaryCounts?.scrape_in_progress ?? 0) > 0 && <span className="text-amber-600"><strong>{summaryCounts!.scrape_in_progress.toLocaleString()}</strong> in progress ·</span>}
+                {(summaryCounts?.scrape_done ?? 0) > 0 && <span className="text-emerald-600"><strong>{summaryCounts!.scrape_done.toLocaleString()}</strong> done</span>}
+                {(summaryCounts?.scrape_soft_fail ?? 0) + (summaryCounts?.scrape_permanent_fail ?? 0) > 0 && <span className="text-red-500"> · <strong>{((summaryCounts?.scrape_soft_fail ?? 0) + (summaryCounts?.scrape_permanent_fail ?? 0)).toLocaleString()}</strong> failed</span>}
+                {scrape.stuck_count > 0 && (
+                  <button type="button" onClick={onResetStuck} disabled={isLoading || isResettingStuck}
+                    className="ml-2 text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">
+                    {isResettingStuck ? 'Resetting…' : `${scrape.stuck_count} stuck — reset`}
+                  </button>
+                )}
+              </span>
+              <div className="flex-1 h-1 overflow-hidden rounded-full bg-(--oc-border)">
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(pctDone, 100)}%`, backgroundColor: 'var(--s1)' }} />
+              </div>
+              <span className="tabular-nums shrink-0">
+                {counts ? `${counts.scrape_done.toLocaleString()} / ${counts.total.toLocaleString()}` : `${scrape.completed ?? 0} / ${total.toLocaleString()}`}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Letter strip */}

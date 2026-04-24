@@ -189,3 +189,19 @@ class TestRunAnalysisJobTask:
 
             # run_analysis_job on the service should have been called but returned None (CAS miss).
             MockSvc.return_value.run_analysis_job.assert_called_once()
+
+
+def test_contact_task_routes_keep_discovery_reveal_and_verify_separate() -> None:
+    from app.celery_app import app as celery_app
+
+    routes = celery_app.conf.task_routes
+    assert routes["app.tasks.contacts.fetch_contacts"]["queue"] == "contacts_orchestrator"
+    assert routes["app.tasks.contacts.fetch_contacts_apollo"]["queue"] == "contacts_orchestrator"
+    assert routes["app.tasks.contacts.fetch_contacts_snov_attempt"]["queue"] == "contacts_snov"
+    assert routes["app.tasks.contacts.fetch_contacts_apollo_attempt"]["queue"] == "contacts_apollo"
+    assert routes["app.tasks.contacts.reveal_contact_emails"]["queue"] == "contacts_reveal_orchestrator"
+    assert routes["app.tasks.contacts.reveal_contact_apollo_attempt"]["queue"] == "contacts_reveal_apollo"
+    assert routes["app.tasks.contacts.reveal_contact_snov_attempt"]["queue"] == "contacts_reveal_snov"
+    assert routes["app.tasks.contacts.verify_contacts_batch"]["queue"] == "contacts_verify"
+    assert "app.tasks.contacts.dispatch_contact_reveal_jobs" not in routes
+    assert "dispatch-contact-reveal-jobs" not in celery_app.conf.beat_schedule

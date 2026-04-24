@@ -60,8 +60,9 @@ else:
         "keepalives_interval": 10,
         "keepalives_count": 3,
     }
-    # API: 5 connections steady-state, burst to 10. Leaves room for workers.
-    _pool_kwargs = {"pool_size": 5, "max_overflow": 5, "pool_recycle": 300}
+    # API: 10 steady-state, burst to 10 more. Workers use NullPool so these are
+    # all available to the API process.
+    _pool_kwargs = {"pool_size": 10, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10}
 
 engine = create_engine(
     settings.database_url,

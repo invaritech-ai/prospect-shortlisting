@@ -6,7 +6,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint, event
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlmodel import Field, SQLModel
 
 
@@ -518,6 +519,7 @@ class ContactRevealBatch(SQLModel, table=True):
         default=ContactFetchBatchState.QUEUED,
         sa_column=Column(Text, nullable=False, index=True),
     )
+    selected_count: int = Field(default=0, ge=0)
     requested_count: int = Field(default=0, ge=0)
     queued_count: int = Field(default=0, ge=0)
     already_revealing_count: int = Field(default=0, ge=0)
@@ -643,6 +645,12 @@ class ContactVerifyJob(SQLModel, table=True):
 
 
 class DiscoveredContact(SQLModel, table=True):
+    """Provider-native contact candidate surfaced for reveal.
+
+    ``provider_person_id`` is opaque, provider-native, and must remain non-empty.
+    Do not synthesize fallback identities for this field.
+    """
+
     __tablename__ = "discovered_contacts"
     __table_args__ = (
         UniqueConstraint("company_id", "provider", "provider_person_id", name="uq_discovered_contacts_provider_key"),
@@ -652,6 +660,7 @@ class DiscoveredContact(SQLModel, table=True):
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     contact_fetch_job_id: UUID | None = Field(default=None, foreign_key="contact_fetch_jobs.id", index=True)
     provider: str = Field(max_length=32, index=True)
+    # Opaque provider-native identity. Never derive a synthetic fallback value.
     provider_person_id: str = Field(max_length=255, index=True)
     first_name: str = Field(default="", max_length=255)
     last_name: str = Field(default="", max_length=255)
@@ -770,3 +779,31 @@ class TitleMatchRule(SQLModel, table=True):
     # Comma-separated keywords, regex pattern, or seniority preset name
     keywords: str = Field(max_length=255)
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+def coerce_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _normalize_model_datetimes(target: Any) -> None:
+    mapper = getattr(target, "__mapper__", None)
+    if mapper is None:
+        return
+    for prop in mapper.column_attrs:
+        value = getattr(target, prop.key, None)
+        if isinstance(value, datetime):
+            normalized = coerce_utc_datetime(value)
+            if normalized != value:
+                set_committed_value(target, prop.key, normalized)
+
+
+@event.listens_for(SQLModel, "load", propagate=True)
+def _normalize_loaded_model_datetimes(target: Any, _context: Any) -> None:
+    _normalize_model_datetimes(target)
+
+
+@event.listens_for(SQLModel, "refresh", propagate=True)
+def _normalize_refreshed_model_datetimes(target: Any, _context: Any, _attrs: Any) -> None:
+    _normalize_model_datetimes(target)

@@ -19,6 +19,7 @@ export type UploadRead = {
 export type UploadCreateResult = {
   upload: UploadRead
   validation_errors: UploadValidationError[]
+  already_in_campaign_count: number
 }
 
 export type UploadDetail = UploadCreateResult
@@ -548,6 +549,8 @@ export type ProspectContactRead = {
   provider_email_status: string | null
   verification_status: string
   snov_confidence: number | null
+  provider_has_email: boolean | null
+  last_seen_at: string | null
   created_at: string
   updated_at: string
 }
@@ -666,6 +669,11 @@ export type DiscoveredContactCountsResponse = {
   already_revealed: number
 }
 
+export type DiscoveredContactIdsResult = {
+  ids: string[]
+  total: number
+}
+
 export type ContactRevealRequest = {
   campaign_id: string
   discovered_contact_ids?: string[]
@@ -719,20 +727,6 @@ export type TitleRuleStatsResponse = {
   rules: TitleRuleStatItem[]
   total_contacts: number
   total_matched: number
-}
-
-export type TitleRuleImpactPreview = {
-  campaign_id: string
-  source: 'snov' | 'apollo' | 'both'
-  include_stale: boolean
-  stale_days: number | null
-  stale_days_override?: number | null
-  provider_default_days?: Record<string, number> | null
-  force_refresh: boolean
-  affected_company_count: number
-  affected_contact_count: number
-  stale_contact_count: number
-  affected_company_ids: string[]
 }
 
 export type TitleRuleSeedResult = {
@@ -792,4 +786,29 @@ export type IntegrationTestResponse = {
   source: CredentialSource
   error_code: string
   message: string
+}
+
+export type IntegrationHealthItem = {
+  provider: string
+  label: string
+  connected: boolean
+  credits_remaining: number | null
+  error_code: string
+  message: string
+}
+
+export type QueueHistoryItem = {
+  id: string
+  stage: 's1' | 's2' | 's3' | 's4' | 's5'
+  company_domain: string | null
+  state: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  error_code: string | null
+}
+
+export type QueueHistoryResponse = {
+  items: QueueHistoryItem[]
+  total: number
 }

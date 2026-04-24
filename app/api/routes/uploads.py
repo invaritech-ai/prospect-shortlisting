@@ -71,7 +71,7 @@ async def create_upload(
         if campaign_id is not None and session.get(Campaign, campaign_id) is None:
             raise ValueError("Campaign not found.")
         raw_bytes = await file.read()
-        upload, issues = upload_service.create_upload_from_file(
+        upload, issues, already_in_campaign_count = upload_service.create_upload_from_file(
             session=session,
             filename=file.filename or "upload",
             raw_bytes=raw_bytes,
@@ -79,7 +79,11 @@ async def create_upload(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return UploadCreateResult(upload=_as_upload_read(upload), validation_errors=_as_issues(issues))
+    return UploadCreateResult(
+        upload=_as_upload_read(upload),
+        validation_errors=_as_issues(issues),
+        already_in_campaign_count=already_in_campaign_count,
+    )
 
 
 @router.get("/uploads", response_model=UploadList)

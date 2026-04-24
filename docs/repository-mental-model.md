@@ -45,7 +45,7 @@ Canonical schema lives in [app/models/pipeline.py](../app/models/pipeline.py):
 | Crawl | `CrawlJob` (state machine per company), `CrawlArtifact` (fetched page URLs, HTTP status, URIs for markdown/screenshots/OCR) |
 | Analyze | `Prompt`, `Run` (batch: upload + prompt + model pair + progress counters), `AnalysisJob` (per company; **lock_token** / **lock_expires_at** for idempotent workers), `ClassificationResult` (label, confidence, reasoning, **input_hash** for cache skips) |
 | Human loop | `CompanyFeedback` (thumbs, comment, manual_label) |
-| Contacts | `ContactFetchJob`, `ProspectContact` (Snov raw + ZeroBounce raw), `TitleMatchRule` (include/exclude keyword sets) |
+| Contacts | `ContactFetchJob`, `DiscoveredContact` (provider-native candidates; `provider_person_id` is opaque and non-empty), `ProspectContact` (Snov raw + ZeroBounce raw), `TitleMatchRule` (include/exclude keyword sets) |
 | Ops | `JobEvent` (audit trail across job types) |
 
 **Predicted labels**: `Possible`, `Crap`, `Unknown` (enum `PredictedLabel` in `app/models/pipeline.py`).

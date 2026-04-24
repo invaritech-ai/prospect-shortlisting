@@ -12,6 +12,7 @@ import {
   IconTimeline,
   IconSliders,
   IconCheck,
+  IconZap,
 } from '../ui/icons'
 
 interface BottomNavProps {
@@ -34,7 +35,8 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
     || activeView === 'settings'
     || activeView === 'full-pipeline'
     || activeView === 's3-contacts'
-    || activeView === 's4-validation'
+    || activeView === 's4-reveal'
+    || activeView === 's5-validation'
 
   return (
     <>
@@ -127,18 +129,34 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
           <button
             type="button"
             onClick={() => {
-              setActiveView('s4-validation')
+              setActiveView('s4-reveal')
               setMoreOpen(false)
             }}
             className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
-              activeView === 's4-validation'
+              activeView === 's4-reveal'
                 ? 'font-bold'
                 : 'text-(--oc-muted) hover:bg-(--oc-surface)'
             }`}
-            style={activeView === 's4-validation' ? { backgroundColor: 'var(--s4)22', color: 'var(--s4)' } : {}}
+            style={activeView === 's4-reveal' ? { backgroundColor: 'var(--s4)22', color: 'var(--s4)' } : {}}
+          >
+            <IconZap size={16} />
+            S4 · Reveal
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView('s5-validation')
+              setMoreOpen(false)
+            }}
+            className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
+              activeView === 's5-validation'
+                ? 'font-bold'
+                : 'text-(--oc-muted) hover:bg-(--oc-surface)'
+            }`}
+            style={activeView === 's5-validation' ? { backgroundColor: 'var(--s5)22', color: 'var(--s5)' } : {}}
           >
             <IconCheck size={16} />
-            S4 · Validation
+            S5 · Validation
           </button>
           <button
             type="button"

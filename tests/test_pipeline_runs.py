@@ -48,7 +48,6 @@ from app.services.contact_runtime_service import ContactRuntimeService
 from app.services.pipeline_run_orchestrator import (
     enqueue_s2_for_scrape_success,
     enqueue_s3_for_analysis_success,
-    enqueue_s4_for_contact_success,
 )
 
 
@@ -356,58 +355,6 @@ def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.Mon
     assert contact_jobs[0].contact_fetch_batch_id is not None
     assert dispatched == ["dispatch"]
 
-
-def test_orchestrator_s3_to_s4_creates_verify_job(monkeypatch: pytest.MonkeyPatch, sqlite_session: Session) -> None:
-    campaign, company = _seed_campaign_with_company(sqlite_session)
-    run = PipelineRun(
-        campaign_id=campaign.id,
-        status=PipelineRunStatus.RUNNING,
-        company_ids_snapshot=[str(company.id)],
-    )
-    sqlite_session.add(run)
-    sqlite_session.flush()
-    fetch_job = ContactFetchJob(
-        company_id=company.id,
-        state=ContactFetchJobState.SUCCEEDED,
-        terminal_state=True,
-        pipeline_run_id=run.id,
-        provider="snov",
-    )
-    sqlite_session.add(fetch_job)
-    sqlite_session.flush()
-    contact = ProspectContact(
-        company_id=company.id,
-        contact_fetch_job_id=fetch_job.id,
-        source="snov",
-        first_name="A",
-        last_name="B",
-        title="CTO",
-        title_match=True,
-        email="a@b.com",
-        verification_status="unverified",
-    )
-    sqlite_session.add(contact)
-    sqlite_session.commit()
-    sqlite_session.refresh(fetch_job)
-    sqlite_session.refresh(contact)
-
-    queued_ids: list[str] = []
-
-    class _DummyTask:
-        @staticmethod
-        def delay(job_id: str) -> None:
-            queued_ids.append(job_id)
-
-    monkeypatch.setattr("app.tasks.contacts.verify_contacts_batch", _DummyTask())
-
-    enqueue_s4_for_contact_success(engine=sqlite_session.get_bind(), contact_fetch_job_id=fetch_job.id)
-
-    verify_jobs = list(
-        sqlite_session.exec(select(ContactVerifyJob).where(col(ContactVerifyJob.pipeline_run_id) == run.id))
-    )
-    assert len(verify_jobs) == 1
-    assert verify_jobs[0].contact_ids_json == [str(contact.id)]
-    assert queued_ids == [str(verify_jobs[0].id)]
 
 
 def test_pipeline_run_progress_returns_stage_counters(sqlite_session: Session) -> None:

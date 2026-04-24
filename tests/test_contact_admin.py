@@ -20,12 +20,13 @@ from app.api.schemas.contacts import (
     ContactRetryFailedRequest,
     ContactRuntimeControlUpdate,
 )
-from app.models import Company, ContactFetchJob, ContactProviderAttempt, Upload
+from app.models import Company, ContactFetchJob, ContactProviderAttempt, ContactRevealBatch, DiscoveredContact, Upload
 from app.models.pipeline import (
     CompanyPipelineStage,
     ContactFetchJobState,
     ContactProviderAttemptState,
 )
+from app.services.contact_reveal_queue_service import ContactRevealQueueService
 
 
 def _campaign_company(session: Session, *, domain: str) -> tuple[UUID, Company]:
@@ -50,7 +51,10 @@ def test_contact_runtime_control_can_be_read_and_updated(sqlite_session: Session
     control = get_contact_runtime_control(session=sqlite_session)
     assert control.auto_enqueue_enabled is True
 
-    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as dispatch_delay:
+    with (
+        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as dispatch_delay,
+        patch("app.tasks.contacts.reveal_contact_emails.delay") as reveal_delay,
+    ):
         updated = update_contact_runtime_control(
             payload=ContactRuntimeControlUpdate(
                 auto_enqueue_enabled=True,
@@ -63,10 +67,56 @@ def test_contact_runtime_control_can_be_read_and_updated(sqlite_session: Session
         )
 
     dispatch_delay.assert_not_called()
+    reveal_delay.assert_not_called()
     assert updated.auto_enqueue_paused is True
     assert updated.auto_enqueue_max_batch_size == 7
     assert updated.auto_enqueue_max_active_per_run == 3
     assert updated.dispatcher_batch_size == 11
+
+
+def test_contact_reveal_batch_tracks_selected_and_grouped_counts(sqlite_session: Session) -> None:
+    campaign_id, company = _campaign_company(sqlite_session, domain="reveal-metrics.example")
+    contact_a = DiscoveredContact(
+        company_id=company.id,
+        provider="snov",
+        provider_person_id=f"pid-{uuid4()}-a",
+        first_name="Test",
+        last_name="Person",
+        title="Director",
+        title_match=True,
+        linkedin_url="https://linkedin.example/shared",
+    )
+    contact_b = DiscoveredContact(
+        company_id=company.id,
+        provider="apollo",
+        provider_person_id=f"pid-{uuid4()}-b",
+        first_name="Test",
+        last_name="Person",
+        title="Director",
+        title_match=True,
+        linkedin_url="https://linkedin.example/shared",
+    )
+    sqlite_session.add_all([contact_a, contact_b])
+    sqlite_session.commit()
+
+    with patch("app.tasks.contacts.reveal_contact_emails.delay") as reveal_delay:
+        result = ContactRevealQueueService().enqueue_reveals(
+            session=sqlite_session,
+            campaign_id=campaign_id,
+            discovered_contacts=[contact_a, contact_b],
+            reveal_scope="selected",
+        )
+
+    assert result.selected_count == 2
+    assert result.queued_count == 1
+    assert result.batch_id is not None
+    reveal_delay.assert_called_once()
+
+    batch = sqlite_session.get(ContactRevealBatch, result.batch_id)
+    assert batch is not None
+    assert batch.selected_count == 2
+    assert batch.requested_count == 1
+    assert batch.queued_count == 1
 
 
 def test_retry_failed_contact_companies_creates_new_batch(sqlite_session: Session) -> None:

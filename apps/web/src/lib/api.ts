@@ -23,12 +23,15 @@ import type {
   ContactVerifyResult,
   DecisionFilter,
   DiscoveredContactCountsResponse,
+  DiscoveredContactIdsResult,
   DiscoveredContactListResponse,
   DrainQueueResult,
   FeedbackRead,
   FeedbackUpsert,
   IntegrationsStatusResponse,
+  IntegrationHealthItem,
   IntegrationProviderId,
+  QueueHistoryResponse,
   IntegrationProviderStatus,
   IntegrationProviderUpdateRequest,
   IntegrationTestResponse,
@@ -56,7 +59,6 @@ import type {
   StatsResponse,
   TitleMatchRuleCreate,
   TitleMatchRuleRead,
-  TitleRuleImpactPreview,
   TitleRuleSeedResult,
   TitleTestResult,
   TitleRuleStatsResponse,
@@ -444,8 +446,10 @@ export async function getCampaignCosts(campaignId: string): Promise<PipelineCost
   return request<PipelineCostSummaryRead>(`/v1/campaigns/${encodeURIComponent(campaignId)}/costs`)
 }
 
-export async function listRuns(limit = 25, offset = 0): Promise<RunRead[]> {
-  return request<RunRead[]>(`/v1/runs?limit=${limit}&offset=${offset}`)
+export async function listRuns(campaignId?: string, limit = 25, offset = 0): Promise<RunRead[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (campaignId) params.set('campaign_id', campaignId)
+  return request<RunRead[]>(`/v1/runs?${params.toString()}`)
 }
 
 export async function listRunJobs(runId: string, limit = 500, offset = 0): Promise<AnalysisRunJobRead[]> {
@@ -577,30 +581,9 @@ export async function fetchContactsForRun(
   return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
 }
 
-export async function fetchContactsForCompanyApollo(
-  campaignId: string,
-  companyId: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (options.forceRefresh) params.set('force_refresh', 'true')
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo?${params.toString()}`, { method: 'POST' })
-}
-
-export async function fetchContactsForRunApollo(
-  campaignId: string,
-  runId: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (options.forceRefresh) params.set('force_refresh', 'true')
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo?${params.toString()}`, { method: 'POST' })
-}
-
 export async function fetchContactsSelected(
   campaignId: string,
   companyIds: string[],
-  source: 'snov' | 'apollo' | 'both',
   options: { idempotencyKey?: string; forceRefresh?: boolean } = {},
 ): Promise<ContactFetchResult> {
   return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
@@ -609,44 +592,74 @@ export async function fetchContactsSelected(
       'Content-Type': 'application/json',
       ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
     },
-    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, source, force_refresh: Boolean(options.forceRefresh) }),
+    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, force_refresh: Boolean(options.forceRefresh) }),
   })
 }
 
 export async function listDiscoveredContacts(
   options: {
     campaignId: string
-    matchedOnly?: boolean
+    titleMatch?: boolean
     provider?: string
     companyId?: string
     search?: string
+    staleEmailOnly?: boolean
     limit?: number
     offset?: number
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
     letters?: string[]
     countByLetters?: boolean
   },
 ): Promise<DiscoveredContactListResponse> {
   const params = new URLSearchParams()
   params.set('campaign_id', options.campaignId)
-  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.provider) params.set('provider', options.provider)
   if (options.companyId) params.set('company_id', options.companyId)
-  if (options.search) params.set('search', options.search)
+  const q = options.search?.trim()
+  if (q) params.set('search', q)
+  if (options.staleEmailOnly) params.set('stale_email_only', 'true')
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
+  if (options.sortBy) params.set('sort_by', options.sortBy)
+  if (options.sortDir) params.set('sort_dir', options.sortDir)
   if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
   if (options.countByLetters) params.set('count_by_letters', 'true')
   return request<DiscoveredContactListResponse>(`/v1/discovered-contacts?${params.toString()}`)
 }
 
+export async function listDiscoveredContactIds(
+  options: {
+    campaignId: string
+    titleMatch?: boolean
+    provider?: string
+    companyId?: string
+    search?: string
+    staleEmailOnly?: boolean
+    letters?: string[]
+  },
+): Promise<DiscoveredContactIdsResult> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  if (options.provider) params.set('provider', options.provider)
+  if (options.companyId) params.set('company_id', options.companyId)
+  const q = options.search?.trim()
+  if (q) params.set('search', q)
+  if (options.staleEmailOnly) params.set('stale_email_only', 'true')
+  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
+  return request<DiscoveredContactIdsResult>(`/v1/discovered-contacts/ids?${params.toString()}`)
+}
+
 export async function listCompanyDiscoveredContacts(
   campaignId: string,
   companyId: string,
-  options: { matchedOnly?: boolean; provider?: string; search?: string; limit?: number; offset?: number } = {},
+  options: { titleMatch?: boolean; provider?: string; search?: string; limit?: number; offset?: number } = {},
 ): Promise<DiscoveredContactListResponse> {
   const params = new URLSearchParams()
   params.set('campaign_id', campaignId)
-  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.provider) params.set('provider', options.provider)
   if (options.search) params.set('search', options.search)
   if (options.limit) params.set('limit', String(options.limit))
@@ -658,7 +671,7 @@ export async function listDiscoveredCompanies(
   options: {
     campaignId: string
     search?: string
-    matchedOnly?: boolean
+    titleMatch?: boolean
     matchGapFilter?: MatchGapFilter
     limit?: number
     offset?: number
@@ -667,7 +680,7 @@ export async function listDiscoveredCompanies(
   const params = new URLSearchParams()
   params.set('campaign_id', options.campaignId)
   if (options.search) params.set('search', options.search)
-  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
@@ -856,37 +869,6 @@ export async function getTitleRuleStats(campaignId: string): Promise<TitleRuleSt
   return request<TitleRuleStatsResponse>(`/v1/title-match-rules/stats?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
-export async function previewTitleRuleImpact(
-  campaignId: string,
-  options: { source?: 'snov' | 'apollo' | 'both'; includeStale?: boolean; staleDays?: number; forceRefresh?: boolean } = {},
-): Promise<TitleRuleImpactPreview> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (options.source) params.set('source', options.source)
-  if (options.includeStale !== undefined) params.set('include_stale', String(options.includeStale))
-  if (options.staleDays !== undefined) params.set('stale_days', String(options.staleDays))
-  if (options.forceRefresh !== undefined) params.set('force_refresh', String(options.forceRefresh))
-  return request<TitleRuleImpactPreview>(
-    `/v1/title-match-rules/impact-preview?${params.toString()}`,
-  )
-}
-
-export async function queueTitleRuleImpactFetch(
-  campaignId: string,
-  source: 'snov' | 'apollo' | 'both' = 'snov',
-  options: { includeStale?: boolean; staleDays?: number; forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  params.set('source', source)
-  if (options.includeStale !== undefined) params.set('include_stale', String(options.includeStale))
-  if (options.staleDays !== undefined) params.set('stale_days', String(options.staleDays))
-  if (options.forceRefresh !== undefined) params.set('force_refresh', String(options.forceRefresh))
-  return request<ContactFetchResult>(
-    `/v1/title-match-rules/impact-fetch?${params.toString()}`,
-    { method: 'POST' },
-  )
-}
 
 export async function getIntegrationSettings(): Promise<IntegrationsStatusResponse> {
   return request<IntegrationsStatusResponse>('/v1/settings/integrations')
@@ -909,6 +891,27 @@ export async function testIntegrationProvider(
   return request<IntegrationTestResponse>(`/v1/settings/integrations/${encodeURIComponent(provider)}/test`, {
     method: 'POST',
   })
+}
+
+export async function getIntegrationsHealth(): Promise<IntegrationHealthItem[]> {
+  return request<IntegrationHealthItem[]>('/v1/settings/integrations/health')
+}
+
+export async function getQueueHistory(params: {
+  campaignId?: string | null
+  stage?: string
+  view?: string
+  limit?: number
+  offset?: number
+}): Promise<QueueHistoryResponse> {
+  const q = new URLSearchParams()
+  if (params.campaignId) q.set('campaign_id', params.campaignId)
+  if (params.stage && params.stage !== 'all') q.set('stage', params.stage)
+  if (params.view && params.view !== 'all') q.set('view', params.view)
+  if (params.limit !== undefined) q.set('limit', String(params.limit))
+  if (params.offset !== undefined) q.set('offset', String(params.offset))
+  const qs = q.toString()
+  return request<QueueHistoryResponse>(`/v1/queue-history${qs ? `?${qs}` : ''}`)
 }
 
 export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {

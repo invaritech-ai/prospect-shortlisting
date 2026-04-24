@@ -125,71 +125,50 @@ export function S2AIDecisionView({
 
   return (
     <div className="space-y-3">
-      {/* Analysis pipeline progress – scrolls away */}
-      {analysis && (aHasActivity || aCompleted > 0) && (
-        <div className="rounded-2xl border border-(--oc-border) bg-white p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-(--oc-muted)">
-                Analysis Pipeline
-              </span>
-              {aHasActivity && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                  Active
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-(--oc-muted)">{aCompleted.toLocaleString()} / {aTotal.toLocaleString()}</span>
-          </div>
-          <p className="mb-2 text-[11px] text-(--oc-muted)">
-            <RelativeTimeLabel timestamp={stats?.as_of} />
-          </p>
-          <div className="h-1.5 overflow-hidden rounded-full bg-(--oc-surface)" style={{ border: '1px solid var(--oc-border)' }}>
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${Math.min(aPct, 100)}%`,
-                background: aHasActivity ? 'linear-gradient(90deg, var(--s2), #f59e0b)' : '#16a34a',
-              }}
-            />
-          </div>
-          <div className="mt-2.5 flex gap-5 text-[11px]">
-            {aRunning > 0 && <span className="font-bold text-amber-600">{aRunning.toLocaleString()} <span className="font-normal text-(--oc-muted)">running</span></span>}
-            {aQueued > 0 && <span className="font-bold text-(--oc-muted)">{aQueued.toLocaleString()} <span className="font-normal">queued</span></span>}
-            <span className="font-bold text-emerald-700">{aCompleted.toLocaleString()} <span className="font-normal text-(--oc-muted)">done</span></span>
-            {aFailed > 0 && <span className="font-bold text-rose-600">{aFailed.toLocaleString()} <span className="font-normal text-(--oc-muted)">failed</span></span>}
-          </div>
-        </div>
-      )}
-
       {/* ── Sticky controls ─────────────────────────────────────────────── */}
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
-        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s2)', backgroundColor: 'var(--s2-bg)' }}>
-          <div className="flex-1">
-            <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
-            <p className="text-xs" style={{ color: 'var(--s2-text)', opacity: 0.7 }}>
-              Qualify prospects with AI classification · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
-            </p>
-          </div>
-          <div className="relative">
-            <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
+        <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s2)', backgroundColor: 'var(--s2-bg)' }}>
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <h2 className="text-base font-bold" style={{ color: 'var(--s2-text)' }}>S2 · AI Decision</h2>
+              <p className="text-xs" style={{ color: 'var(--s2-text)', opacity: 0.7 }}>
+                Qualify prospects with AI classification · {companies != null ? `${displayCount.toLocaleString()} companies` : '—'}
+              </p>
+            </div>
+            <div className="relative">
+              <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-(--oc-muted)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                disabled={isLoading}
+                placeholder="Search domains…"
+                className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ width: 180 }} />
+            </div>
+            <button type="button" onClick={onOpenPromptLibrary}
               disabled={isLoading}
-              placeholder="Search domains…"
-              className="rounded-lg border border-(--oc-border) bg-(--oc-surface) py-1.5 pl-7 pr-3 text-xs outline-none transition focus:border-(--s2) focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-              style={{ width: 180 }} />
+              className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
+              {selectedPrompt ? `Prompt: ${selectedPrompt.name}` : 'Select prompt…'}
+            </button>
           </div>
-          <button type="button" onClick={onOpenPromptLibrary}
-            disabled={isLoading}
-            className="text-xs text-(--oc-muted) underline underline-offset-2 hover:text-(--oc-text) transition whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
-            {selectedPrompt ? `Prompt: ${selectedPrompt.name}` : 'Select prompt…'}
-          </button>
+          {analysis && (aHasActivity || aCompleted > 0 || aFailed > 0) && (
+            <div className="mt-2 flex items-center gap-3 border-t border-(--oc-border) pt-1.5 text-xs text-(--oc-muted)">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${aHasActivity ? 'animate-pulse bg-amber-400' : 'bg-(--oc-border)'}`} />
+              <span className="flex items-center gap-1">
+                {aRunning > 0 && <span className="text-amber-600"><strong>{aRunning.toLocaleString()}</strong> running ·</span>}
+                {aQueued > 0 && <span><strong>{aQueued.toLocaleString()}</strong> queued ·</span>}
+                {aCompleted > 0 && <span className="text-emerald-600"><strong>{aCompleted.toLocaleString()}</strong> done</span>}
+                {aFailed > 0 && <span className="text-red-500"> · <strong>{aFailed.toLocaleString()}</strong> failed</span>}
+              </span>
+              <div className="flex-1 h-1 overflow-hidden rounded-full bg-(--oc-border)">
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(aPct, 100)}%`, backgroundColor: 'var(--s2)' }} />
+              </div>
+              <span className="tabular-nums shrink-0">{aCompleted.toLocaleString()} / {aTotal.toLocaleString()}</span>
+            </div>
+          )}
         </div>
 
         <LetterStrip multiSelect activeLetters={activeLetters} counts={letterCounts} onToggle={onToggleLetter} onClear={onClearLetters} disabled={isLoading} />

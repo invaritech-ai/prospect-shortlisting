@@ -1,5 +1,5 @@
 import type { DragEvent, FormEvent } from 'react'
-import type { CompanyCounts, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
+import type { CompanyCounts, IntegrationHealthItem, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
 import { IconUpload } from '../../ui/icons'
 
 function LiveDot({ color }: { color: string }) {
@@ -11,13 +11,15 @@ function LiveDot({ color }: { color: string }) {
   )
 }
 
-type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-validation'
+type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-reveal' | 's5-validation'
 
 interface DashboardViewProps {
   companyCounts: CompanyCounts | null
   stats: StatsResponse | null
   recentScrapeJobs: ScrapeJobRead[]
   recentRuns: RunRead[]
+  servicesHealth: IntegrationHealthItem[] | null
+  isLoadingHealth: boolean
   // Upload
   file: File | null
   isUploading: boolean
@@ -30,6 +32,7 @@ interface DashboardViewProps {
   onNavigate: (view: PipelineStageView) => void
   onOpenCampaigns: () => void
   onOpenOperations: () => void
+  onOpenSettings: () => void
 }
 
 interface StageCardDef {
@@ -41,11 +44,27 @@ interface StageCardDef {
   hint: string
 }
 
+const SERVICE_META: Record<string, { initials: string; color: string }> = {
+  openrouter: { initials: 'OR', color: 'var(--oc-accent)' },
+  snov:       { initials: 'SN', color: 'var(--s3)' },
+  apollo:     { initials: 'AP', color: 'var(--s2)' },
+  zerobounce: { initials: 'ZB', color: 'var(--s5)' },
+}
+
+function formatCredits(n: number | null): string {
+  if (n === null) return '—'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 export function DashboardView({
   companyCounts,
   stats,
   recentScrapeJobs,
   recentRuns,
+  servicesHealth,
+  isLoadingHealth,
   file,
   isUploading,
   isDragActive,
@@ -56,6 +75,7 @@ export function DashboardView({
   onNavigate,
   onOpenCampaigns,
   onOpenOperations,
+  onOpenSettings,
 }: DashboardViewProps) {
   const cards: StageCardDef[] = [
     {
@@ -83,10 +103,18 @@ export function DashboardView({
       hint: 'Classified, awaiting contacts',
     },
     {
-      view: 's4-validation',
-      label: 'S4 · Validation',
+      view: 's4-reveal',
+      label: 'S4 · Reveal',
       stageColor: '--s4',
       stageBg: '--s4-bg',
+      count: null,
+      hint: 'Reveal contact emails',
+    },
+    {
+      view: 's5-validation',
+      label: 'S5 · Validation',
+      stageColor: '--s5',
+      stageBg: '--s5-bg',
       count: companyCounts?.contact_ready ?? null,
       hint: 'Contacts fetched, validate emails',
     },
@@ -112,7 +140,7 @@ export function DashboardView({
       {!hasSelectedCampaign && (
         <section className="rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-4">
           <p className="text-sm text-(--oc-muted)">
-            Stage screens are campaign-scoped. Select a campaign first to run S1-S4 flows.
+            Stage screens are campaign-scoped. Select a campaign first to run S1-S5 flows.
           </p>
           <button
             type="button"
@@ -124,13 +152,65 @@ export function DashboardView({
         </section>
       )}
 
+      {/* Services health */}
+      <section>
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-(--oc-muted)">Services</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {isLoadingHealth && !servicesHealth
+            ? Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="oc-panel animate-pulse space-y-2 p-3">
+                  <div className="h-8 w-8 rounded-full bg-(--oc-border)" />
+                  <div className="h-3 w-16 rounded bg-(--oc-border)" />
+                  <div className="h-3 w-10 rounded bg-(--oc-border)" />
+                </div>
+              ))
+            : (servicesHealth ?? []).map((svc) => {
+                const meta = SERVICE_META[svc.provider] ?? { initials: svc.provider.slice(0, 2).toUpperCase(), color: 'var(--oc-muted)' }
+                return (
+                  <div key={svc.provider} className="oc-panel flex flex-col gap-2 p-3">
+                    <div className="flex items-center justify-between">
+                      <div
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-black text-white"
+                        style={{ backgroundColor: meta.color }}
+                      >
+                        {meta.initials}
+                      </div>
+                      <span
+                        className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                        style={svc.connected
+                          ? { backgroundColor: 'var(--s3-bg)', color: 'var(--s3-text)' }
+                          : { backgroundColor: 'var(--oc-surface-strong)', color: 'var(--oc-muted)' }}
+                      >
+                        {svc.connected ? 'Connected' : 'Disconnected'}
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-(--oc-text)">{svc.label}</p>
+                    <p className="text-xs text-(--oc-muted)">
+                      {svc.connected
+                        ? svc.credits_remaining !== null
+                          ? <><span className="font-semibold text-(--oc-text)">{formatCredits(svc.credits_remaining)}</span> credits</>
+                          : svc.message || 'Connected'
+                        : svc.message || 'Not configured'}
+                    </p>
+                    {!svc.connected && (
+                      <button type="button" onClick={onOpenSettings}
+                        className="mt-auto self-start text-[11px] text-(--oc-accent) underline underline-offset-2 transition hover:text-(--oc-accent-ink)">
+                        Configure →
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+        </div>
+      </section>
+
       {/* Pipeline stage cards */}
       <section>
         <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-(--oc-muted)">
           Pipeline
         </h2>
         <p className="mb-3 text-xs text-(--oc-muted)">
-          Use stage cards for focused S1-S4 work. Use Full Pipeline for cross-stage triage and bulk actions.
+          Use stage cards for focused S1-S5 work. Use Full Pipeline for cross-stage triage and bulk actions.
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {cards.map((card) => {
@@ -138,7 +218,7 @@ export function DashboardView({
               (card.view === 's1-scraping' && (stats?.scrape?.running ?? 0) > 0) ||
               (card.view === 's2-ai' && (stats?.analysis?.running ?? 0) > 0) ||
               (card.view === 's3-contacts' && (stats?.contact_fetch?.running ?? 0) > 0) ||
-              (card.view === 's4-validation' && (stats?.validation?.running ?? 0) > 0)
+              (card.view === 's5-validation' && (stats?.validation?.running ?? 0) > 0)
             return (
               <button
                 key={card.view}
@@ -217,12 +297,12 @@ export function DashboardView({
             </div>
           )}
           {stats.validation && (stats.validation.running > 0 || stats.validation.queued > 0 || stats.validation.stuck_count > 0) && (
-            <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+            <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s5)', backgroundColor: 'var(--s5-bg)' }}>
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s4)' }} />
-                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s4)' }} />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s5)' }} />
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s5)' }} />
               </span>
-              <span className="text-xs font-medium" style={{ color: 'var(--s4-text)' }}>
+              <span className="text-xs font-medium" style={{ color: 'var(--s5-text)' }}>
                 {stats.validation.running} running · {stats.validation.queued} queued · {stats.validation.stuck_count} stuck
               </span>
             </div>
@@ -255,11 +335,11 @@ export function DashboardView({
           >
             <IconUpload size={24} className="text-(--oc-muted)" />
             <p className="text-sm text-(--oc-muted)">
-              {file ? file.name : 'Drop a CSV file here, or click to browse'}
+              {file ? file.name : 'Drop a file here, or click to browse (CSV, TXT, XLS, XLSX)'}
             </p>
             <input
               type="file"
-              accept=".csv"
+              accept=".csv,.txt,.xls,.xlsx"
               className="hidden"
               id="csv-upload"
               onChange={(e) => onSetFile(e.target.files?.[0] ?? null)}
