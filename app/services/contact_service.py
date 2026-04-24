@@ -86,34 +86,24 @@ def _normalize_name(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
-def _provider_person_id(provider: str, payload: dict[str, Any]) -> str:
+def _provider_native_person_id(provider: str, payload: dict[str, Any]) -> str:
     normalized_provider = (provider or "").strip().lower()
     if normalized_provider == "apollo":
-        person_id = str(payload.get("id") or "").strip()
-        if person_id:
-            return person_id
-        linkedin = str(payload.get("linkedin_url") or "").strip().lower()
-        if linkedin:
-            return linkedin
+        return str(payload.get("id") or "").strip()
     if normalized_provider == "snov":
-        for key in ("id", "user_id"):
+        for key in ("id", "user_id", "search_emails_start"):
             provider_id = str(payload.get(key) or "").strip()
             if provider_id:
                 return provider_id
-        search_url = str(payload.get("search_emails_start") or "").strip()
-        if search_url:
-            search_tail = search_url.rstrip("/").rsplit("/", 1)[-1].strip()
-            if search_tail:
-                return search_tail
-        source_page = str(payload.get("source_page") or "").strip().lower()
-        if source_page:
-            return source_page
-    first_name = _normalize_name(payload.get("first_name"))
-    last_name = _normalize_name(payload.get("last_name"))
-    title = _normalize_name(payload.get("title") or payload.get("position"))
-    if first_name and last_name and title:
-        return f"{first_name}|{last_name}|{title}"
     return ""
+
+
+def enqueue_s4_for_contact_success(*, engine: Any, contact_fetch_job_id: UUID) -> None:
+    """Compatibility hook for the S4 reveal enqueue boundary.
+
+    The fetch pipeline still signals successful S3 completion through this
+    callback so tests and downstream orchestration can observe the transition.
+    """
 
 
 def _company_campaign_id(session: Session, *, company_id: UUID) -> UUID | None:
@@ -352,7 +342,7 @@ class ContactService:
                     session.refresh(job)
                     return job
 
-                finalized_job = self._finalize_contact_job(session=session, job=job)
+                finalized_job = self._finalize_contact_job(engine=engine, session=session, job=job)
                 session.commit()
                 session.refresh(finalized_job)
                 return finalized_job
@@ -400,14 +390,6 @@ class ContactService:
                         error_message="Company not found.",
                     )
                 campaign_id = _company_campaign_id(session, company_id=company.id)
-                if campaign_id is None:
-                    return self._fail_provider_attempt(
-                        engine=engine,
-                        attempt_id=attempt_id,
-                        lock_token=lock_token,
-                        error_code="contact_campaign_missing",
-                        error_message="Campaign not found for company.",
-                    )
                 include_rules, exclude_words = load_title_rules(session, campaign_id=campaign_id)
 
             decision = self._runtime.claim_provider_slot(provider)
@@ -643,7 +625,7 @@ class ContactService:
                 title_matched_count += 1
             contacts_to_write.append(
                 {
-                    "provider_person_id": _provider_person_id("apollo", prospect),
+                    "provider_person_id": _provider_native_person_id("apollo", prospect),
                     "first_name": str(prospect.get("first_name") or "").strip(),
                     "last_name": str(prospect.get("last_name") or prospect.get("last_name_obfuscated") or "").strip(),
                     "title": title or None,
@@ -693,12 +675,12 @@ class ContactService:
                 title_matched_count += 1
             contacts_to_write.append(
                 {
-                    "provider_person_id": _provider_person_id("snov", prospect),
+                    "provider_person_id": _provider_native_person_id("snov", prospect),
                     "first_name": str(prospect.get("first_name") or "").strip(),
                     "last_name": str(prospect.get("last_name") or "").strip(),
                     "title": title or None,
                     "title_match": title_matched,
-                    "linkedin_url": str(prospect.get("source_page") or "").strip() or None,
+                    "linkedin_url": str(prospect.get("linkedin_url") or "").strip() or None,
                     "source_url": str(prospect.get("source_page") or "").strip() or None,
                     "provider_has_email": None,
                     "provider_metadata_json": {
@@ -1118,7 +1100,13 @@ class ContactService:
         job.updated_at = utcnow()
         session.add(job)
 
-    def _finalize_contact_job(self, *, session: Session, job: ContactFetchJob) -> ContactFetchJob:
+    def _finalize_contact_job(
+        self,
+        *,
+        engine: Any,
+        session: Session,
+        job: ContactFetchJob,
+    ) -> ContactFetchJob:
         attempts = list(
             session.exec(
                 select(ContactProviderAttempt).where(
@@ -1161,6 +1149,8 @@ class ContactService:
         job.lock_token = None
         job.lock_expires_at = None
         session.add(job)
+        if job.state == ContactFetchJobState.SUCCEEDED and contacts_found > 0:
+            enqueue_s4_for_contact_success(engine=engine, contact_fetch_job_id=job.id)
         self._queue.refresh_batch_state(session, batch_id=job.contact_fetch_batch_id)
         return job
 

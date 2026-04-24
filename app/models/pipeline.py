@@ -644,6 +644,12 @@ class ContactVerifyJob(SQLModel, table=True):
 
 
 class DiscoveredContact(SQLModel, table=True):
+    """Provider-native contact candidate surfaced for reveal.
+
+    ``provider_person_id`` is opaque, provider-native, and must remain non-empty.
+    Do not synthesize fallback identities for this field.
+    """
+
     __tablename__ = "discovered_contacts"
     __table_args__ = (
         UniqueConstraint("company_id", "provider", "provider_person_id", name="uq_discovered_contacts_provider_key"),
@@ -653,6 +659,7 @@ class DiscoveredContact(SQLModel, table=True):
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     contact_fetch_job_id: UUID | None = Field(default=None, foreign_key="contact_fetch_jobs.id", index=True)
     provider: str = Field(max_length=32, index=True)
+    # Opaque provider-native identity. Never derive a synthetic fallback value.
     provider_person_id: str = Field(max_length=255, index=True)
     first_name: str = Field(default="", max_length=255)
     last_name: str = Field(default="", max_length=255)

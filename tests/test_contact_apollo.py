@@ -11,8 +11,7 @@ from app.models import (
     Company,
     ContactFetchJob,
     ContactProviderAttempt,
-    ProspectContact,
-    ProspectContactEmail,
+    DiscoveredContact,
     TitleMatchRule,
     Upload,
 )
@@ -118,28 +117,27 @@ def test_fetch_contacts_apollo_task_invokes_service(sqlite_engine, sqlite_sessio
     mock_service.return_value.run_apollo_fetch.assert_called_once()
 
 
-def test_apollo_provider_attempt_merges_duplicate_company_email(sqlite_engine, sqlite_session: Session) -> None:
+def test_apollo_provider_attempt_writes_native_discovered_contacts(sqlite_engine, sqlite_session: Session) -> None:
     company = _make_company(sqlite_session, domain="apollo.example")
     job = _create_apollo_job(sqlite_session, company)
     _seed_apollo_rule(sqlite_session)
 
-    duplicate_email = "dup@apollo.example"
-    existing_contact = ProspectContact(
+    existing_contact = DiscoveredContact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        source="snov",
-        first_name="Existing",
+        provider="apollo",
+        provider_person_id="apollo-person-1",
+        first_name="Old",
         last_name="Person",
         title="Vice President Marketing",
-        title_match=True,
+        title_match=False,
         linkedin_url=None,
-        email=duplicate_email,
-        provider_email_status="verified",
-        verification_status="unverified",
-        snov_confidence=None,
-        snov_prospect_raw={"source": "snov"},
-        apollo_prospect_raw=None,
-        snov_email_raw=None,
+        source_url=None,
+        provider_has_email=False,
+        provider_metadata_json={"has_email": False},
+        raw_payload_json={"id": "apollo-person-1"},
+        is_active=False,
+        backfilled=True,
     )
     sqlite_session.add(existing_contact)
     sqlite_session.commit()
@@ -170,26 +168,6 @@ def test_apollo_provider_attempt_merges_duplicate_company_email(sqlite_engine, s
 
     def fake_reveal_email(person_id: str) -> dict | None:
         _apollo.last_error_code = ""
-        if person_id == "apollo-person-1":
-            return {
-                "id": person_id,
-                "first_name": "Existing",
-                "last_name": "Person",
-                "title": "VP Marketing",
-                "linkedin_url": "https://linkedin.com/in/existing",
-                "email": duplicate_email,
-                "email_status": "verified",
-            }
-        if person_id == "apollo-person-2":
-            return {
-                "id": person_id,
-                "first_name": "New",
-                "last_name": "Person",
-                "title": "VP Marketing",
-                "linkedin_url": "https://linkedin.com/in/new",
-                "email": "new@apollo.example",
-                "email_status": "verified",
-            }
         return None
 
     finalized = _run_apollo_attempt_success(
@@ -205,51 +183,48 @@ def test_apollo_provider_attempt_merges_duplicate_company_email(sqlite_engine, s
     assert finalized.title_matched_count == 2
     rows = list(
         sqlite_session.exec(
-            select(ProspectContact).where(col(ProspectContact.company_id) == company.id)
+            select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company.id)
         ).all()
     )
     assert len(rows) == 2
-    sources_by_email = {row.email: row.source for row in rows}
-    assert duplicate_email in sources_by_email
-    assert sources_by_email["new@apollo.example"] == "apollo"
+    rows_by_id = {row.provider_person_id: row for row in rows}
+    assert rows_by_id["apollo-person-1"].is_active is True
+    assert rows_by_id["apollo-person-1"].first_name == "Existing"
+    assert rows_by_id["apollo-person-1"].title_match is True
+    assert rows_by_id["apollo-person-1"].provider_metadata_json == {"has_email": True, "organization_id": None}
+    assert rows_by_id["apollo-person-2"].is_active is True
+    assert rows_by_id["apollo-person-2"].first_name == "New"
+    assert rows_by_id["apollo-person-2"].title_match is True
 
 
-def test_apollo_provider_attempt_merges_same_contact_and_preserves_multiple_emails(sqlite_engine, sqlite_session: Session) -> None:
+def test_apollo_provider_attempt_updates_existing_discovered_contact_in_place(
+    sqlite_engine,
+    sqlite_session: Session,
+) -> None:
     company = _make_company(sqlite_session, domain="apollo-dedup.example")
     _seed_apollo_rule(sqlite_session)
     job = _create_apollo_job(sqlite_session, company)
 
-    seeded_contact = ProspectContact(
+    seeded_contact = DiscoveredContact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        source="snov",
+        provider="apollo",
+        provider_person_id="apollo-jane",
         first_name="Jane",
         last_name="Doe",
         title="VP Marketing",
-        title_match=True,
+        title_match=False,
         linkedin_url="https://linkedin.com/in/jane-doe",
-        email="jane@snov.example",
-        provider_email_status="verified",
-        verification_status="unverified",
-        snov_confidence=None,
-        snov_prospect_raw={"source": "snov"},
-        apollo_prospect_raw=None,
-        snov_email_raw=None,
+        source_url=None,
+        provider_has_email=False,
+        provider_metadata_json={"has_email": False},
+        raw_payload_json={"id": "apollo-jane"},
+        is_active=False,
+        backfilled=True,
     )
     sqlite_session.add(seeded_contact)
     sqlite_session.commit()
     sqlite_session.refresh(seeded_contact)
-    sqlite_session.add(
-        ProspectContactEmail(
-            contact_id=seeded_contact.id,
-            source="snov",
-            email="jane@snov.example",
-            email_normalized="jane@snov.example",
-            provider_email_status="verified",
-            is_primary=True,
-        )
-    )
-    sqlite_session.commit()
 
     attempt = _start_apollo_attempt(sqlite_engine, sqlite_session, job)
 
@@ -293,59 +268,47 @@ def test_apollo_provider_attempt_merges_same_contact_and_preserves_multiple_emai
 
     rows = list(
         sqlite_session.exec(
-            select(ProspectContact).where(col(ProspectContact.company_id) == company.id)
+            select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company.id)
         ).all()
     )
     assert len(rows) == 1
     merged = rows[0]
-    assert merged.email == "jane@snov.example"
-    email_rows = list(
-        sqlite_session.exec(
-            select(ProspectContactEmail).where(col(ProspectContactEmail.contact_id) == merged.id)
-        ).all()
-    )
-    assert {email_row.email for email_row in email_rows} == {"jane@snov.example", "jane@apollo.example"}
+    sqlite_session.refresh(merged)
+    assert merged.provider_person_id == "apollo-jane"
+    assert merged.is_active is True
+    assert merged.title_match is True
+    assert merged.first_name == "Jane"
+    assert merged.provider_metadata_json == {"has_email": True, "organization_id": None}
 
 
 def test_apollo_provider_attempt_scopes_dedup_by_company(sqlite_engine, sqlite_session: Session) -> None:
     company_a = _make_company(sqlite_session, domain="scope-a.example")
     company_b = _make_company(sqlite_session, domain="scope-b.example")
     _seed_apollo_rule(sqlite_session)
-
     shared_email = "shared@example.com"
+
     for company, seed in ((company_b, "b"), (company_a, "a")):
         seeded_job = _create_apollo_job(sqlite_session, company)
-        contact = ProspectContact(
+        contact = DiscoveredContact(
             company_id=company.id,
             contact_fetch_job_id=seeded_job.id,
-            source="snov",
+            provider="apollo",
+            provider_person_id="apollo-scope",
             first_name="Alex",
             last_name="Smith",
             title="VP Marketing",
-            title_match=True,
+            title_match=False,
             linkedin_url=None,
-            email=shared_email,
-            provider_email_status="verified",
-            verification_status="unverified",
-            snov_confidence=None,
-            snov_prospect_raw={"seed": seed},
-            apollo_prospect_raw=None,
-            snov_email_raw=None,
+            source_url=None,
+            provider_has_email=False,
+            provider_metadata_json={"seed": seed},
+            raw_payload_json={"id": "apollo-scope", "seed": seed},
+            is_active=False,
+            backfilled=True,
         )
         sqlite_session.add(contact)
         sqlite_session.commit()
         sqlite_session.refresh(contact)
-        sqlite_session.add(
-            ProspectContactEmail(
-                contact_id=contact.id,
-                source="snov",
-                email=shared_email,
-                email_normalized=shared_email,
-                provider_email_status="verified",
-                is_primary=True,
-            )
-        )
-        sqlite_session.commit()
 
     job = _create_apollo_job(sqlite_session, company_a)
     attempt = _start_apollo_attempt(sqlite_engine, sqlite_session, job)
@@ -388,33 +351,33 @@ def test_apollo_provider_attempt_scopes_dedup_by_company(sqlite_engine, sqlite_s
         reveal_email=fake_reveal_email,
     )
 
-    rows_a = list(sqlite_session.exec(select(ProspectContact).where(col(ProspectContact.company_id) == company_a.id)).all())
-    rows_b = list(sqlite_session.exec(select(ProspectContact).where(col(ProspectContact.company_id) == company_b.id)).all())
+    rows_a = list(sqlite_session.exec(select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company_a.id)).all())
+    rows_b = list(sqlite_session.exec(select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company_b.id)).all())
     assert len(rows_a) == 1
     assert len(rows_b) == 1
 
 
-def test_apollo_provider_attempt_name_fallback_requires_exact_title_match(sqlite_engine, sqlite_session: Session) -> None:
+def test_apollo_provider_attempt_skips_rows_without_native_ids(sqlite_engine, sqlite_session: Session) -> None:
     company = _make_company(sqlite_session, domain="name-fallback.example")
     _seed_apollo_rule(sqlite_session)
     job = _create_apollo_job(sqlite_session, company)
 
-    seeded = ProspectContact(
+    seeded = DiscoveredContact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        source="snov",
+        provider="apollo",
+        provider_person_id="apollo-jordan",
         first_name="Jordan",
         last_name="Lee",
         title="VP Marketing",
-        title_match=True,
+        title_match=False,
         linkedin_url=None,
-        email="jordan@snov.example",
-        provider_email_status="verified",
-        verification_status="unverified",
-        snov_confidence=None,
-        snov_prospect_raw={"seed": "snov"},
-        apollo_prospect_raw=None,
-        snov_email_raw=None,
+        source_url=None,
+        provider_has_email=False,
+        provider_metadata_json={"seed": "snov"},
+        raw_payload_json={"id": "apollo-jordan"},
+        is_active=False,
+        backfilled=True,
     )
     sqlite_session.add(seeded)
     sqlite_session.commit()
@@ -426,6 +389,13 @@ def test_apollo_provider_attempt_name_fallback_requires_exact_title_match(sqlite
         if page != 1:
             return []
         return [
+            {
+                "first_name": "Jordan",
+                "last_name_obfuscated": "Lee",
+                "title": "VP Marketing",
+                "linkedin_url": "",
+                "has_email": True,
+            },
             {
                 "id": "apollo-jordan",
                 "first_name": "Jordan",
@@ -459,8 +429,12 @@ def test_apollo_provider_attempt_name_fallback_requires_exact_title_match(sqlite
         reveal_email=fake_reveal_email,
     )
 
-    rows = list(sqlite_session.exec(select(ProspectContact).where(col(ProspectContact.company_id) == company.id)).all())
-    assert len(rows) == 2
+    rows = list(sqlite_session.exec(select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company.id)).all())
+    assert len(rows) == 1
+    row = rows[0]
+    sqlite_session.refresh(row)
+    assert row.provider_person_id == "apollo-jordan"
+    assert row.is_active is True
 
 
 def test_reconciler_resets_stuck_contact_jobs_and_dispatches_orchestrator(sqlite_engine, sqlite_session: Session) -> None:

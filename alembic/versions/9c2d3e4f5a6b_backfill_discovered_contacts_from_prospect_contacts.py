@@ -1,10 +1,12 @@
-"""backfill discovered_contacts from prospect_contacts
+"""Backfill discovered_contacts from prospect_contacts.
 
 Revision ID: 9c2d3e4f5a6b
 Revises: 8b1c2d3e4f5a
 Create Date: 2026-04-24
 
 """
+from __future__ import annotations
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -18,96 +20,139 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Backfill discovered_contacts rows from existing prospect_contacts rows.
+    """Reconcile discovered_contacts from historical prospect_contacts rows.
 
-    Strategy:
-    - Normalise the ``source`` column to 'snov' or 'apollo'; skip all others.
-    - Derive ``provider_person_id`` in priority order:
-        1. id / user_id / search_emails_start from snov_prospect_raw (snov);
-           id from apollo_prospect_raw (apollo)
-        2. linkedin_url when non-empty
-        3. lower(first_name) || '|' || lower(last_name) || '|' || lower(coalesce(title,''))
-    - Skip rows whose derived provider_person_id is empty after all attempts.
-    - Skip rows where a matching (company_id, provider, provider_person_id) tuple
-      already exists in discovered_contacts (idempotent ON CONFLICT DO NOTHING).
-    - Set is_active = true, backfilled = true.
-    - Downgrade is a no-op; data migrations are not reversed.
+    Rules:
+    - Snov native identity: ``id``, ``user_id``, or ``search_emails_start``.
+    - Apollo native identity: ``id`` only.
+    - No LinkedIn / name / title fallback identity.
+    - Duplicate source rows collapse to one canonical discovered row per
+      ``(company_id, provider, provider_person_id)`` key.
+    - Matching discovered rows are updated/reactivated.
+    - Active discovered rows in a backfilled provider scope but absent from the
+      canonical source set are marked inactive, never deleted.
     """
 
-    # Step 1: Build temporary staging table with derived fields
-    op.execute("""
-        CREATE TEMPORARY TABLE _dc_backfill AS
+    op.execute(
+        """
+        CREATE TEMPORARY TABLE _dc_backfill_source AS
+        WITH source_rows AS (
+            SELECT
+                pc.id                                                   AS source_row_id,
+                pc.company_id                                           AS company_id,
+                pc.contact_fetch_job_id                                 AS contact_fetch_job_id,
+                lower(trim(pc.source))                                  AS provider,
+                CASE
+                    WHEN lower(trim(pc.source)) = 'apollo' THEN nullif(trim(pc.apollo_prospect_raw->>'id'), '')
+                    WHEN lower(trim(pc.source)) = 'snov' THEN coalesce(
+                        nullif(trim(pc.snov_prospect_raw->>'id'), ''),
+                        nullif(trim(pc.snov_prospect_raw->>'user_id'), ''),
+                        nullif(trim(pc.snov_prospect_raw->>'search_emails_start'), '')
+                    )
+                    ELSE NULL
+                END                                                     AS provider_person_id,
+                pc.first_name                                           AS first_name,
+                pc.last_name                                            AS last_name,
+                pc.title                                                AS title,
+                pc.title_match                                          AS title_match,
+                NULLIF(trim(pc.linkedin_url), '')                       AS linkedin_url,
+                CASE
+                    WHEN lower(trim(pc.source)) = 'apollo' THEN coalesce(
+                        nullif(trim(pc.apollo_prospect_raw->>'website_url'), ''),
+                        nullif(trim(pc.apollo_prospect_raw->>'photo_url'), '')
+                    )
+                    WHEN lower(trim(pc.source)) = 'snov' THEN nullif(trim(pc.snov_prospect_raw->>'source_page'), '')
+                    ELSE NULL
+                END                                                     AS source_url,
+                CASE
+                    WHEN lower(trim(pc.source)) = 'apollo'
+                         AND pc.apollo_prospect_raw IS NOT NULL
+                         AND pc.apollo_prospect_raw->>'has_email' IS NOT NULL
+                    THEN (pc.apollo_prospect_raw->>'has_email')::boolean
+                    ELSE NULL
+                END                                                     AS provider_has_email,
+                CASE
+                    WHEN lower(trim(pc.source)) = 'apollo' THEN NULLIF(
+                        json_strip_nulls(
+                            json_build_object(
+                                'has_email',
+                                CASE
+                                    WHEN pc.apollo_prospect_raw->>'has_email' IS NULL THEN NULL
+                                    ELSE (pc.apollo_prospect_raw->>'has_email')::boolean
+                                END,
+                                'organization_id',
+                                nullif(trim(pc.apollo_prospect_raw->>'organization_id'), '')
+                            )
+                        )::text,
+                        '{}'
+                    )::json
+                    ELSE NULL
+                END                                                     AS provider_metadata_json,
+                CASE
+                    WHEN lower(trim(pc.source)) = 'apollo' THEN pc.apollo_prospect_raw
+                    ELSE pc.snov_prospect_raw
+                END                                                     AS raw_payload_json,
+                pc.created_at                                           AS created_at,
+                pc.updated_at                                           AS updated_at
+            FROM prospect_contacts pc
+            WHERE lower(trim(pc.source)) IN ('snov', 'apollo')
+        ),
+        native_rows AS (
+            SELECT *
+            FROM source_rows
+            WHERE provider_person_id IS NOT NULL
+              AND trim(provider_person_id) <> ''
+        ),
+        ranked_rows AS (
+            SELECT
+                native_rows.*,
+                row_number() OVER (
+                    PARTITION BY company_id, provider, provider_person_id
+                    ORDER BY updated_at DESC, created_at DESC, source_row_id DESC
+                ) AS rn,
+                min(created_at) OVER (
+                    PARTITION BY company_id, provider, provider_person_id
+                ) AS discovered_at,
+                max(updated_at) OVER (
+                    PARTITION BY company_id, provider, provider_person_id
+                ) AS last_seen_at
+            FROM native_rows
+        )
         SELECT
-            gen_random_uuid()                              AS id,
-            pc.company_id                                  AS company_id,
-            pc.contact_fetch_job_id                        AS contact_fetch_job_id,
+            source_row_id AS id,
+            company_id,
+            contact_fetch_job_id,
+            provider,
+            provider_person_id,
+            first_name,
+            last_name,
+            title,
+            title_match,
+            linkedin_url,
+            source_url,
+            provider_has_email,
+            provider_metadata_json,
+            raw_payload_json,
+            discovered_at,
+            last_seen_at
+        FROM ranked_rows
+        WHERE rn = 1
+        """
+    )
 
-            lower(trim(pc.source))                         AS provider,
+    op.execute(
+        """
+        CREATE TEMPORARY TABLE _dc_backfill_scopes AS
+        SELECT DISTINCT
+            company_id,
+            provider
+        FROM prospect_contacts
+        WHERE lower(trim(source)) IN ('snov', 'apollo')
+        """
+    )
 
-            CASE
-                WHEN lower(trim(pc.source)) = 'snov'
-                     AND pc.snov_prospect_raw IS NOT NULL
-                     AND (
-                             pc.snov_prospect_raw->>'id'                  IS NOT NULL
-                          OR pc.snov_prospect_raw->>'user_id'             IS NOT NULL
-                          OR pc.snov_prospect_raw->>'search_emails_start' IS NOT NULL
-                     )
-                THEN coalesce(
-                         pc.snov_prospect_raw->>'id',
-                         pc.snov_prospect_raw->>'user_id',
-                         pc.snov_prospect_raw->>'search_emails_start'
-                     )
-
-                WHEN lower(trim(pc.source)) = 'apollo'
-                     AND pc.apollo_prospect_raw IS NOT NULL
-                     AND pc.apollo_prospect_raw->>'id' IS NOT NULL
-                THEN pc.apollo_prospect_raw->>'id'
-
-                WHEN pc.linkedin_url IS NOT NULL
-                     AND trim(pc.linkedin_url) <> ''
-                THEN trim(pc.linkedin_url)
-
-                ELSE lower(trim(pc.first_name))
-                     || '|'
-                     || lower(trim(pc.last_name))
-                     || '|'
-                     || lower(trim(coalesce(pc.title, '')))
-            END                                            AS provider_person_id,
-
-            pc.first_name                                  AS first_name,
-            pc.last_name                                   AS last_name,
-            pc.title                                       AS title,
-            pc.title_match                                 AS title_match,
-            pc.linkedin_url                                AS linkedin_url,
-
-            CASE
-                WHEN lower(trim(pc.source)) = 'apollo' THEN pc.apollo_prospect_raw
-                ELSE pc.snov_prospect_raw
-            END                                            AS raw_payload_json,
-
-            NULL::text                                     AS source_url,
-            NULL::boolean                                  AS provider_has_email,
-            NULL::json                                     AS provider_metadata_json,
-
-            pc.created_at                                  AS discovered_at,
-            pc.created_at                                  AS last_seen_at,
-            now()                                          AS created_at,
-            now()                                          AS updated_at
-
-        FROM prospect_contacts pc
-        WHERE lower(trim(pc.source)) IN ('snov', 'apollo')
-    """)
-
-    # Step 2: Remove rows where provider_person_id is empty or degenerate
-    op.execute("""
-        DELETE FROM _dc_backfill
-        WHERE provider_person_id IS NULL
-           OR trim(provider_person_id) = ''
-           OR provider_person_id = '||'
-    """)
-
-    # Step 3: Insert into discovered_contacts, skipping existing tuples
-    op.execute("""
+    op.execute(
+        """
         INSERT INTO discovered_contacts (
             id,
             company_id,
@@ -136,28 +181,68 @@ def upgrade() -> None:
             contact_fetch_job_id,
             provider,
             provider_person_id,
-            first_name,
-            last_name,
+            COALESCE(first_name, ''),
+            COALESCE(last_name, ''),
             title,
-            title_match,
+            COALESCE(title_match, false),
             linkedin_url,
             source_url,
             provider_has_email,
             provider_metadata_json,
             raw_payload_json,
-            true  AS is_active,
-            true  AS backfilled,
+            true,
+            true,
             discovered_at,
             last_seen_at,
-            created_at,
-            updated_at
-        FROM _dc_backfill
+            now(),
+            now()
+        FROM _dc_backfill_source
         ON CONFLICT (company_id, provider, provider_person_id)
-        DO NOTHING
-    """)
+        DO UPDATE SET
+            contact_fetch_job_id = EXCLUDED.contact_fetch_job_id,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            title = EXCLUDED.title,
+            title_match = EXCLUDED.title_match,
+            linkedin_url = EXCLUDED.linkedin_url,
+            source_url = EXCLUDED.source_url,
+            provider_has_email = EXCLUDED.provider_has_email,
+            provider_metadata_json = EXCLUDED.provider_metadata_json,
+            raw_payload_json = EXCLUDED.raw_payload_json,
+            is_active = true,
+            backfilled = true,
+            discovered_at = EXCLUDED.discovered_at,
+            last_seen_at = EXCLUDED.last_seen_at,
+            updated_at = now()
+        """
+    )
 
-    # Step 4: Clean up staging table
-    op.execute("DROP TABLE IF EXISTS _dc_backfill")
+    op.execute(
+        """
+        UPDATE discovered_contacts dc
+        SET
+            is_active = false,
+            updated_at = now()
+        WHERE dc.is_active = true
+          AND EXISTS (
+              SELECT 1
+              FROM _dc_backfill_scopes scopes
+              WHERE scopes.company_id = dc.company_id
+                AND scopes.provider = dc.provider
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM _dc_backfill_source src
+              WHERE src.company_id = dc.company_id
+                AND src.provider = dc.provider
+                AND src.provider_person_id = dc.provider_person_id
+          )
+        """
+    )
+
+    op.execute("DROP TABLE IF EXISTS _dc_backfill_source")
+    op.execute("DROP TABLE IF EXISTS _dc_backfill_scopes")
+
 
 def downgrade() -> None:
     """Data migrations are not reversed."""
