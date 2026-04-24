@@ -93,43 +93,47 @@ export function S4RevealView({
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id))
 
   return (
-    <div className="flex flex-col gap-4 p-4">
-      {/* Stats bar */}
-      <div className="flex items-center gap-4 text-sm text-(--oc-muted)">
-        <span><strong className="text-(--oc-text)">{counts?.total ?? 0}</strong> discovered</span>
-        <span>·</span>
-        <span><strong className="text-(--oc-text)">{counts?.matched ?? 0}</strong> title matched</span>
-        <span>·</span>
-        <span><strong className="text-(--oc-text)">{counts?.already_revealed ?? 0}</strong> already revealed</span>
-        <div className="ml-auto">
-          <button
-            type="button"
-            onClick={onOpenTitleRules}
-            className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s4) hover:text-(--s4-text)"
-          >
-            Edit title rules
-          </button>
+    <div className="space-y-3">
+      <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
+        {/* Header card */}
+        <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S4 · Reveal</h2>
+              <p className="text-xs" style={{ color: 'var(--s4-text)', opacity: 0.7 }}>
+                Match titles and reveal emails · {counts?.total ?? 0} discovered · {counts?.matched ?? 0} title matched · {counts?.already_revealed ?? 0} already revealed
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenTitleRules}
+              disabled={isLoading}
+              className="rounded-lg border border-(--oc-border) px-3 py-1.5 text-xs font-medium transition hover:border-(--s4) hover:text-(--s4-text) whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Edit title rules
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* Filter chips */}
-      <div className="flex items-center gap-2">
-        {MATCH_FILTERS.map(({ value, label }) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => onMatchFilterChange(value)}
-            disabled={isLoading}
-            className="rounded-full border px-3 py-1 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-            style={
-              matchFilter === value
-                ? { backgroundColor: 'var(--s4)', color: '#fff', borderColor: 'var(--s4)' }
-                : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
-            }
-          >
-            {label}
-          </button>
-        ))}
+        {/* Filter chips */}
+        <div className="flex items-center gap-2">
+          {MATCH_FILTERS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onMatchFilterChange(value)}
+              disabled={isLoading}
+              className="rounded-full border px-3 py-1 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+              style={
+                matchFilter === value
+                  ? { backgroundColor: 'var(--s4)', color: '#fff', borderColor: 'var(--s4)' }
+                  : { borderColor: 'var(--oc-border)', color: 'var(--oc-muted)' }
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Loading */}
