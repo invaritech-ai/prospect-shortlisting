@@ -72,7 +72,7 @@ def _parse_letters(letters: str | None) -> list[str]:
 def _apply_discovered_filters(
     stmt,
     *,
-    matched_only: bool = False,
+    title_match: bool | None = None,
     provider: str | None = None,
     search: str | None = None,
     company_id: UUID | None = None,
@@ -80,8 +80,8 @@ def _apply_discovered_filters(
     letters: list[str] | None = None,
 ):
     stmt = stmt.where(col(DiscoveredContact.is_active).is_(True))
-    if matched_only:
-        stmt = stmt.where(col(DiscoveredContact.title_match).is_(True))
+    if title_match is not None:
+        stmt = stmt.where(col(DiscoveredContact.title_match) == title_match)
     if provider:
         stmt = stmt.where(col(DiscoveredContact.provider) == provider.strip().lower())
     if company_id is not None:
@@ -106,7 +106,7 @@ def _apply_discovered_filters(
 @router.get("/discovered-contacts", response_model=DiscoveredContactListResponse)
 def list_discovered_contacts(
     campaign_id: UUID = Query(...),
-    matched_only: bool = Query(default=False),
+    title_match: bool | None = Query(default=None),
     provider: str | None = Query(default=None),
     company_id: UUID | None = Query(default=None),
     search: str | None = Query(default=None),
@@ -124,7 +124,7 @@ def list_discovered_contacts(
     stmt = stmt.where(_campaign_upload_scope(campaign_id))
     stmt = _apply_discovered_filters(
         stmt,
-        matched_only=matched_only,
+        title_match=title_match,
         provider=provider,
         search=search,
         company_id=company_id,
@@ -165,7 +165,7 @@ def list_discovered_contacts(
         )
         letter_stmt = _apply_discovered_filters(
             letter_stmt,
-            matched_only=matched_only,
+            title_match=title_match,
             provider=provider,
             search=search,
             company_id=company_id,
@@ -190,7 +190,7 @@ def list_discovered_contacts(
 def list_company_discovered_contacts(
     company_id: UUID,
     campaign_id: UUID = Query(...),
-    matched_only: bool = Query(default=False),
+    title_match: bool | None = Query(default=None),
     provider: str | None = Query(default=None),
     search: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -202,7 +202,7 @@ def list_company_discovered_contacts(
         raise HTTPException(status_code=404, detail="Company not found.")
     return list_discovered_contacts(
         campaign_id=campaign_id,
-        matched_only=matched_only,
+        title_match=title_match,
         provider=provider,
         company_id=company_id,
         search=search,
@@ -253,7 +253,7 @@ def get_discovered_contact_counts(
 def list_discovered_companies(
     campaign_id: UUID = Query(...),
     search: str | None = Query(default=None),
-    matched_only: bool = Query(default=False),
+    title_match: bool | None = Query(default=None),
     match_gap_filter: str = Query(default="all"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -315,8 +315,8 @@ def list_discovered_companies(
     )
     if search:
         stmt = stmt.where(func.lower(col(Company.domain)).like(f"%{search.lower()}%"))
-    if matched_only:
-        stmt = stmt.where(col(DiscoveredContact.title_match).is_(True))
+    if title_match is not None:
+        stmt = stmt.where(col(DiscoveredContact.title_match) == title_match)
     if gap_filter == "contacts_no_match":
         stmt = stmt.having(func.coalesce(func.sum(col(DiscoveredContact.title_match).cast(Integer)), 0) == 0)
     elif gap_filter == "matched_no_email":

@@ -594,7 +594,7 @@ export async function fetchContactsSelected(
 export async function listDiscoveredContacts(
   options: {
     campaignId: string
-    matchedOnly?: boolean
+    titleMatch?: boolean
     provider?: string
     companyId?: string
     search?: string
@@ -606,7 +606,7 @@ export async function listDiscoveredContacts(
 ): Promise<DiscoveredContactListResponse> {
   const params = new URLSearchParams()
   params.set('campaign_id', options.campaignId)
-  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.provider) params.set('provider', options.provider)
   if (options.companyId) params.set('company_id', options.companyId)
   if (options.search) params.set('search', options.search)
@@ -620,11 +620,11 @@ export async function listDiscoveredContacts(
 export async function listCompanyDiscoveredContacts(
   campaignId: string,
   companyId: string,
-  options: { matchedOnly?: boolean; provider?: string; search?: string; limit?: number; offset?: number } = {},
+  options: { titleMatch?: boolean; provider?: string; search?: string; limit?: number; offset?: number } = {},
 ): Promise<DiscoveredContactListResponse> {
   const params = new URLSearchParams()
   params.set('campaign_id', campaignId)
-  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.provider) params.set('provider', options.provider)
   if (options.search) params.set('search', options.search)
   if (options.limit) params.set('limit', String(options.limit))
@@ -636,7 +636,7 @@ export async function listDiscoveredCompanies(
   options: {
     campaignId: string
     search?: string
-    matchedOnly?: boolean
+    titleMatch?: boolean
     matchGapFilter?: MatchGapFilter
     limit?: number
     offset?: number
@@ -645,7 +645,7 @@ export async function listDiscoveredCompanies(
   const params = new URLSearchParams()
   params.set('campaign_id', options.campaignId)
   if (options.search) params.set('search', options.search)
-  if (options.matchedOnly) params.set('matched_only', 'true')
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
