@@ -15,6 +15,7 @@ from app.services.contact_runtime_service import ContactRuntimeService
 
 
 ProviderMode = Literal["snov", "apollo", "both"]
+DISCOVERY_PROVIDER_ORDER: tuple[str, str] = ("snov", "apollo")
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class ContactQueueService:
         *,
         session: Session,
         companies: list[Company],
-        provider_mode: ProviderMode = "snov",
+        provider_mode: ProviderMode = "both",
         campaign_id: UUID | None = None,
         pipeline_run_id: UUID | None = None,
         trigger_source: str = "manual",
@@ -114,7 +115,6 @@ class ContactQueueService:
                     contact_fetch_batch_id=batch.id,
                     pipeline_run_id=pipeline_run_id,
                     provider=providers_to_fetch[0],
-                    next_provider=None,
                     requested_providers_json=providers_to_fetch,
                     auto_enqueued=auto_enqueued,
                     state=ContactFetchJobState.QUEUED,
@@ -277,7 +277,7 @@ class ContactQueueService:
     @staticmethod
     def _requested_providers(provider_mode: ProviderMode) -> list[str]:
         if provider_mode == "both":
-            return ["snov", "apollo"]
+            return list(DISCOVERY_PROVIDER_ORDER)
         return [provider_mode]
 
     @staticmethod

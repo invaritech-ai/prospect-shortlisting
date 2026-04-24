@@ -9,6 +9,7 @@ import {
   IconTimeline,
   IconSliders,
   IconCheck,
+  IconZap,
   IconChevronLeft,
   IconChevronRight,
 } from '../ui/icons'
@@ -35,7 +36,8 @@ const NAV_ITEMS: Array<{
   { value: 's1-scraping', label: 'S1 · Scraping', stageColor: 'var(--s1)', Icon: IconGlobe },
   { value: 's2-ai', label: 'S2 · AI Decision', stageColor: 'var(--s2)', Icon: IconChart },
   { value: 's3-contacts', label: 'S3 · Contacts', stageColor: 'var(--s3)', Icon: IconUsers },
-  { value: 's4-validation', label: 'S4 · Validation', stageColor: 'var(--s4)', Icon: IconCheck },
+  { value: 's4-reveal', label: 'S4 · Reveal', stageColor: 'var(--s4)', Icon: IconZap },
+  { value: 's5-validation', label: 'S5 · Validation', stageColor: 'var(--s5)', Icon: IconCheck },
 ]
 
 export function Sidebar({

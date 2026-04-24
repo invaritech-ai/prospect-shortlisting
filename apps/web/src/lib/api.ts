@@ -56,7 +56,6 @@ import type {
   StatsResponse,
   TitleMatchRuleCreate,
   TitleMatchRuleRead,
-  TitleRuleImpactPreview,
   TitleRuleSeedResult,
   TitleTestResult,
   TitleRuleStatsResponse,
@@ -577,30 +576,9 @@ export async function fetchContactsForRun(
   return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
 }
 
-export async function fetchContactsForCompanyApollo(
-  campaignId: string,
-  companyId: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (options.forceRefresh) params.set('force_refresh', 'true')
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts/apollo?${params.toString()}`, { method: 'POST' })
-}
-
-export async function fetchContactsForRunApollo(
-  campaignId: string,
-  runId: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (options.forceRefresh) params.set('force_refresh', 'true')
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts/apollo?${params.toString()}`, { method: 'POST' })
-}
-
 export async function fetchContactsSelected(
   campaignId: string,
   companyIds: string[],
-  source: 'snov' | 'apollo' | 'both',
   options: { idempotencyKey?: string; forceRefresh?: boolean } = {},
 ): Promise<ContactFetchResult> {
   return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
@@ -609,7 +587,7 @@ export async function fetchContactsSelected(
       'Content-Type': 'application/json',
       ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
     },
-    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, source, force_refresh: Boolean(options.forceRefresh) }),
+    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, force_refresh: Boolean(options.forceRefresh) }),
   })
 }
 
@@ -856,37 +834,6 @@ export async function getTitleRuleStats(campaignId: string): Promise<TitleRuleSt
   return request<TitleRuleStatsResponse>(`/v1/title-match-rules/stats?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
-export async function previewTitleRuleImpact(
-  campaignId: string,
-  options: { source?: 'snov' | 'apollo' | 'both'; includeStale?: boolean; staleDays?: number; forceRefresh?: boolean } = {},
-): Promise<TitleRuleImpactPreview> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (options.source) params.set('source', options.source)
-  if (options.includeStale !== undefined) params.set('include_stale', String(options.includeStale))
-  if (options.staleDays !== undefined) params.set('stale_days', String(options.staleDays))
-  if (options.forceRefresh !== undefined) params.set('force_refresh', String(options.forceRefresh))
-  return request<TitleRuleImpactPreview>(
-    `/v1/title-match-rules/impact-preview?${params.toString()}`,
-  )
-}
-
-export async function queueTitleRuleImpactFetch(
-  campaignId: string,
-  source: 'snov' | 'apollo' | 'both' = 'snov',
-  options: { includeStale?: boolean; staleDays?: number; forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  params.set('source', source)
-  if (options.includeStale !== undefined) params.set('include_stale', String(options.includeStale))
-  if (options.staleDays !== undefined) params.set('stale_days', String(options.staleDays))
-  if (options.forceRefresh !== undefined) params.set('force_refresh', String(options.forceRefresh))
-  return request<ContactFetchResult>(
-    `/v1/title-match-rules/impact-fetch?${params.toString()}`,
-    { method: 'POST' },
-  )
-}
 
 export async function getIntegrationSettings(): Promise<IntegrationsStatusResponse> {
   return request<IntegrationsStatusResponse>('/v1/settings/integrations')

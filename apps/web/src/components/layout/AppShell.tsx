@@ -4,7 +4,7 @@ import type { StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconCog } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconZap, IconCog } from '../ui/icons'
 
 interface AppShellProps {
   className?: string
@@ -70,7 +70,8 @@ const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: n
   's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
   's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
   's3-contacts': { label: 'S3 · Contact Fetch', Icon: IconUsers },
-  's4-validation': { label: 'S4 · Validation', Icon: IconCheck },
+  's4-reveal': { label: 'S4 · Reveal', Icon: IconZap },
+  's5-validation': { label: 'S5 · Validation', Icon: IconCheck },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'

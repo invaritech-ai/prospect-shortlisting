@@ -19,15 +19,19 @@ import {
   consumeSortCompatUserNotice,
   createRuns,
   fetchContactsSelected,
+  getDiscoveredContactCounts,
   getLetterCounts,
   listCompanies,
   listCompanyIds,
   listContacts,
+  listDiscoveredContacts,
+  revealDiscoveredContactEmails,
   scrapeSelectedCompanies,
   startPipelineRun,
   upsertCompanyFeedback,
   verifyContacts,
 } from '../lib/api'
+import type { DiscoveredContactListResponse, DiscoveredContactCountsResponse } from '../lib/types'
 import type { FullPipelineStatusFilter } from '../lib/fullPipelineFilters'
 import { getDefaultPipelineScrapeSubFilter } from '../lib/pipelineDefaults'
 import { getResumeStageForCompany, scrapeSubToFilter, verifFilterToParams } from '../lib/pipelineMappings'
@@ -119,7 +123,7 @@ export interface UsePipelineViewsResult {
   onPipelineClearSelection: () => void
   onPipelineScrapeSelected: () => void
   onPipelineAnalyzeSelected: () => void
-  onPipelineFetchContacts: (source: 'snov' | 'apollo' | 'both') => void
+  onPipelineFetchContacts: () => void
   pipelineManualLabelActionState: Record<string, string>
   onPipelineSetManualLabel: (company: CompanyListItem, label: ManualLabel | null) => void
   cancelStaleSelectAllRequests: () => void
@@ -131,6 +135,22 @@ export interface UsePipelineViewsResult {
   onS4ToggleAll: (ids: string[]) => void
   onS4ClearSelection: () => void
   onS4ValidateSelected: () => void
+  // S4 reveal state
+  s4DiscoveredContacts: DiscoveredContactListResponse | null
+  s4DiscoveredCounts: DiscoveredContactCountsResponse | null
+  s4DiscoveredSelectedIds: string[]
+  s4MatchFilter: 'all' | 'matched' | 'unmatched'
+  s4RevealOffset: number
+  s4RevealPageSize: number
+  isS4RevealLoading: boolean
+  isS4Revealing: boolean
+  onS4ToggleDiscovered: (id: string) => void
+  onS4ToggleAllDiscovered: (ids: string[]) => void
+  onS4ClearDiscoveredSelection: () => void
+  onS4MatchFilterChange: (f: 'all' | 'matched' | 'unmatched') => void
+  onS4RevealPagePrev: () => void
+  onS4RevealPageNext: () => void
+  onS4RevealSelected: () => void
 }
 
 export function usePipelineViews(
@@ -189,6 +209,15 @@ export function usePipelineViews(
   const [isS4Validating, setIsS4Validating] = useState(false)
   const [s4SortBy, setS4SortBy] = useState('updated_at')
   const [s4SortDir, setS4SortDir] = useState<'asc' | 'desc'>('desc')
+  // S4 reveal state
+  const [s4DiscoveredContacts, setS4DiscoveredContacts] = useState<DiscoveredContactListResponse | null>(null)
+  const [s4DiscoveredCounts, setS4DiscoveredCounts] = useState<DiscoveredContactCountsResponse | null>(null)
+  const [s4DiscoveredSelectedIds, setS4DiscoveredSelectedIds] = useState<string[]>([])
+  const [s4MatchFilter, setS4MatchFilter] = useState<'all' | 'matched' | 'unmatched'>('all')
+  const [s4RevealOffset, setS4RevealOffset] = useState(0)
+  const s4RevealPageSize = 50
+  const [isS4RevealLoading, setIsS4RevealLoading] = useState(false)
+  const [isS4Revealing, setIsS4Revealing] = useState(false)
   const pipelineRequestRef = useRef(0)
   const pipelineForegroundRequestRef = useRef(0)
   const pipelineSelectAllRequestRef = useRef(0)
@@ -331,6 +360,29 @@ export function usePipelineViews(
     }
   }, [requestsEnabled, selectedCampaignId, setError, setNotice])
 
+  const loadS4RevealView = useCallback(async () => {
+    if (!requestsEnabled || !selectedCampaignId) {
+      setS4DiscoveredContacts(null)
+      setS4DiscoveredCounts(null)
+      setIsS4RevealLoading(false)
+      return
+    }
+    setIsS4RevealLoading(true)
+    try {
+      const matchedOnly = s4MatchFilter === 'matched' ? true : undefined
+      const [contacts, counts] = await Promise.all([
+        listDiscoveredContacts({ campaignId: selectedCampaignId, matchedOnly, limit: s4RevealPageSize, offset: s4RevealOffset }),
+        getDiscoveredContactCounts(selectedCampaignId),
+      ])
+      setS4DiscoveredContacts(contacts)
+      setS4DiscoveredCounts(counts)
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsS4RevealLoading(false)
+    }
+  }, [requestsEnabled, selectedCampaignId, s4MatchFilter, s4RevealOffset, s4RevealPageSize, setError])
+
   const loadFullPipelineView = useCallback(
     async (
       letter: string | null,
@@ -412,7 +464,12 @@ export function usePipelineViews(
       setFullPipelineSortBy('last_activity')
       setFullPipelineSortDir('desc')
       void loadFullPipelineView(null, DEFAULT_PAGE_SIZE, 0, 'last_activity', 'desc', 'all', '')
-    } else if (activeView === 's4-validation') {
+    } else if (activeView === 's4-reveal') {
+      setS4DiscoveredSelectedIds([])
+      setS4MatchFilter('all')
+      setS4RevealOffset(0)
+      void loadS4RevealView()
+    } else if (activeView === 's5-validation') {
       setS4SelectedContactIds([])
       skipNextS4LetterReloadRef.current = true
       setS4ActiveLetters(new Set())
@@ -423,7 +480,7 @@ export function usePipelineViews(
       setS4SortDir('desc')
       void loadS4View('updated_at', 'desc', 'valid', DEFAULT_PAGE_SIZE, 0, [])
     }
-  }, [activeView, cancelStaleSelectAllRequests, loadPipelineView, loadFullPipelineView, loadS4View])
+  }, [activeView, cancelStaleSelectAllRequests, loadPipelineView, loadFullPipelineView, loadS4RevealView, loadS4View])
 
   // ── S1–S3 handlers ─────────────────────────────────────────────────────────
 
@@ -676,7 +733,7 @@ export function usePipelineViews(
   }, [analyzeSelectedAsync])
 
   const fetchContactsAsync = useCallback(
-    async (source: 'snov' | 'apollo' | 'both') => {
+    async () => {
       if (!pipelineSelectedIds.length) return
       if (!selectedCampaignId) {
         setError('Select a campaign first.')
@@ -687,11 +744,9 @@ export function usePipelineViews(
       setNotice('')
       setIsPipelineFetching(true)
       try {
-        const result = await fetchContactsSelected(selectedCampaignId, pipelineSelectedIds, source)
+        const result = await fetchContactsSelected(selectedCampaignId, pipelineSelectedIds)
         setNotice(
-          source === 'both'
-            ? `Queued ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'} using sequential both-provider flow (Snov first, Apollo follow-up).`
-            : `Queued contact fetch for ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'} via ${source}.`,
+          `Queued contact fetch for ${result.queued_count} compan${result.queued_count === 1 ? 'y' : 'ies'}.`,
         )
         setPipelineSelectedIds([])
       } catch (err) {
@@ -704,8 +759,8 @@ export function usePipelineViews(
   )
 
   const onPipelineFetchContacts = useCallback(
-    (source: 'snov' | 'apollo' | 'both') => {
-      void fetchContactsAsync(source)
+    () => {
+      void fetchContactsAsync()
     },
     [fetchContactsAsync],
   )
@@ -795,7 +850,7 @@ export function usePipelineViews(
         fullPipelineSearch,
         options,
       )
-    } else if (activeView === 's4-validation') {
+    } else if (activeView === 's5-validation') {
       void loadS4View(
         s4SortBy,
         s4SortDir,
@@ -863,7 +918,7 @@ export function usePipelineViews(
       skipNextS4LetterReloadRef.current = false
       return
     }
-    if (activeView !== 's4-validation') return
+    if (activeView !== 's5-validation') return
     setS4SelectedContactIds([])
     setS4Offset(0)
     void loadS4View(s4SortBy, s4SortDir, s4VerifFilter, s4PageSize, 0, [...s4ActiveLetters])
@@ -1152,7 +1207,7 @@ export function usePipelineViews(
       }
       if (resumeStage === 'S3') {
         setAction('Resuming S3…')
-        const result = await fetchContactsSelected(selectedCampaignId, [company.id], 'both')
+        const result = await fetchContactsSelected(selectedCampaignId, [company.id])
         setNotice(`Resumed S3 for ${company.domain}. Queued ${result.queued_count} contact fetch job(s).`)
         return
       }
@@ -1274,6 +1329,52 @@ export function usePipelineViews(
     void validateSelectedAsync()
   }, [validateSelectedAsync])
 
+  // S4 reveal handlers
+  const onS4ToggleDiscovered = useCallback((id: string) => {
+    setS4DiscoveredSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  }, [])
+
+  const onS4ToggleAllDiscovered = useCallback((ids: string[]) => {
+    setS4DiscoveredSelectedIds((prev) => prev.length === ids.length ? [] : ids)
+  }, [])
+
+  const onS4ClearDiscoveredSelection = useCallback(() => {
+    setS4DiscoveredSelectedIds([])
+  }, [])
+
+  const onS4MatchFilterChange = useCallback((f: 'all' | 'matched' | 'unmatched') => {
+    setS4MatchFilter(f)
+    setS4RevealOffset(0)
+    setS4DiscoveredSelectedIds([])
+  }, [])
+
+  const onS4RevealPagePrev = useCallback(() => {
+    setS4RevealOffset((prev) => Math.max(0, prev - s4RevealPageSize))
+    setS4DiscoveredSelectedIds([])
+  }, [s4RevealPageSize])
+
+  const onS4RevealPageNext = useCallback(() => {
+    setS4RevealOffset((prev) => prev + s4RevealPageSize)
+    setS4DiscoveredSelectedIds([])
+  }, [s4RevealPageSize])
+
+  const onS4RevealSelected = useCallback(async () => {
+    if (!selectedCampaignId || !s4DiscoveredSelectedIds.length) return
+    setIsS4Revealing(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await revealDiscoveredContactEmails({ campaign_id: selectedCampaignId, discovered_contact_ids: s4DiscoveredSelectedIds })
+      setNotice(`Queued email reveal for ${result.queued_count} contact${result.queued_count === 1 ? '' : 's'}.`)
+      setS4DiscoveredSelectedIds([])
+      void loadS4RevealView()
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsS4Revealing(false)
+    }
+  }, [selectedCampaignId, s4DiscoveredSelectedIds, loadS4RevealView, setError, setNotice])
+
   return {
     fullPipelineCompanies,
     fullPipelineLetterCounts,
@@ -1360,5 +1461,20 @@ export function usePipelineViews(
     onS4ToggleAll,
     onS4ClearSelection,
     onS4ValidateSelected,
+    s4DiscoveredContacts,
+    s4DiscoveredCounts,
+    s4DiscoveredSelectedIds,
+    s4MatchFilter,
+    s4RevealOffset,
+    s4RevealPageSize,
+    isS4RevealLoading,
+    isS4Revealing,
+    onS4ToggleDiscovered,
+    onS4ToggleAllDiscovered,
+    onS4ClearDiscoveredSelection,
+    onS4MatchFilterChange,
+    onS4RevealPagePrev,
+    onS4RevealPageNext,
+    onS4RevealSelected: () => { void onS4RevealSelected() },
   }
 }

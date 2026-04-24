@@ -74,8 +74,8 @@ interface S3ContactFetchViewProps {
   onToggleAll: (visibleIds: string[]) => void
   onSelectAllMatching: () => void
   onClearSelection: () => void
-  onFetchOne: (company: CompanyListItem, source: 'snov' | 'apollo' | 'both') => void
-  onFetchSelected: (source: 'snov' | 'apollo' | 'both') => void
+  onFetchOne: (company: CompanyListItem) => void
+  onFetchSelected: () => void
   onViewContacts: (company: CompanyListItem) => void
   onOpenTitleRules: () => void
   offset: number
@@ -97,11 +97,6 @@ const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
   { value: 'unlabeled', label: 'Unlabeled' },
 ]
 
-const FETCH_BUTTONS: Array<{ source: 'apollo' | 'snov' | 'both'; label: string; bg: string }> = [
-  { source: 'apollo', label: 'Fetch · Apollo', bg: '#15803d' },
-  { source: 'snov', label: 'Fetch · Snov.io', bg: '#0369a1' },
-  { source: 'both', label: 'Fetch · Both', bg: '#1e40af' },
-]
 
 export function S3ContactFetchView({
   campaignId,
@@ -406,21 +401,15 @@ export function S3ContactFetchView({
             onClear={onClearSelection}
             disabled={controlsDisabled}
           >
-            {FETCH_BUTTONS.map(({ source, label, bg }) => (
-              <button
-                key={source}
-                type="button"
-                onClick={() => onFetchSelected(source)}
-                disabled={controlsDisabled || isFetching || selectedIds.length === 0}
-                className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
-                style={{ backgroundColor: bg }}
-              >
-                {isFetching ? '…' : label}
-              </button>
-            ))}
-            <span className="text-[11px] text-(--oc-muted)">
-              Both = sequential chain (Snov first, Apollo second) to avoid parallel provider spend.
-            </span>
+            <button
+              type="button"
+              onClick={() => onFetchSelected()}
+              disabled={controlsDisabled || isFetching || selectedIds.length === 0}
+              className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
+              style={{ backgroundColor: 'var(--s3)' }}
+            >
+              {isFetching ? '…' : 'Fetch Contacts'}
+            </button>
           </SelectionBar>
         </>
       )}
@@ -663,29 +652,12 @@ export function S3ContactFetchView({
                     </button>
                     <button
                       type="button"
-                      onClick={() => onFetchOne(c, 'both')}
-                      title="Sequential chain: Snov first, Apollo follow-up."
+                      onClick={() => onFetchOne(c)}
                       disabled={controlsDisabled}
                       className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition"
                       style={{ backgroundColor: 'var(--s3)' }}
                     >
-                      Both
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onFetchOne(c, 'snov')}
-                      disabled={controlsDisabled}
-                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
-                    >
-                      Snov
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onFetchOne(c, 'apollo')}
-                      disabled={controlsDisabled}
-                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
-                    >
-                      Apollo
+                      Fetch
                     </button>
                   </div>
                 </td>

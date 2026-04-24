@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.schemas.base import UTCReadModel
 
@@ -73,9 +73,10 @@ class TitleRuleSeedResult(BaseModel):
 
 
 class BulkContactFetchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     campaign_id: UUID
     company_ids: list[UUID] = Field(min_length=1)
-    source: Literal["snov", "apollo", "both"] = "snov"
     force_refresh: bool = False
 
 
@@ -83,20 +84,6 @@ class RematchResult(BaseModel):
     updated: int
     fetch_jobs_queued: int
     message: str
-
-
-class TitleRuleImpactPreview(BaseModel):
-    campaign_id: UUID
-    source: str = "snov"
-    include_stale: bool = False
-    stale_days: int | None = 30
-    stale_days_override: int | None = None
-    provider_default_days: dict[str, int] | None = None
-    force_refresh: bool = False
-    affected_company_count: int
-    affected_contact_count: int
-    stale_contact_count: int = 0
-    affected_company_ids: list[UUID]
 
 
 class TitleTestRequest(BaseModel):

@@ -11,7 +11,7 @@ function LiveDot({ color }: { color: string }) {
   )
 }
 
-type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-validation'
+type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-reveal' | 's5-validation'
 
 interface DashboardViewProps {
   companyCounts: CompanyCounts | null
@@ -83,10 +83,18 @@ export function DashboardView({
       hint: 'Classified, awaiting contacts',
     },
     {
-      view: 's4-validation',
-      label: 'S4 · Validation',
+      view: 's4-reveal',
+      label: 'S4 · Reveal',
       stageColor: '--s4',
       stageBg: '--s4-bg',
+      count: null,
+      hint: 'Reveal contact emails',
+    },
+    {
+      view: 's5-validation',
+      label: 'S5 · Validation',
+      stageColor: '--s5',
+      stageBg: '--s5-bg',
       count: companyCounts?.contact_ready ?? null,
       hint: 'Contacts fetched, validate emails',
     },
@@ -138,7 +146,7 @@ export function DashboardView({
               (card.view === 's1-scraping' && (stats?.scrape?.running ?? 0) > 0) ||
               (card.view === 's2-ai' && (stats?.analysis?.running ?? 0) > 0) ||
               (card.view === 's3-contacts' && (stats?.contact_fetch?.running ?? 0) > 0) ||
-              (card.view === 's4-validation' && (stats?.validation?.running ?? 0) > 0)
+              (card.view === 's5-validation' && (stats?.validation?.running ?? 0) > 0)
             return (
               <button
                 key={card.view}

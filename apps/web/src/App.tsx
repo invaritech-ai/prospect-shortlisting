@@ -8,10 +8,8 @@ import {
   createRuns,
   createScrapeJob,
   deleteCampaign,
-  fetchContactsSelected,
   drainQueue,
   fetchContactsForCompany,
-  fetchContactsForCompanyApollo,
   getCurrentUser,
   getContactsExportUrl,
   getCampaignCosts,
@@ -61,6 +59,7 @@ import { FullPipelineView } from './components/views/pipeline/FullPipelineView'
 import { S1ScrapingView } from './components/views/pipeline/S1ScrapingView'
 import { S2AIDecisionView } from './components/views/pipeline/S2AIDecisionView'
 import { S3ContactFetchView } from './components/views/pipeline/S3ContactFetchView'
+import { S4RevealView } from './components/views/pipeline/S4RevealView'
 import { S4ValidationView } from './components/views/pipeline/S4ValidationView'
 import { CampaignsView } from './components/views/campaigns/CampaignsView'
 import { OperationsLogView } from './components/views/OperationsLogView'
@@ -423,7 +422,8 @@ function App() {
       's1-scraping',
       's2-ai',
       's3-contacts',
-      's4-validation',
+      's4-reveal',
+      's5-validation',
     ]
     if (!livePipelineViews.includes(activeView)) return
     const timer = window.setInterval(() => {
@@ -643,41 +643,7 @@ function App() {
     } catch (err) { setError(parseApiError(err)) }
   }
 
-  const onFetchContactsApollo = async (company: CompanyListItem) => {
-    if (!selectedCampaignId) {
-      setError('Select a campaign first.')
-      return
-    }
-    setError(''); setNotice('')
-    try {
-      const result = await fetchContactsForCompanyApollo(selectedCampaignId, company.id)
-      const msg = result.queued_count > 0
-        ? `Queued Apollo fetch for ${company.domain}.`
-        : result.already_fetching_count > 0
-          ? `Apollo fetch already in progress for ${company.domain}.`
-          : `No Apollo contacts queued for ${company.domain}.`
-      setNotice(msg)
-    } catch (err) { setError(parseApiError(err)) }
-  }
-
-  const onFetchContactsBoth = async (company: CompanyListItem) => {
-    if (!selectedCampaignId) {
-      setError('Select a campaign first.')
-      return
-    }
-    setError(''); setNotice('')
-    try {
-      const result = await fetchContactsSelected(selectedCampaignId, [company.id], 'both')
-      const msg = result.queued_count > 0
-        ? `Queued sequential both-provider fetch for ${company.domain} (Snov first, Apollo follow-up).`
-        : result.already_fetching_count > 0
-          ? `Contact fetch already in progress for ${company.domain}; Apollo follow-up will be chained.`
-          : `No contacts queued for ${company.domain}.`
-      setNotice(msg)
-    } catch (err) { setError(parseApiError(err)) }
-  }
-
-  // ── Pipeline ops ──────────────────────────────────────────────────────────
+// ── Pipeline ops ──────────────────────────────────────────────────────────
 
   const onDrainQueue = async () => {
     if (!window.confirm('Cancel all queued jobs? This removes them from Redis and marks them as cancelled.')) return
@@ -1108,11 +1074,7 @@ function App() {
             onToggleAll={pipeline.onPipelineToggleAll}
             onSelectAllMatching={pipeline.onPipelineSelectAllMatching}
             onClearSelection={pipeline.onPipelineClearSelection}
-            onFetchOne={(c, source) => {
-              if (source === 'snov') { void onFetchContacts(c) }
-              else if (source === 'apollo') { void onFetchContactsApollo(c) }
-              else { void onFetchContactsBoth(c) }
-            }}
+            onFetchOne={(c) => void onFetchContacts(c)}
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onViewContacts={(company) => void panels.openCompanyContacts(company)}
             onOpenTitleRules={() => setIsTitleRulesOpen(true)}
@@ -1127,7 +1089,29 @@ function App() {
           />
         )}
 
-        {selectedCampaignId && activeView === 's4-validation' && (
+        {selectedCampaignId && activeView === 's4-reveal' && (
+          <S4RevealView
+            campaignId={selectedCampaignId}
+            contacts={pipeline.s4DiscoveredContacts}
+            counts={pipeline.s4DiscoveredCounts}
+            selectedIds={pipeline.s4DiscoveredSelectedIds}
+            matchFilter={pipeline.s4MatchFilter}
+            onMatchFilterChange={pipeline.onS4MatchFilterChange}
+            onToggle={pipeline.onS4ToggleDiscovered}
+            onToggleAll={pipeline.onS4ToggleAllDiscovered}
+            onClearSelection={pipeline.onS4ClearDiscoveredSelection}
+            onRevealSelected={pipeline.onS4RevealSelected}
+            onOpenTitleRules={() => setIsTitleRulesOpen(true)}
+            offset={pipeline.s4RevealOffset}
+            pageSize={pipeline.s4RevealPageSize}
+            onPagePrev={pipeline.onS4RevealPagePrev}
+            onPageNext={pipeline.onS4RevealPageNext}
+            isLoading={pipeline.isS4RevealLoading}
+            isRevealing={pipeline.isS4Revealing}
+          />
+        )}
+
+        {selectedCampaignId && activeView === 's5-validation' && (
           <S4ValidationView
             contacts={pipeline.s4Contacts}
             letterCounts={pipeline.s4LetterCounts}

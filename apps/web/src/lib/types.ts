@@ -536,7 +536,6 @@ export type ProspectContactRead = {
   company_id: string
   contact_fetch_job_id: string
   domain: string
-  source: string
   first_name: string
   last_name: string
   title: string | null
@@ -719,20 +718,6 @@ export type TitleRuleStatsResponse = {
   rules: TitleRuleStatItem[]
   total_contacts: number
   total_matched: number
-}
-
-export type TitleRuleImpactPreview = {
-  campaign_id: string
-  source: 'snov' | 'apollo' | 'both'
-  include_stale: boolean
-  stale_days: number | null
-  stale_days_override?: number | null
-  provider_default_days?: Record<string, number> | null
-  force_refresh: boolean
-  affected_company_count: number
-  affected_contact_count: number
-  stale_contact_count: number
-  affected_company_ids: string[]
 }
 
 export type TitleRuleSeedResult = {

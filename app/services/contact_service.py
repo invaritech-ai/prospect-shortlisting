@@ -34,7 +34,7 @@ from app.services.apollo_client import (
     ERR_APOLLO_CREDENTIALS_MISSING,
     ApolloClient,
 )
-from app.services.contact_queue_service import ContactQueueService
+from app.services.contact_queue_service import DISCOVERY_PROVIDER_ORDER, ContactQueueService
 from app.services.contact_reveal_queue_service import ContactRevealQueueService
 from app.services.contact_runtime_service import ContactRuntimeService
 from app.services.pipeline_service import recompute_contact_stages
@@ -1034,14 +1034,15 @@ class ContactService:
     # ------------------------------------------------------------------
 
     def _requested_providers(self, *, job: ContactFetchJob, legacy_provider: str) -> list[str]:
-        allowed = {"snov", "apollo"}
-        requested = [
+        allowed = set(DISCOVERY_PROVIDER_ORDER)
+        requested_set = {
             str(provider).strip().lower()
             for provider in (job.requested_providers_json or [])
             if str(provider).strip().lower() in allowed
-        ]
+        }
+        requested = [provider for provider in DISCOVERY_PROVIDER_ORDER if provider in requested_set]
         if requested:
-            return list(dict.fromkeys(requested))
+            return requested
         primary = str(getattr(job, "provider", legacy_provider) or legacy_provider).strip().lower()
         next_provider = str(getattr(job, "next_provider", "") or "").strip().lower()
         requested = []

@@ -339,7 +339,6 @@ export function S4ValidationView({
                 <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <th className="p-3 text-left font-semibold">Email</th>
-                <th className="p-3 text-left font-semibold">Source</th>
                 <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 <th className="p-3 text-left font-semibold">Last validated</th>
@@ -391,11 +390,6 @@ export function S4ValidationView({
                       ) : (
                         <span className="text-xs text-(--oc-muted) italic">No email</span>
                       )}
-                    </td>
-                    <td className="p-3">
-                      <span className="inline-flex items-center rounded-md border border-(--oc-border) bg-(--oc-surface) px-1.5 py-0.5 text-[10px] font-bold text-(--oc-muted)">
-                        {contact.source}
-                      </span>
                     </td>
                     <td className="p-3">
                       {contact.title_match ? (
