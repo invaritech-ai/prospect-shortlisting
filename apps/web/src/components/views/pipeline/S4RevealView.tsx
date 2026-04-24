@@ -119,7 +119,8 @@ export function S4RevealView({
             key={value}
             type="button"
             onClick={() => onMatchFilterChange(value)}
-            className="rounded-full border px-3 py-1 text-xs font-medium transition"
+            disabled={isLoading}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
             style={
               matchFilter === value
                 ? { backgroundColor: 'var(--s4)', color: '#fff', borderColor: 'var(--s4)' }
@@ -154,6 +155,7 @@ export function S4RevealView({
                     type="checkbox"
                     checked={allVisibleSelected}
                     onChange={() => onToggleAll(visibleIds)}
+                    disabled={isLoading || isRevealing}
                     className="cursor-pointer"
                   />
                 </th>
@@ -179,6 +181,7 @@ export function S4RevealView({
                       checked={selectedIds.includes(contact.id)}
                       onChange={() => onToggle(contact.id)}
                       onClick={(e) => e.stopPropagation()}
+                      disabled={isLoading || isRevealing}
                       className="cursor-pointer"
                     />
                   </td>
@@ -214,6 +217,7 @@ export function S4RevealView({
             hasMore={contacts?.has_more ?? false}
             onPrev={onPagePrev}
             onNext={onPageNext}
+            disabled={isLoading}
           />
         </div>
       )}
@@ -227,7 +231,7 @@ export function S4RevealView({
         onSelectAllMatching={null}
         isSelectingAll={false}
         onClear={onClearSelection}
-        disabled={isRevealing}
+        disabled={isLoading || isRevealing}
       >
         <button
           type="button"

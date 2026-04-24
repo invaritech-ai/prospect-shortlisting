@@ -224,6 +224,8 @@ export function usePipelineViews(
   const pipelineSelectAllForegroundRequestRef = useRef(0)
   const s4RequestRef = useRef(0)
   const s4ForegroundRequestRef = useRef(0)
+  const s4RevealRequestRef = useRef(0)
+  const s4RevealForegroundRequestRef = useRef(0)
   const fullPipelineRequestRef = useRef(0)
   const fullPipelineForegroundRequestRef = useRef(0)
   const fullPipelineSelectAllRequestRef = useRef(0)
@@ -362,26 +364,45 @@ export function usePipelineViews(
 
   const loadS4RevealView = useCallback(async () => {
     if (!requestsEnabled || !selectedCampaignId) {
+      s4RevealRequestRef.current += 1
       setS4DiscoveredContacts(null)
       setS4DiscoveredCounts(null)
       setIsS4RevealLoading(false)
       return
     }
+    const requestId = s4RevealRequestRef.current + 1
+    s4RevealRequestRef.current = requestId
+    s4RevealForegroundRequestRef.current = requestId
     setIsS4RevealLoading(true)
     try {
-      const matchedOnly = s4MatchFilter === 'matched' ? true : undefined
+      const titleMatch =
+        s4MatchFilter === 'matched' ? true :
+        s4MatchFilter === 'unmatched' ? false :
+        undefined
       const [contacts, counts] = await Promise.all([
-        listDiscoveredContacts({ campaignId: selectedCampaignId, matchedOnly, limit: s4RevealPageSize, offset: s4RevealOffset }),
+        listDiscoveredContacts({
+          campaignId: selectedCampaignId,
+          titleMatch,
+          limit: s4RevealPageSize,
+          offset: s4RevealOffset,
+        }),
         getDiscoveredContactCounts(selectedCampaignId),
       ])
+      if (s4RevealRequestRef.current !== requestId) return
       setS4DiscoveredContacts(contacts)
       setS4DiscoveredCounts(counts)
     } catch (err) {
+      if (s4RevealRequestRef.current !== requestId) return
       setError(parseApiError(err))
     } finally {
-      setIsS4RevealLoading(false)
+      if (s4RevealForegroundRequestRef.current === requestId) {
+        setIsS4RevealLoading(false)
+      }
     }
   }, [requestsEnabled, selectedCampaignId, s4MatchFilter, s4RevealOffset, s4RevealPageSize, setError])
+
+  const loadS4RevealViewRef = useRef(loadS4RevealView)
+  useEffect(() => { loadS4RevealViewRef.current = loadS4RevealView }, [loadS4RevealView])
 
   const loadFullPipelineView = useCallback(
     async (
@@ -465,10 +486,11 @@ export function usePipelineViews(
       setFullPipelineSortDir('desc')
       void loadFullPipelineView(null, DEFAULT_PAGE_SIZE, 0, 'last_activity', 'desc', 'all', '')
     } else if (activeView === 's4-reveal') {
+      s4RevealRequestRef.current += 1
       setS4DiscoveredSelectedIds([])
       setS4MatchFilter('all')
       setS4RevealOffset(0)
-      void loadS4RevealView()
+      void loadS4RevealViewRef.current()
     } else if (activeView === 's5-validation') {
       setS4SelectedContactIds([])
       skipNextS4LetterReloadRef.current = true
@@ -480,7 +502,7 @@ export function usePipelineViews(
       setS4SortDir('desc')
       void loadS4View('updated_at', 'desc', 'valid', DEFAULT_PAGE_SIZE, 0, [])
     }
-  }, [activeView, cancelStaleSelectAllRequests, loadPipelineView, loadFullPipelineView, loadS4RevealView, loadS4View])
+  }, [activeView, cancelStaleSelectAllRequests, loadPipelineView, loadFullPipelineView, loadS4View])
 
   // ── S1–S3 handlers ─────────────────────────────────────────────────────────
 
@@ -923,6 +945,11 @@ export function usePipelineViews(
     setS4Offset(0)
     void loadS4View(s4SortBy, s4SortDir, s4VerifFilter, s4PageSize, 0, [...s4ActiveLetters])
   }, [activeView, s4ActiveLetters, loadS4View])
+
+  useEffect(() => {
+    if (activeView !== 's4-reveal' || !selectedCampaignId) return
+    void loadS4RevealView()
+  }, [activeView, selectedCampaignId, s4MatchFilter, s4RevealOffset, loadS4RevealView])
 
   // ── Full pipeline handlers ─────────────────────────────────────────────────
 
