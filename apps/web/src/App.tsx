@@ -24,6 +24,7 @@ import {
   listCampaigns,
   listUploads,
   logoutSession,
+  resetStuckContactFetchJobs,
   resetStuckJobs,
   startPipelineRun,
   uploadFileToCampaign,
@@ -1106,6 +1107,7 @@ function App() {
             onClearSelection={pipeline.onPipelineClearSelection}
             onFetchOne={(c) => void onFetchContacts(c)}
             onFetchSelected={pipeline.onPipelineFetchContacts}
+            onResetStuck={() => void resetStuckContactFetchJobs().then(() => void loadRecentActivity())}
             onViewContacts={(company) => void panels.openCompanyContacts(company)}
             offset={pipeline.pipelineOffset}
             pageSize={pipeline.pipelinePageSize}

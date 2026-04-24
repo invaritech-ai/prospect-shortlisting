@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import case, update
+from sqlalchemy import case, or_, update
 from sqlmodel import Session, col, func, select
 
 from app.api.schemas.contacts import (
@@ -183,6 +183,41 @@ def reset_stuck_analysis_jobs(session: Session = Depends(get_session)) -> ResetS
         session.commit()
         for job_id in stuck_ids:
             run_analysis_job.delay(str(job_id))
+
+    return ResetStuckAnalysisResult(reset_count=len(stuck_ids))
+
+
+@router.post("/contact-fetch-jobs/reset-stuck", response_model=ResetStuckAnalysisResult)
+def reset_stuck_contact_fetch_jobs(session: Session = Depends(get_session)) -> ResetStuckAnalysisResult:
+    """Reset ContactFetchJobs stuck in RUNNING/QUEUED with expired locks and re-enqueue them."""
+    from app.tasks.contacts import dispatch_contact_fetch_jobs
+
+    now = _utcnow()
+    stuck_ids = list(
+        session.exec(
+            select(ContactFetchJob.id).where(
+                col(ContactFetchJob.terminal_state).is_(False),
+                col(ContactFetchJob.state).in_([ContactFetchJobState.RUNNING, ContactFetchJobState.QUEUED]),
+                or_(
+                    col(ContactFetchJob.lock_expires_at).is_(None),
+                    col(ContactFetchJob.lock_expires_at) < now,
+                ),
+            )
+        ).all()
+    )
+    if stuck_ids:
+        session.exec(
+            update(ContactFetchJob)
+            .where(col(ContactFetchJob.id).in_(stuck_ids))
+            .values(
+                state=ContactFetchJobState.QUEUED,
+                lock_token=None,
+                lock_expires_at=None,
+                updated_at=now,
+            )
+        )
+        session.commit()
+        dispatch_contact_fetch_jobs.delay()
 
     return ResetStuckAnalysisResult(reset_count=len(stuck_ids))
 

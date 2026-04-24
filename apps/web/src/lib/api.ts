@@ -488,6 +488,10 @@ export async function resetStuckJobs(): Promise<ResetStuckResult> {
   return request<ResetStuckResult>('/v1/jobs/reset-stuck', { method: 'POST' })
 }
 
+export async function resetStuckContactFetchJobs(): Promise<ResetStuckResult> {
+  return request<ResetStuckResult>('/v1/contact-fetch-jobs/reset-stuck', { method: 'POST' })
+}
+
 export async function resetStuckAnalysisJobs(): Promise<ResetStuckResult> {
   return request<ResetStuckResult>('/v1/analysis-jobs/reset-stuck', { method: 'POST' })
 }

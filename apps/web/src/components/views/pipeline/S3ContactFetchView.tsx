@@ -76,6 +76,7 @@ interface S3ContactFetchViewProps {
   onClearSelection: () => void
   onFetchOne: (company: CompanyListItem) => void
   onFetchSelected: () => void
+  onResetStuck?: () => void
   onViewContacts: (company: CompanyListItem) => void
   offset: number
   pageSize: number
@@ -121,6 +122,7 @@ export function S3ContactFetchView({
   onClearSelection,
   onFetchOne,
   onFetchSelected,
+  onResetStuck,
   onViewContacts,
   offset,
   pageSize,
@@ -259,6 +261,15 @@ export function S3ContactFetchView({
               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(cfPct, 100)}%`, backgroundColor: 'var(--s3)' }} />
             </div>
             <span className="tabular-nums shrink-0">{cfProcessed.toLocaleString()} / {cfTotal.toLocaleString()}</span>
+            {cfRunning > 0 && onResetStuck && (
+              <button
+                type="button"
+                onClick={onResetStuck}
+                className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-300 transition hover:bg-amber-50"
+              >
+                Reset stuck
+              </button>
+            )}
           </div>
         )}
       </div>
