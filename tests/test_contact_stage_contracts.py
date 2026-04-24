@@ -17,7 +17,11 @@ from app.api.routes.contacts import (
     list_contacts_by_company,
     verify_contacts,
 )
-from app.api.routes.discovered_contacts import list_discovered_contacts, reveal_discovered_contact_emails
+from app.api.routes.discovered_contacts import (
+    list_discovered_contact_ids,
+    list_discovered_contacts,
+    reveal_discovered_contact_emails,
+)
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import (
     BulkContactFetchRequest,
@@ -28,8 +32,7 @@ from app.models import Campaign, Company, ContactFetchJob, DiscoveredContact, Pr
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 
 
-def _seed_campaign_company(session: Session, *, domain: str, campaign_name: str) -> tuple[Campaign, Company]:
-    campaign = create_campaign(payload=CampaignCreate(name=f"{campaign_name} {domain} {uuid4()}"), session=session)
+def _seed_company(session: Session, *, campaign: Campaign, domain: str) -> Company:
     upload = Upload(filename=f"{domain}.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0, campaign_id=campaign.id)
     session.add(upload)
     session.flush()
@@ -42,6 +45,12 @@ def _seed_campaign_company(session: Session, *, domain: str, campaign_name: str)
     )
     session.add(company)
     session.flush()
+    return company
+
+
+def _seed_campaign_company(session: Session, *, domain: str, campaign_name: str) -> tuple[Campaign, Company]:
+    campaign = create_campaign(payload=CampaignCreate(name=f"{campaign_name} {domain} {uuid4()}"), session=session)
+    company = _seed_company(session, campaign=campaign, domain=domain)
     return campaign, company
 
 
@@ -209,6 +218,97 @@ def test_s4_list_route_handles_utc_freshness(sqlite_session: Session) -> None:
     assert result.items[0].freshness_status == "fresh"
     assert result.items[0].last_seen_at.tzinfo is not None
     assert result.items[0].created_at.tzinfo is not None
+
+
+def test_s4_list_route_honors_sorting(sqlite_session: Session) -> None:
+    campaign, company_a = _seed_campaign_company(sqlite_session, domain="beta.example", campaign_name="Sort A")
+    company_b = _seed_company(sqlite_session, campaign=campaign, domain="alpha.example")
+    _seed_discovered_contact(sqlite_session, company=company_a, title_match=True, first_name="Beta")
+    _seed_discovered_contact(sqlite_session, company=company_b, title_match=True, first_name="Alpha")
+    sqlite_session.commit()
+
+    result = list_discovered_contacts(
+        campaign_id=campaign.id,
+        title_match=True,
+        provider=None,
+        company_id=None,
+        search=None,
+        limit=50,
+        offset=0,
+        sort_by="first_name",
+        sort_dir="asc",
+        letters=None,
+        count_by_letters=False,
+        session=sqlite_session,
+    )
+
+    assert [item.first_name for item in result.items] == ["Alpha", "Beta"]
+
+
+def test_s4_ids_route_matches_list_filters_and_campaign_scope(sqlite_session: Session) -> None:
+    campaign_a, company_a = _seed_campaign_company(sqlite_session, domain="alpha.example", campaign_name="Reveal Filter A")
+    company_b = _seed_company(sqlite_session, campaign=campaign_a, domain="bravo.example")
+    _, company_c = _seed_campaign_company(sqlite_session, domain="alpha-other.example", campaign_name="Reveal Filter Other")
+    matched = _seed_discovered_contact(sqlite_session, company=company_a, title_match=True, first_name="Alice")
+    _seed_discovered_contact(sqlite_session, company=company_b, title_match=True, first_name="Alice")
+    _seed_discovered_contact(sqlite_session, company=company_a, title_match=False, first_name="Alice")
+    _seed_discovered_contact(sqlite_session, company=company_c, title_match=True, first_name="Alice")
+    sqlite_session.commit()
+
+    filtered_list = list_discovered_contacts(
+        campaign_id=campaign_a.id,
+        title_match=True,
+        provider=None,
+        company_id=None,
+        search="alice",
+        limit=50,
+        offset=0,
+        sort_by="first_name",
+        sort_dir="asc",
+        letters="a",
+        count_by_letters=False,
+        session=sqlite_session,
+    )
+    filtered_ids = list_discovered_contact_ids(
+        campaign_id=campaign_a.id,
+        title_match=True,
+        provider=None,
+        company_id=None,
+        search="alice",
+        letters="a",
+        session=sqlite_session,
+    )
+
+    assert filtered_ids.total == 1
+    assert filtered_ids.ids == [matched.id]
+    assert [item.id for item in filtered_list.items] == filtered_ids.ids
+
+
+def test_s4_list_route_returns_letter_counts(sqlite_session: Session) -> None:
+    campaign, company_a = _seed_campaign_company(sqlite_session, domain="alpha.example", campaign_name="Letter Counts A")
+    company_b = _seed_company(sqlite_session, campaign=campaign, domain="bravo.example")
+    _seed_discovered_contact(sqlite_session, company=company_a, title_match=True, first_name="Alice")
+    _seed_discovered_contact(sqlite_session, company=company_b, title_match=True, first_name="Bob")
+    sqlite_session.commit()
+
+    result = list_discovered_contacts(
+        campaign_id=campaign.id,
+        title_match=True,
+        provider=None,
+        company_id=None,
+        search=None,
+        limit=1,
+        offset=0,
+        sort_by="last_seen_at",
+        sort_dir="desc",
+        letters=None,
+        count_by_letters=True,
+        session=sqlite_session,
+    )
+
+    assert result.letter_counts is not None
+    assert result.letter_counts["a"] == 1
+    assert result.letter_counts["b"] == 1
 
 
 def test_s4_reveal_route_rejects_ineligible_contacts(sqlite_session: Session) -> None:

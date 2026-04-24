@@ -23,6 +23,7 @@ import type {
   ContactVerifyResult,
   DecisionFilter,
   DiscoveredContactCountsResponse,
+  DiscoveredContactIdsResult,
   DiscoveredContactListResponse,
   DrainQueueResult,
   FeedbackRead,
@@ -603,6 +604,8 @@ export async function listDiscoveredContacts(
     search?: string
     limit?: number
     offset?: number
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
     letters?: string[]
     countByLetters?: boolean
   },
@@ -612,12 +615,36 @@ export async function listDiscoveredContacts(
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
   if (options.provider) params.set('provider', options.provider)
   if (options.companyId) params.set('company_id', options.companyId)
-  if (options.search) params.set('search', options.search)
+  const q = options.search?.trim()
+  if (q) params.set('search', q)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
+  if (options.sortBy) params.set('sort_by', options.sortBy)
+  if (options.sortDir) params.set('sort_dir', options.sortDir)
   if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
   if (options.countByLetters) params.set('count_by_letters', 'true')
   return request<DiscoveredContactListResponse>(`/v1/discovered-contacts?${params.toString()}`)
+}
+
+export async function listDiscoveredContactIds(
+  options: {
+    campaignId: string
+    titleMatch?: boolean
+    provider?: string
+    companyId?: string
+    search?: string
+    letters?: string[]
+  },
+): Promise<DiscoveredContactIdsResult> {
+  const params = new URLSearchParams()
+  params.set('campaign_id', options.campaignId)
+  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
+  if (options.provider) params.set('provider', options.provider)
+  if (options.companyId) params.set('company_id', options.companyId)
+  const q = options.search?.trim()
+  if (q) params.set('search', q)
+  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
+  return request<DiscoveredContactIdsResult>(`/v1/discovered-contacts/ids?${params.toString()}`)
 }
 
 export async function listCompanyDiscoveredContacts(

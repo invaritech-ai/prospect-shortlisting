@@ -48,7 +48,7 @@ const SERVICE_META: Record<string, { initials: string; color: string }> = {
   openrouter: { initials: 'OR', color: 'var(--oc-accent)' },
   snov:       { initials: 'SN', color: 'var(--s3)' },
   apollo:     { initials: 'AP', color: 'var(--s2)' },
-  zerobounce: { initials: 'ZB', color: 'var(--s4)' },
+  zerobounce: { initials: 'ZB', color: 'var(--s5)' },
 }
 
 function formatCredits(n: number | null): string {
@@ -140,7 +140,7 @@ export function DashboardView({
       {!hasSelectedCampaign && (
         <section className="rounded-2xl border border-(--oc-border) bg-(--oc-surface) p-4">
           <p className="text-sm text-(--oc-muted)">
-            Stage screens are campaign-scoped. Select a campaign first to run S1-S4 flows.
+            Stage screens are campaign-scoped. Select a campaign first to run S1-S5 flows.
           </p>
           <button
             type="button"
@@ -210,7 +210,7 @@ export function DashboardView({
           Pipeline
         </h2>
         <p className="mb-3 text-xs text-(--oc-muted)">
-          Use stage cards for focused S1-S4 work. Use Full Pipeline for cross-stage triage and bulk actions.
+          Use stage cards for focused S1-S5 work. Use Full Pipeline for cross-stage triage and bulk actions.
         </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {cards.map((card) => {
@@ -297,12 +297,12 @@ export function DashboardView({
             </div>
           )}
           {stats.validation && (stats.validation.running > 0 || stats.validation.queued > 0 || stats.validation.stuck_count > 0) && (
-            <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+            <div className="flex items-center gap-2 rounded-xl border px-3 py-2" style={{ borderColor: 'var(--s5)', backgroundColor: 'var(--s5-bg)' }}>
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s4)' }} />
-                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s4)' }} />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" style={{ backgroundColor: 'var(--s5)' }} />
+                <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--s5)' }} />
               </span>
-              <span className="text-xs font-medium" style={{ color: 'var(--s4-text)' }}>
+              <span className="text-xs font-medium" style={{ color: 'var(--s5-text)' }}>
                 {stats.validation.running} running · {stats.validation.queued} queued · {stats.validation.stuck_count} stuck
               </span>
             </div>

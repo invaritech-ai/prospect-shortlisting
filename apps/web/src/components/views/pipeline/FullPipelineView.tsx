@@ -93,7 +93,7 @@ const STAGES = [
   { num: 1, label: 'Scraping',     colorVar: '--s1', bgVar: '--s1-bg', textVar: '--s1-text' },
   { num: 2, label: 'AI Decision',  colorVar: '--s2', bgVar: '--s2-bg', textVar: '--s2-text' },
   { num: 3, label: 'Contact Fetch',colorVar: '--s3', bgVar: '--s3-bg', textVar: '--s3-text' },
-  { num: 4, label: 'Validation',   colorVar: '--s4', bgVar: '--s4-bg', textVar: '--s4-text' },
+  { num: 4, label: 'Validation',   colorVar: '--s5', bgVar: '--s5-bg', textVar: '--s5-text' },
 ] as const
 
 const STATUS_FILTERS: Array<{ value: FullPipelineStatusFilter; label: string }> = [

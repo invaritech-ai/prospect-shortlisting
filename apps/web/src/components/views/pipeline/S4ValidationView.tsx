@@ -145,11 +145,11 @@ export function S4ValidationView({
     <div className="space-y-3">
       <div className="sticky top-0 z-10 space-y-2 pb-1" style={{ backgroundColor: 'var(--oc-bg)' }}>
       {/* Header */}
-      <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s4)', backgroundColor: 'var(--s4-bg)' }}>
+      <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s5)', backgroundColor: 'var(--s5-bg)' }}>
         <div className="flex items-center gap-2">
           <div className="flex-1">
-            <h2 className="text-base font-bold" style={{ color: 'var(--s4-text)' }}>S5 · Validation</h2>
-            <p className="text-xs" style={{ color: 'var(--s4-text)', opacity: 0.7 }}>
+            <h2 className="text-base font-bold" style={{ color: 'var(--s5-text)' }}>S5 · Validation</h2>
+            <p className="text-xs" style={{ color: 'var(--s5-text)', opacity: 0.7 }}>
               Validate contact emails with ZeroBounce ·{' '}
               {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}
             </p>
@@ -158,7 +158,7 @@ export function S4ValidationView({
             <a
               href={exportUrl}
               className="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-              style={{ borderColor: 'var(--s4)', color: 'var(--s4-text)' }}
+              style={{ borderColor: 'var(--s5)', color: 'var(--s5-text)' }}
             >
               Export CSV
             </a>
@@ -174,7 +174,7 @@ export function S4ValidationView({
               {vFailed > 0 && <span className="text-red-500"> · <strong>{vFailed.toLocaleString()}</strong> failed</span>}
             </span>
             <div className="flex-1 h-1 overflow-hidden rounded-full bg-(--oc-border)">
-              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(vPct, 100)}%`, backgroundColor: 'var(--s4)' }} />
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(vPct, 100)}%`, backgroundColor: 'var(--s5)' }} />
             </div>
             <span className="tabular-nums shrink-0">{vProcessed.toLocaleString()} / {vTotal.toLocaleString()}</span>
           </div>
@@ -224,11 +224,11 @@ export function S4ValidationView({
               className={`rounded-full px-3 py-1 text-[11px] font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
                 verifFilter === f.value
                   ? 'text-white'
-                  : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s4) hover:text-(--s4-text)'
+                  : 'border border-(--oc-border) text-(--oc-muted) hover:border-(--s5) hover:text-(--s5-text)'
               }`}
               style={
                 verifFilter === f.value
-                  ? { backgroundColor: f.color ?? 'var(--s4)' }
+                  ? { backgroundColor: f.color ?? 'var(--s5)' }
                   : {}
               }
             >
@@ -241,8 +241,8 @@ export function S4ValidationView({
 
       {/* Selection bar */}
       <SelectionBar
-        stageColor="--s4"
-        stageBg="--s4-bg"
+        stageColor="--s5"
+        stageBg="--s5-bg"
         selectedCount={selectedContactIds.length}
         totalMatching={effectiveTotalMatching}
         activeLetters={activeLetters}
@@ -255,7 +255,7 @@ export function S4ValidationView({
           onClick={() => setShowVerifyConfirm(true)}
           disabled={isValidating || selectedContactIds.length === 0}
           className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
-          style={{ backgroundColor: 'var(--s4)' }}
+          style={{ backgroundColor: 'var(--s5)' }}
         >
           {isValidating ? 'Queuing…' : 'Validate with ZeroBounce'}
         </button>
@@ -354,7 +354,7 @@ export function S4ValidationView({
                   <tr
                     key={contact.id}
                     className="border-b border-(--oc-border) last:border-0 transition"
-                    style={selectedSet.has(contact.id) ? { backgroundColor: 'var(--s4-bg)' } : {}}
+                    style={selectedSet.has(contact.id) ? { backgroundColor: 'var(--s5-bg)' } : {}}
                   >
                     <td className="p-3">
                       <input
@@ -377,7 +377,7 @@ export function S4ValidationView({
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-mono text-[11px] font-medium hover:underline"
-                        style={{ color: 'var(--s4-text)' }}
+                        style={{ color: 'var(--s5-text)' }}
                       >
                         {contact.domain}
                       </a>

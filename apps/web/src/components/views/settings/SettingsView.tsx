@@ -66,7 +66,7 @@ const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
   },
   {
     provider: 'zerobounce',
-    tone: 'var(--s4)',
+    tone: 'var(--s5)',
     fields: [
       { field: 'api_key', label: 'API key', placeholder: 'Paste a new ZeroBounce API key' },
     ],

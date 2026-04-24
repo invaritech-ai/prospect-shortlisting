@@ -666,6 +666,11 @@ export type DiscoveredContactCountsResponse = {
   already_revealed: number
 }
 
+export type DiscoveredContactIdsResult = {
+  ids: string[]
+  total: number
+}
+
 export type ContactRevealRequest = {
   campaign_id: string
   discovered_contact_ids?: string[]

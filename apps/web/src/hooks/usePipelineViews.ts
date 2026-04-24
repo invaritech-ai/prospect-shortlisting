@@ -24,6 +24,7 @@ import {
   listCompanies,
   listCompanyIds,
   listContacts,
+  listDiscoveredContactIds,
   listDiscoveredContacts,
   revealDiscoveredContactEmails,
   scrapeSelectedCompanies,
@@ -39,7 +40,14 @@ import { getPipelineCompanyQuery } from '../lib/pipelineQuery'
 import { parseApiError } from '../lib/utils'
 
 /** New sort on these fields defaults to descending (most recent first). */
-const SORT_DESC_FIRST = new Set(['last_activity', 'updated_at', 'created_at'])
+const SORT_DESC_FIRST = new Set([
+  'last_activity',
+  'updated_at',
+  'created_at',
+  'last_seen_at',
+  'title_match',
+  'provider_has_email',
+])
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
 export const DEFAULT_PAGE_SIZE = 50
@@ -138,18 +146,30 @@ export interface UsePipelineViewsResult {
   // S4 reveal state
   s4DiscoveredContacts: DiscoveredContactListResponse | null
   s4DiscoveredCounts: DiscoveredContactCountsResponse | null
+  s4RevealLetterCounts: Record<string, number>
+  s4RevealActiveLetters: Set<string>
   s4DiscoveredSelectedIds: string[]
   s4MatchFilter: 'all' | 'matched' | 'unmatched'
+  s4RevealSearch: string
   s4RevealOffset: number
   s4RevealPageSize: number
+  s4RevealSortBy: string
+  s4RevealSortDir: 'asc' | 'desc'
   isS4RevealLoading: boolean
   isS4Revealing: boolean
+  isS4RevealSelectingAllMatching: boolean
   onS4ToggleDiscovered: (id: string) => void
   onS4ToggleAllDiscovered: (ids: string[]) => void
   onS4ClearDiscoveredSelection: () => void
   onS4MatchFilterChange: (f: 'all' | 'matched' | 'unmatched') => void
+  onS4RevealSearchChange: (value: string) => void
+  onS4RevealToggleLetter: (letter: string) => void
+  onS4RevealClearLetters: () => void
   onS4RevealPagePrev: () => void
   onS4RevealPageNext: () => void
+  onS4RevealPageSizeChange: (size: number) => void
+  onS4RevealSort: (field: string) => void
+  onS4RevealSelectAllMatching: () => void
   onS4RevealSelected: () => void
 }
 
@@ -212,12 +232,18 @@ export function usePipelineViews(
   // S4 reveal state
   const [s4DiscoveredContacts, setS4DiscoveredContacts] = useState<DiscoveredContactListResponse | null>(null)
   const [s4DiscoveredCounts, setS4DiscoveredCounts] = useState<DiscoveredContactCountsResponse | null>(null)
+  const [s4RevealLetterCounts, setS4RevealLetterCounts] = useState<Record<string, number>>({})
+  const [s4RevealActiveLetters, setS4RevealActiveLetters] = useState(new Set<string>())
   const [s4DiscoveredSelectedIds, setS4DiscoveredSelectedIds] = useState<string[]>([])
   const [s4MatchFilter, setS4MatchFilter] = useState<'all' | 'matched' | 'unmatched'>('all')
+  const [s4RevealSearch, setS4RevealSearch] = useState('')
   const [s4RevealOffset, setS4RevealOffset] = useState(0)
-  const s4RevealPageSize = 50
+  const [s4RevealPageSize, setS4RevealPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [s4RevealSortBy, setS4RevealSortBy] = useState('last_seen_at')
+  const [s4RevealSortDir, setS4RevealSortDir] = useState<'asc' | 'desc'>('desc')
   const [isS4RevealLoading, setIsS4RevealLoading] = useState(false)
   const [isS4Revealing, setIsS4Revealing] = useState(false)
+  const [isS4RevealSelectingAllMatching, setIsS4RevealSelectingAllMatching] = useState(false)
   const pipelineRequestRef = useRef(0)
   const pipelineForegroundRequestRef = useRef(0)
   const pipelineSelectAllRequestRef = useRef(0)
@@ -226,6 +252,8 @@ export function usePipelineViews(
   const s4ForegroundRequestRef = useRef(0)
   const s4RevealRequestRef = useRef(0)
   const s4RevealForegroundRequestRef = useRef(0)
+  const s4RevealSelectAllRequestRef = useRef(0)
+  const s4RevealSelectAllForegroundRequestRef = useRef(0)
   const fullPipelineRequestRef = useRef(0)
   const fullPipelineForegroundRequestRef = useRef(0)
   const fullPipelineSelectAllRequestRef = useRef(0)
@@ -247,10 +275,21 @@ export function usePipelineViews(
     setIsFullPipelineSelectingAllMatching(false)
   }, [])
 
+  const invalidateS4RevealSelectAllRequest = useCallback(() => {
+    s4RevealSelectAllRequestRef.current += 1
+    s4RevealSelectAllForegroundRequestRef.current = s4RevealSelectAllRequestRef.current
+    setIsS4RevealSelectingAllMatching(false)
+  }, [])
+
   const cancelStaleSelectAllRequests = useCallback(() => {
     invalidatePipelineSelectAllRequest()
     invalidateFullPipelineSelectAllRequest()
-  }, [invalidateFullPipelineSelectAllRequest, invalidatePipelineSelectAllRequest])
+    invalidateS4RevealSelectAllRequest()
+  }, [
+    invalidateFullPipelineSelectAllRequest,
+    invalidatePipelineSelectAllRequest,
+    invalidateS4RevealSelectAllRequest,
+  ])
 
   const loadPipelineView = useCallback(
     async (
@@ -367,6 +406,7 @@ export function usePipelineViews(
       s4RevealRequestRef.current += 1
       setS4DiscoveredContacts(null)
       setS4DiscoveredCounts(null)
+      setS4RevealLetterCounts({})
       setIsS4RevealLoading(false)
       return
     }
@@ -379,17 +419,30 @@ export function usePipelineViews(
         s4MatchFilter === 'matched' ? true :
         s4MatchFilter === 'unmatched' ? false :
         undefined
-      const [contacts, counts] = await Promise.all([
+      const [contacts, letterCountsData, counts] = await Promise.all([
         listDiscoveredContacts({
           campaignId: selectedCampaignId,
           titleMatch,
+          search: s4RevealSearch,
           limit: s4RevealPageSize,
           offset: s4RevealOffset,
+          sortBy: s4RevealSortBy,
+          sortDir: s4RevealSortDir,
+          letters: [...s4RevealActiveLetters],
+        }),
+        listDiscoveredContacts({
+          campaignId: selectedCampaignId,
+          titleMatch,
+          search: s4RevealSearch,
+          limit: 1,
+          offset: 0,
+          countByLetters: true,
         }),
         getDiscoveredContactCounts(selectedCampaignId),
       ])
       if (s4RevealRequestRef.current !== requestId) return
       setS4DiscoveredContacts(contacts)
+      setS4RevealLetterCounts(letterCountsData.letter_counts ?? {})
       setS4DiscoveredCounts(counts)
     } catch (err) {
       if (s4RevealRequestRef.current !== requestId) return
@@ -399,7 +452,18 @@ export function usePipelineViews(
         setIsS4RevealLoading(false)
       }
     }
-  }, [requestsEnabled, selectedCampaignId, s4MatchFilter, s4RevealOffset, s4RevealPageSize, setError])
+  }, [
+    requestsEnabled,
+    selectedCampaignId,
+    s4MatchFilter,
+    s4RevealOffset,
+    s4RevealPageSize,
+    s4RevealSearch,
+    s4RevealSortBy,
+    s4RevealSortDir,
+    s4RevealActiveLetters,
+    setError,
+  ])
 
   const loadS4RevealViewRef = useRef(loadS4RevealView)
   useEffect(() => { loadS4RevealViewRef.current = loadS4RevealView }, [loadS4RevealView])
@@ -1358,35 +1422,143 @@ export function usePipelineViews(
 
   // S4 reveal handlers
   const onS4ToggleDiscovered = useCallback((id: string) => {
+    invalidateS4RevealSelectAllRequest()
     setS4DiscoveredSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
-  }, [])
+  }, [invalidateS4RevealSelectAllRequest])
 
   const onS4ToggleAllDiscovered = useCallback((ids: string[]) => {
-    setS4DiscoveredSelectedIds((prev) => prev.length === ids.length ? [] : ids)
-  }, [])
+    invalidateS4RevealSelectAllRequest()
+    setS4DiscoveredSelectedIds(ids)
+  }, [invalidateS4RevealSelectAllRequest])
 
   const onS4ClearDiscoveredSelection = useCallback(() => {
+    invalidateS4RevealSelectAllRequest()
     setS4DiscoveredSelectedIds([])
-  }, [])
+  }, [invalidateS4RevealSelectAllRequest])
 
   const onS4MatchFilterChange = useCallback((f: 'all' | 'matched' | 'unmatched') => {
+    invalidateS4RevealSelectAllRequest()
     setS4MatchFilter(f)
     setS4RevealOffset(0)
     setS4DiscoveredSelectedIds([])
-  }, [])
+  }, [invalidateS4RevealSelectAllRequest])
+
+  const onS4RevealSearchChange = useCallback((value: string) => {
+    invalidateS4RevealSelectAllRequest()
+    setS4RevealSearch(value)
+    setS4RevealOffset(0)
+    setS4DiscoveredSelectedIds([])
+  }, [invalidateS4RevealSelectAllRequest])
+
+  const onS4RevealToggleLetter = useCallback((letter: string) => {
+    invalidateS4RevealSelectAllRequest()
+    setS4RevealActiveLetters((prev) => {
+      const next = new Set(prev)
+      if (next.has(letter)) next.delete(letter)
+      else next.add(letter)
+      return next
+    })
+    setS4RevealOffset(0)
+    setS4DiscoveredSelectedIds([])
+  }, [invalidateS4RevealSelectAllRequest])
+
+  const onS4RevealClearLetters = useCallback(() => {
+    invalidateS4RevealSelectAllRequest()
+    setS4RevealActiveLetters(new Set())
+    setS4RevealOffset(0)
+    setS4DiscoveredSelectedIds([])
+  }, [invalidateS4RevealSelectAllRequest])
 
   const onS4RevealPagePrev = useCallback(() => {
+    invalidateS4RevealSelectAllRequest()
     setS4RevealOffset((prev) => Math.max(0, prev - s4RevealPageSize))
     setS4DiscoveredSelectedIds([])
-  }, [s4RevealPageSize])
+  }, [invalidateS4RevealSelectAllRequest, s4RevealPageSize])
 
   const onS4RevealPageNext = useCallback(() => {
+    invalidateS4RevealSelectAllRequest()
     setS4RevealOffset((prev) => prev + s4RevealPageSize)
     setS4DiscoveredSelectedIds([])
-  }, [s4RevealPageSize])
+  }, [invalidateS4RevealSelectAllRequest, s4RevealPageSize])
+
+  const onS4RevealPageSizeChange = useCallback((size: number) => {
+    invalidateS4RevealSelectAllRequest()
+    setS4RevealPageSize(size)
+    setS4RevealOffset(0)
+    setS4DiscoveredSelectedIds([])
+  }, [invalidateS4RevealSelectAllRequest])
+
+  const onS4RevealSort = useCallback((field: string) => {
+    invalidateS4RevealSelectAllRequest()
+    const newDir: 'asc' | 'desc' =
+      s4RevealSortBy === field
+        ? s4RevealSortDir === 'asc'
+          ? 'desc'
+          : 'asc'
+        : SORT_DESC_FIRST.has(field)
+          ? 'desc'
+          : 'asc'
+    setS4RevealSortBy(field)
+    setS4RevealSortDir(newDir)
+    setS4RevealOffset(0)
+    setS4DiscoveredSelectedIds([])
+  }, [invalidateS4RevealSelectAllRequest, s4RevealSortBy, s4RevealSortDir])
+
+  const s4RevealSelectAllMatchingAsync = useCallback(async () => {
+    if (!selectedCampaignId) {
+      setError('Select a campaign first.')
+      return
+    }
+    const requestId = s4RevealSelectAllRequestRef.current + 1
+    s4RevealSelectAllRequestRef.current = requestId
+    s4RevealSelectAllForegroundRequestRef.current = requestId
+    const titleMatch =
+      s4MatchFilter === 'matched' ? true :
+      s4MatchFilter === 'unmatched' ? false :
+      undefined
+
+    setError('')
+    setNotice('')
+    setIsS4RevealSelectingAllMatching(true)
+    try {
+      const result = await listDiscoveredContactIds({
+        campaignId: selectedCampaignId,
+        titleMatch,
+        search: s4RevealSearch,
+        letters: [...s4RevealActiveLetters],
+      })
+      if (s4RevealSelectAllRequestRef.current !== requestId) return
+      const ids = result.ids.map((id) => String(id))
+      setS4DiscoveredSelectedIds(ids)
+      setNotice(
+        ids.length > 0
+          ? `Selected ${ids.length.toLocaleString()} discovered contact${ids.length === 1 ? '' : 's'} matching filters.`
+          : 'No discovered contacts match these filters for the current list scope.',
+      )
+    } catch (err) {
+      if (s4RevealSelectAllRequestRef.current !== requestId) return
+      setError(parseApiError(err))
+    } finally {
+      if (s4RevealSelectAllForegroundRequestRef.current === requestId) {
+        setIsS4RevealSelectingAllMatching(false)
+      }
+    }
+  }, [
+    selectedCampaignId,
+    s4MatchFilter,
+    s4RevealSearch,
+    s4RevealActiveLetters,
+    setError,
+    setNotice,
+  ])
+
+  const onS4RevealSelectAllMatching = useCallback(() => {
+    void s4RevealSelectAllMatchingAsync()
+  }, [s4RevealSelectAllMatchingAsync])
 
   const onS4RevealSelected = useCallback(async () => {
     if (!selectedCampaignId || !s4DiscoveredSelectedIds.length) return
+    invalidateS4RevealSelectAllRequest()
     setIsS4Revealing(true)
     setError('')
     setNotice('')
@@ -1400,7 +1572,14 @@ export function usePipelineViews(
     } finally {
       setIsS4Revealing(false)
     }
-  }, [selectedCampaignId, s4DiscoveredSelectedIds, loadS4RevealView, setError, setNotice])
+  }, [
+    selectedCampaignId,
+    s4DiscoveredSelectedIds,
+    invalidateS4RevealSelectAllRequest,
+    loadS4RevealView,
+    setError,
+    setNotice,
+  ])
 
   return {
     fullPipelineCompanies,
@@ -1490,18 +1669,30 @@ export function usePipelineViews(
     onS4ValidateSelected,
     s4DiscoveredContacts,
     s4DiscoveredCounts,
+    s4RevealLetterCounts,
+    s4RevealActiveLetters,
     s4DiscoveredSelectedIds,
     s4MatchFilter,
+    s4RevealSearch,
     s4RevealOffset,
     s4RevealPageSize,
+    s4RevealSortBy,
+    s4RevealSortDir,
     isS4RevealLoading,
     isS4Revealing,
+    isS4RevealSelectingAllMatching,
     onS4ToggleDiscovered,
     onS4ToggleAllDiscovered,
     onS4ClearDiscoveredSelection,
     onS4MatchFilterChange,
+    onS4RevealSearchChange,
+    onS4RevealToggleLetter,
+    onS4RevealClearLetters,
     onS4RevealPagePrev,
     onS4RevealPageNext,
+    onS4RevealPageSizeChange,
+    onS4RevealSort,
+    onS4RevealSelectAllMatching,
     onS4RevealSelected: () => { void onS4RevealSelected() },
   }
 }

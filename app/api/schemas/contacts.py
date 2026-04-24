@@ -201,6 +201,11 @@ class DiscoveredContactCountsResponse(BaseModel):
     already_revealed: int
 
 
+class DiscoveredContactIdsResult(BaseModel):
+    ids: list[UUID]
+    total: int
+
+
 class ContactRevealRequest(BaseModel):
     campaign_id: UUID
     discovered_contact_ids: list[UUID] | None = None

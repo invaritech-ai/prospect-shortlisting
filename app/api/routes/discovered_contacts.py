@@ -13,6 +13,7 @@ from app.api.schemas.contacts import (
     ContactCompanyListResponse,
     ContactCompanySummary,
     DiscoveredContactCountsResponse,
+    DiscoveredContactIdsResult,
     DiscoveredContactListResponse,
     DiscoveredContactRead,
     MatchGapFilter,
@@ -34,6 +35,18 @@ from app.services.idempotency_service import (
 router = APIRouter(prefix="/v1", tags=["discovered-contacts"])
 
 _ALLOWED_MATCH_GAP_FILTERS = frozenset({"all", "contacts_no_match", "matched_no_email", "ready_candidates"})
+_DISCOVERED_CONTACT_SORT_FIELDS = frozenset(
+    {
+        "first_name",
+        "domain",
+        "title",
+        "provider",
+        "title_match",
+        "provider_has_email",
+        "last_seen_at",
+        "created_at",
+    }
+)
 
 
 def _campaign_or_404(session: Session, campaign_id: UUID) -> Campaign:
@@ -67,6 +80,28 @@ def _parse_letters(letters: str | None) -> list[str]:
         return []
     normalized = sorted({part.strip().lower() for part in letters.split(",") if part.strip()})
     return [ltr for ltr in normalized if len(ltr) == 1 and "a" <= ltr <= "z"]
+
+
+def _discovered_contact_sort_expr(sort_by: str):
+    if sort_by not in _DISCOVERED_CONTACT_SORT_FIELDS:
+        raise HTTPException(status_code=422, detail="Invalid sort_by.")
+    return {
+        "first_name": col(DiscoveredContact.first_name),
+        "domain": col(Company.domain),
+        "title": col(DiscoveredContact.title),
+        "provider": col(DiscoveredContact.provider),
+        "title_match": col(DiscoveredContact.title_match),
+        "provider_has_email": col(DiscoveredContact.provider_has_email),
+        "last_seen_at": col(DiscoveredContact.last_seen_at),
+        "created_at": col(DiscoveredContact.created_at),
+    }[sort_by]
+
+
+def _normalize_sort_dir(sort_dir: str) -> str:
+    normalized = (sort_dir or "desc").strip().lower()
+    if normalized not in {"asc", "desc"}:
+        raise HTTPException(status_code=422, detail="Invalid sort_dir.")
+    return normalized
 
 
 def _apply_discovered_filters(
@@ -112,13 +147,22 @@ def list_discovered_contacts(
     search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    sort_by: str = Query(default="last_seen_at"),
+    sort_dir: str = Query(default="desc"),
     letters: str | None = Query(default=None),
     count_by_letters: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> DiscoveredContactListResponse:
     _campaign_or_404(session, campaign_id)
+    if not isinstance(sort_by, str):
+        sort_by = getattr(sort_by, "default", "last_seen_at")
+    if not isinstance(sort_dir, str):
+        sort_dir = getattr(sort_dir, "default", "desc")
     letter_values = _parse_letters(letters)
     cutoff = _freshness_cutoff()
+    sort_expr = _discovered_contact_sort_expr(sort_by)
+    sort_dir_normalized = _normalize_sort_dir(sort_dir)
+    sort_order = sort_expr.desc() if sort_dir_normalized == "desc" else sort_expr.asc()
 
     stmt = select(DiscoveredContact, Company.domain).join(Company, col(Company.id) == col(DiscoveredContact.company_id))
     stmt = stmt.where(_campaign_upload_scope(campaign_id))
@@ -135,9 +179,10 @@ def list_discovered_contacts(
     rows = list(
         session.exec(
             stmt.order_by(
-                col(DiscoveredContact.title_match).desc(),
+                sort_order,
                 col(DiscoveredContact.last_seen_at).desc(),
                 col(DiscoveredContact.created_at).desc(),
+                col(DiscoveredContact.id).asc(),
             )
             .offset(offset)
             .limit(limit)
@@ -157,11 +202,12 @@ def list_discovered_contacts(
 
     letter_counts: dict[str, int] | None = None
     if count_by_letters:
+        letter_expr = _domain_first_letter_expr()
         letter_stmt = (
-            select(_domain_first_letter_expr().label("letter"), func.count().label("cnt"))
+            select(letter_expr.label("letter"), func.count().label("cnt"))
             .select_from(DiscoveredContact)
             .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
-            .where(_campaign_upload_scope(campaign_id), _domain_first_letter_expr().between("a", "z"))
+            .where(_campaign_upload_scope(campaign_id), letter_expr.between("a", "z"))
         )
         letter_stmt = _apply_discovered_filters(
             letter_stmt,
@@ -170,7 +216,7 @@ def list_discovered_contacts(
             search=search,
             company_id=company_id,
         )
-        letter_stmt = letter_stmt.group_by(_domain_first_letter_expr())
+        letter_stmt = letter_stmt.group_by(letter_expr)
         letter_counts = {chr(ord("a") + i): 0 for i in range(26)}
         for letter, count in session.exec(letter_stmt):
             if letter in letter_counts:
@@ -212,6 +258,34 @@ def list_company_discovered_contacts(
         count_by_letters=False,
         session=session,
     )
+
+
+@router.get("/discovered-contacts/ids", response_model=DiscoveredContactIdsResult)
+def list_discovered_contact_ids(
+    campaign_id: UUID = Query(...),
+    title_match: bool | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    company_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None),
+    letters: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> DiscoveredContactIdsResult:
+    _campaign_or_404(session, campaign_id)
+    letter_values = _parse_letters(letters)
+
+    stmt = select(DiscoveredContact.id).join(Company, col(Company.id) == col(DiscoveredContact.company_id))
+    stmt = stmt.where(_campaign_upload_scope(campaign_id))
+    stmt = _apply_discovered_filters(
+        stmt,
+        title_match=title_match,
+        provider=provider,
+        search=search,
+        company_id=company_id,
+        letters=letter_values or None,
+    )
+
+    ids = list(session.exec(stmt.order_by(col(DiscoveredContact.id).asc())))
+    return DiscoveredContactIdsResult(ids=ids, total=len(ids))
 
 
 @router.get("/discovered-contacts/counts", response_model=DiscoveredContactCountsResponse)

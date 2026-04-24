@@ -1119,14 +1119,23 @@ function App() {
 
         {selectedCampaignId && activeView === 's4-reveal' && (
           <S4RevealView
-            campaignId={selectedCampaignId}
             contacts={pipeline.s4DiscoveredContacts}
             counts={pipeline.s4DiscoveredCounts}
+            letterCounts={pipeline.s4RevealLetterCounts}
+            activeLetters={pipeline.s4RevealActiveLetters}
             selectedIds={pipeline.s4DiscoveredSelectedIds}
             matchFilter={pipeline.s4MatchFilter}
+            search={pipeline.s4RevealSearch}
+            isSelectingAll={pipeline.isS4RevealSelectingAllMatching}
+            sortBy={pipeline.s4RevealSortBy}
+            sortDir={pipeline.s4RevealSortDir}
             onMatchFilterChange={pipeline.onS4MatchFilterChange}
+            onSearchChange={pipeline.onS4RevealSearchChange}
+            onToggleLetter={pipeline.onS4RevealToggleLetter}
+            onClearLetters={pipeline.onS4RevealClearLetters}
             onToggle={pipeline.onS4ToggleDiscovered}
             onToggleAll={pipeline.onS4ToggleAllDiscovered}
+            onSelectAllMatching={pipeline.onS4RevealSelectAllMatching}
             onClearSelection={pipeline.onS4ClearDiscoveredSelection}
             onRevealSelected={pipeline.onS4RevealSelected}
             onOpenTitleRules={() => setIsTitleRulesOpen(true)}
@@ -1134,6 +1143,8 @@ function App() {
             pageSize={pipeline.s4RevealPageSize}
             onPagePrev={pipeline.onS4RevealPagePrev}
             onPageNext={pipeline.onS4RevealPageNext}
+            onPageSizeChange={pipeline.onS4RevealPageSizeChange}
+            onSort={pipeline.onS4RevealSort}
             isLoading={pipeline.isS4RevealLoading}
             isRevealing={pipeline.isS4Revealing}
           />
