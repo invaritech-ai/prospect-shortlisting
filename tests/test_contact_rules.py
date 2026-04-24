@@ -10,6 +10,7 @@ from app.api.routes.contacts import (
     create_title_rule,
     delete_title_rule,
     rematch_contacts,
+    seed_rules,
 )
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import TitleMatchRuleCreate
@@ -63,14 +64,20 @@ def test_create_title_rule_rematches_discovered_without_fetch(sqlite_session: Se
     campaign, company = _seed(sqlite_session, domain="create-rule.example")
     dc = _add_discovered(sqlite_session, company=company, title="VP Marketing")
 
-    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
+    with (
+        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_fetch,
+        patch("app.services.contact_reveal_queue_service.ContactRevealQueueService.enqueue_reveals") as mock_reveal,
+        patch("app.tasks.contacts.verify_contacts_batch.delay") as mock_verify,
+    ):
         result = create_title_rule(
             TitleMatchRuleCreate(campaign_id=campaign.id, rule_type="include", keywords="marketing, vice president"),
             session=sqlite_session,
         )
 
     assert result.rule_type == "include"
-    assert mock_delay.call_count == 0
+    mock_fetch.assert_not_called()
+    mock_reveal.assert_not_called()
+    mock_verify.assert_not_called()
 
     active_jobs = list(sqlite_session.exec(
         select(ContactFetchJob).where(
@@ -94,10 +101,16 @@ def test_delete_title_rule_rematches_discovered_without_fetch(sqlite_session: Se
     sqlite_session.refresh(rule_exclude)
     dc = _add_discovered(sqlite_session, company=company, title="Assistant VP Marketing")
 
-    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
+    with (
+        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_fetch,
+        patch("app.services.contact_reveal_queue_service.ContactRevealQueueService.enqueue_reveals") as mock_reveal,
+        patch("app.tasks.contacts.verify_contacts_batch.delay") as mock_verify,
+    ):
         delete_title_rule(rule_id=rule_exclude.id, campaign_id=campaign.id, session=sqlite_session)
 
-    assert mock_delay.call_count == 0
+    mock_fetch.assert_not_called()
+    mock_reveal.assert_not_called()
+    mock_verify.assert_not_called()
 
     active_jobs = list(sqlite_session.exec(
         select(ContactFetchJob).where(
@@ -119,9 +132,31 @@ def test_rematch_returns_zero_implicit_fetch_jobs(sqlite_session: Session) -> No
         session=sqlite_session,
     )
 
-    with patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_delay:
+    with (
+        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_fetch,
+        patch("app.services.contact_reveal_queue_service.ContactRevealQueueService.enqueue_reveals") as mock_reveal,
+        patch("app.tasks.contacts.verify_contacts_batch.delay") as mock_verify,
+    ):
         result = rematch_contacts(campaign_id=campaign.id, session=sqlite_session)
 
     assert result.updated >= 0
     assert result.fetch_jobs_queued == 0
-    assert mock_delay.call_count == 0
+    mock_fetch.assert_not_called()
+    mock_reveal.assert_not_called()
+    mock_verify.assert_not_called()
+
+
+def test_seed_rules_does_not_dispatch_fetch_reveal_or_verify(sqlite_session: Session) -> None:
+    campaign, _company = _seed(sqlite_session, domain="seed-rule.example")
+
+    with (
+        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_fetch,
+        patch("app.services.contact_reveal_queue_service.ContactRevealQueueService.enqueue_reveals") as mock_reveal,
+        patch("app.tasks.contacts.verify_contacts_batch.delay") as mock_verify,
+    ):
+        result = seed_rules(campaign_id=campaign.id, session=sqlite_session)
+
+    assert result.inserted > 0
+    mock_fetch.assert_not_called()
+    mock_reveal.assert_not_called()
+    mock_verify.assert_not_called()
