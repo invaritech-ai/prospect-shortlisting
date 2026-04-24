@@ -155,6 +155,7 @@ export interface UsePipelineViewsResult {
   s4RevealPageSize: number
   s4RevealSortBy: string
   s4RevealSortDir: 'asc' | 'desc'
+  s4StaleEmailOnly: boolean
   isS4RevealLoading: boolean
   isS4Revealing: boolean
   isS4RevealSelectingAllMatching: boolean
@@ -171,6 +172,7 @@ export interface UsePipelineViewsResult {
   onS4RevealSort: (field: string) => void
   onS4RevealSelectAllMatching: () => void
   onS4RevealSelected: () => void
+  onS4StaleEmailOnlyChange: (value: boolean) => void
 }
 
 export function usePipelineViews(
@@ -241,6 +243,7 @@ export function usePipelineViews(
   const [s4RevealPageSize, setS4RevealPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [s4RevealSortBy, setS4RevealSortBy] = useState('last_seen_at')
   const [s4RevealSortDir, setS4RevealSortDir] = useState<'asc' | 'desc'>('desc')
+  const [s4StaleEmailOnly, setS4StaleEmailOnly] = useState(false)
   const [isS4RevealLoading, setIsS4RevealLoading] = useState(false)
   const [isS4Revealing, setIsS4Revealing] = useState(false)
   const [isS4RevealSelectingAllMatching, setIsS4RevealSelectingAllMatching] = useState(false)
@@ -424,6 +427,7 @@ export function usePipelineViews(
           campaignId: selectedCampaignId,
           titleMatch,
           search: s4RevealSearch,
+          staleEmailOnly: s4StaleEmailOnly,
           limit: s4RevealPageSize,
           offset: s4RevealOffset,
           sortBy: s4RevealSortBy,
@@ -434,6 +438,7 @@ export function usePipelineViews(
           campaignId: selectedCampaignId,
           titleMatch,
           search: s4RevealSearch,
+          staleEmailOnly: s4StaleEmailOnly,
           limit: 1,
           offset: 0,
           countByLetters: true,
@@ -459,6 +464,7 @@ export function usePipelineViews(
     s4RevealOffset,
     s4RevealPageSize,
     s4RevealSearch,
+    s4StaleEmailOnly,
     s4RevealSortBy,
     s4RevealSortDir,
     s4RevealActiveLetters,
@@ -1525,6 +1531,7 @@ export function usePipelineViews(
         campaignId: selectedCampaignId,
         titleMatch,
         search: s4RevealSearch,
+        staleEmailOnly: s4StaleEmailOnly,
         letters: [...s4RevealActiveLetters],
       })
       if (s4RevealSelectAllRequestRef.current !== requestId) return
@@ -1547,6 +1554,7 @@ export function usePipelineViews(
     selectedCampaignId,
     s4MatchFilter,
     s4RevealSearch,
+    s4StaleEmailOnly,
     s4RevealActiveLetters,
     setError,
     setNotice,
@@ -1678,6 +1686,7 @@ export function usePipelineViews(
     s4RevealPageSize,
     s4RevealSortBy,
     s4RevealSortDir,
+    s4StaleEmailOnly,
     isS4RevealLoading,
     isS4Revealing,
     isS4RevealSelectingAllMatching,
@@ -1694,5 +1703,10 @@ export function usePipelineViews(
     onS4RevealSort,
     onS4RevealSelectAllMatching,
     onS4RevealSelected: () => { void onS4RevealSelected() },
+    onS4StaleEmailOnlyChange: (v: boolean) => {
+      setS4StaleEmailOnly(v)
+      setS4RevealOffset(0)
+      setS4DiscoveredSelectedIds([])
+    },
   }
 }

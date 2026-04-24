@@ -26,6 +26,8 @@ class ProspectContactRead(UTCReadModel):
     provider_email_status: str | None
     verification_status: str
     snov_confidence: float | None
+    provider_has_email: bool | None = None
+    last_seen_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

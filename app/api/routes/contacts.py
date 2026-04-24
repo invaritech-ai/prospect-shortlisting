@@ -37,6 +37,7 @@ from app.models import (
     Company,
     ContactFetchJob,
     ContactVerifyJob,
+    DiscoveredContact,
     ProspectContact,
     ProspectContactEmail,
     Run,
@@ -669,6 +670,10 @@ _CONTACT_SORT_FIELDS = frozenset(
         "first_name",
         "last_name",
         "title",
+        "title_match",
+        "provider",
+        "last_seen_at",
+        "provider_has_email",
         "verification_status",
         "pipeline_stage",
     }
@@ -763,6 +768,12 @@ def list_all_contacts(
         "first_name": col(ProspectContact.first_name),
         "last_name": col(ProspectContact.last_name),
         "title": col(ProspectContact.title),
+        "title_match": col(ProspectContact.title_match),
+        "provider": col(ProspectContact.source),
+        # last_seen_at / provider_has_email live on DiscoveredContact; use
+        # updated_at / email-present as sort proxies on ProspectContact.
+        "last_seen_at": col(ProspectContact.updated_at),
+        "provider_has_email": col(ProspectContact.email),
         "verification_status": col(ProspectContact.verification_status),
         "pipeline_stage": col(ProspectContact.pipeline_stage),
     }
@@ -777,13 +788,51 @@ def list_all_contacts(
         ).all()
     )
 
+    # Batch-fetch DiscoveredContact data (last_seen_at, provider_has_email)
+    # keyed by (company_id, provider, first_name_lower, last_name_lower).
+    dc_lookup: dict[tuple, tuple] = {}
+    page_company_ids = list({c.company_id for c, _ in rows})
+    page_providers = list({c.source for c, _ in rows})
+    if page_company_ids and page_providers:
+        dc_raw = session.exec(
+            sa_select(
+                DiscoveredContact.company_id,
+                DiscoveredContact.provider,
+                DiscoveredContact.first_name,
+                DiscoveredContact.last_name,
+                DiscoveredContact.last_seen_at,
+                DiscoveredContact.provider_has_email,
+            ).where(
+                col(DiscoveredContact.company_id).in_(page_company_ids),
+                col(DiscoveredContact.provider).in_(page_providers),
+            )
+        ).all()
+        for r in dc_raw:
+            key = (r.company_id, r.provider, (r.first_name or "").strip().lower(), (r.last_name or "").strip().lower())
+            existing = dc_lookup.get(key)
+            if existing is None or (r.last_seen_at and (existing[0] is None or r.last_seen_at > existing[0])):
+                dc_lookup[key] = (r.last_seen_at, r.provider_has_email)
+
     items = []
     contacts_only = [contact for contact, _domain in rows]
     email_map = _contact_emails_map(session, contacts_only)
     for contact, domain in rows:
+        dc_key = (
+            contact.company_id,
+            contact.source,
+            (contact.first_name or "").strip().lower(),
+            (contact.last_name or "").strip().lower(),
+        )
+        dc_last_seen, dc_has_email = dc_lookup.get(dc_key, (None, None))
         items.append(
             ProspectContactRead.model_validate(
-                {**contact.__dict__, "domain": domain, "emails": email_map.get(contact.id, [])}
+                {
+                    **contact.__dict__,
+                    "domain": domain,
+                    "emails": email_map.get(contact.id, []),
+                    "last_seen_at": dc_last_seen,
+                    "provider_has_email": dc_has_email,
+                }
             )
         )
 

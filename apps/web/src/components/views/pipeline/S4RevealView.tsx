@@ -28,6 +28,8 @@ interface S4RevealViewProps {
   onClearLetters: () => void
   onToggle: (id: string) => void
   onToggleAll: (ids: string[]) => void
+  staleEmailOnly: boolean
+  onStaleEmailOnlyChange: (v: boolean) => void
   onSelectAllMatching: () => void
   onClearSelection: () => void
   onRevealSelected: () => void
@@ -129,6 +131,8 @@ export function S4RevealView({
   onMatchFilterChange,
   onSearchChange,
   onToggleLetter,
+  staleEmailOnly,
+  onStaleEmailOnlyChange,
   onClearLetters,
   onToggle,
   onToggleAll,
@@ -244,6 +248,19 @@ export function S4RevealView({
                 {label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => onStaleEmailOnlyChange(!staleEmailOnly)}
+              disabled={controlsDisabled}
+              className={`rounded-full px-3 py-1 text-[11px] font-bold transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                staleEmailOnly
+                  ? 'text-white'
+                  : 'border border-(--oc-border) text-(--oc-muted) hover:border-amber-500 hover:text-amber-600'
+              }`}
+              style={staleEmailOnly ? { backgroundColor: '#b45309' } : {}}
+            >
+              Stale email (&gt;30d)
+            </button>
           </div>
           <Pager
             offset={offset}

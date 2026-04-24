@@ -138,6 +138,34 @@ def _apply_discovered_filters(
     return stmt
 
 
+_EMAIL_STALE_DAYS = 30
+
+
+def _stale_email_subquery(stale_days: int = _EMAIL_STALE_DAYS):
+    """Subquery returning DiscoveredContact IDs that have a stale revealed email.
+
+    A contact is stale when the most recent ProspectContact created for it
+    is older than `stale_days` days (email may have changed).
+    """
+    cutoff = utcnow() - timedelta(days=stale_days)
+    return (
+        sa_select(DiscoveredContact.id)
+        .join(ProspectContact, (
+            (col(ProspectContact.company_id) == col(DiscoveredContact.company_id)) &
+            (col(ProspectContact.source) == col(DiscoveredContact.provider)) &
+            (func.lower(func.trim(col(ProspectContact.first_name))) ==
+             func.lower(func.trim(col(DiscoveredContact.first_name)))) &
+            (func.lower(func.trim(col(ProspectContact.last_name))) ==
+             func.lower(func.trim(col(DiscoveredContact.last_name))))
+        ))
+        .where(
+            col(ProspectContact.email).is_not(None),
+            col(ProspectContact.created_at) <= cutoff,
+        )
+        .correlate(DiscoveredContact)
+    )
+
+
 @router.get("/discovered-contacts", response_model=DiscoveredContactListResponse)
 def list_discovered_contacts(
     campaign_id: UUID = Query(...),
@@ -145,6 +173,7 @@ def list_discovered_contacts(
     provider: str | None = Query(default=None),
     company_id: UUID | None = Query(default=None),
     search: str | None = Query(default=None),
+    stale_email_only: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     sort_by: str = Query(default="last_seen_at"),
@@ -174,6 +203,8 @@ def list_discovered_contacts(
         company_id=company_id,
         letters=letter_values or None,
     )
+    if stale_email_only:
+        stmt = stmt.where(col(DiscoveredContact.id).in_(_stale_email_subquery()))
 
     total = session.exec(select(func.count()).select_from(stmt.subquery())).one()
     rows = list(
@@ -267,6 +298,7 @@ def list_discovered_contact_ids(
     provider: str | None = Query(default=None),
     company_id: UUID | None = Query(default=None),
     search: str | None = Query(default=None),
+    stale_email_only: bool = Query(default=False),
     letters: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> DiscoveredContactIdsResult:
@@ -283,6 +315,8 @@ def list_discovered_contact_ids(
         company_id=company_id,
         letters=letter_values or None,
     )
+    if stale_email_only:
+        stmt = stmt.where(col(DiscoveredContact.id).in_(_stale_email_subquery()))
 
     ids = list(session.exec(stmt.order_by(col(DiscoveredContact.id).asc())))
     return DiscoveredContactIdsResult(ids=ids, total=len(ids))

@@ -1130,6 +1130,8 @@ function App() {
             isSelectingAll={pipeline.isS4RevealSelectingAllMatching}
             sortBy={pipeline.s4RevealSortBy}
             sortDir={pipeline.s4RevealSortDir}
+            staleEmailOnly={pipeline.s4StaleEmailOnly}
+            onStaleEmailOnlyChange={pipeline.onS4StaleEmailOnlyChange}
             onMatchFilterChange={pipeline.onS4MatchFilterChange}
             onSearchChange={pipeline.onS4RevealSearchChange}
             onToggleLetter={pipeline.onS4RevealToggleLetter}

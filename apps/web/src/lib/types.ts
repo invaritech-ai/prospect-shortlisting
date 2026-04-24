@@ -537,6 +537,7 @@ export type ProspectContactRead = {
   company_id: string
   contact_fetch_job_id: string
   domain: string
+  source: string
   first_name: string
   last_name: string
   title: string | null
@@ -548,6 +549,8 @@ export type ProspectContactRead = {
   provider_email_status: string | null
   verification_status: string
   snov_confidence: number | null
+  provider_has_email: boolean | null
+  last_seen_at: string | null
   created_at: string
   updated_at: string
 }

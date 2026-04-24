@@ -603,6 +603,7 @@ export async function listDiscoveredContacts(
     provider?: string
     companyId?: string
     search?: string
+    staleEmailOnly?: boolean
     limit?: number
     offset?: number
     sortBy?: string
@@ -618,6 +619,7 @@ export async function listDiscoveredContacts(
   if (options.companyId) params.set('company_id', options.companyId)
   const q = options.search?.trim()
   if (q) params.set('search', q)
+  if (options.staleEmailOnly) params.set('stale_email_only', 'true')
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   if (options.sortBy) params.set('sort_by', options.sortBy)
@@ -634,6 +636,7 @@ export async function listDiscoveredContactIds(
     provider?: string
     companyId?: string
     search?: string
+    staleEmailOnly?: boolean
     letters?: string[]
   },
 ): Promise<DiscoveredContactIdsResult> {
@@ -644,6 +647,7 @@ export async function listDiscoveredContactIds(
   if (options.companyId) params.set('company_id', options.companyId)
   const q = options.search?.trim()
   if (q) params.set('search', q)
+  if (options.staleEmailOnly) params.set('stale_email_only', 'true')
   if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
   return request<DiscoveredContactIdsResult>(`/v1/discovered-contacts/ids?${params.toString()}`)
 }
