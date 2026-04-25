@@ -51,26 +51,46 @@ worker-pipeline   ← Procrastinate worker, 4 queues, per-queue concurrency
 
 ## Pipeline Flow
 
-Each company progresses independently. Completing one stage enqueues the next automatically. Two stages require a user action before proceeding.
+Each company progresses independently. Completing one stage enqueues the next automatically. The pipeline is not strictly linear — manual overrides exist at every gate.
 
 ```
 Upload CSV
   └─► scrape_website(company_id)           [queue: scrape, retry: exponential, max 5]
-        └─► run_analysis(company_id)        [queue: analysis, retry: exponential, max 3]
-              └─► if qualified:
-                    fetch_contacts(company_id)  [queue: contacts, retry: exponential, max 3]
-                          │
-                    ┌─────┘
-                    │  USER ACTION: apply title rules → trigger reveal
-                    ▼
-              reveal_email(contact_id)      [queue: reveal, retry: exponential, max 3]
-                    └─► verify_email(contact_id)  [queue: verify, retry: exponential, max 3]
-                              └─► campaign ready / exportable
+        ├─► SUCCESS:
+        │     run_analysis(company_id)      [queue: analysis, retry: exponential, max 3]
+        │           ├─► QUALIFIED (auto):
+        │           │     fetch_contacts(company_id)  [queue: contacts, retry: exponential, max 3]
+        │           │
+        │           └─► UNKNOWN / DISQUALIFIED (auto): stops here
+        │                     ↑ USER OVERRIDE: manual label → enqueue fetch_contacts
+        │
+        └─► FAILED / EXHAUSTED RETRIES: stops here
+                    ↑ USER OVERRIDE: manual label → enqueue fetch_contacts
+                                     (skips analysis entirely)
 ```
 
-**User gates:**
-- After contact fetch: user defines title rules, then triggers bulk reveal enqueue
-- Disqualified companies stop at analysis — no contact work done
+```
+fetch_contacts(company_id)
+      │  USER ACTION: apply title rules → trigger reveal
+      ▼
+reveal_email(contact_id)          [queue: reveal, retry: exponential, max 3]
+      └─► verify_email(contact_id) [queue: verify, retry: exponential, max 3]
+                └─► campaign ready / exportable
+```
+
+**Automatic progression:**
+- Scrape success → analysis enqueued immediately
+- Analysis qualified → contact fetch enqueued immediately
+- Reveal success → verify enqueued immediately
+
+**User gates (explicit triggers required):**
+- Reveal: user defines title rules, then triggers bulk `reveal_email` enqueue for a campaign
+- Contact fetch on non-qualified: user can manually override any company's label and enqueue contact fetch regardless of AI decision or scrape outcome
+
+**Manual override rules:**
+- A company with `scrape_failed` or `disqualified` or `unknown` can be manually labelled and have `fetch_contacts` enqueued directly via API
+- Manual label is stored on the company record (`label_source: ai | manual`) so it's auditable
+- No pipeline stage blocks contact fetch if the user explicitly requests it
 
 ---
 
@@ -145,15 +165,20 @@ All of these collapse:
 
 ```python
 class CompanyStage(StrEnum):
-    UPLOADED      = "uploaded"
-    SCRAPING      = "scraping"
-    SCRAPE_FAILED = "scrape_failed"
-    SCRAPED       = "scraped"
-    ANALYZING     = "analyzing"
-    QUALIFIED     = "qualified"
-    DISQUALIFIED  = "disqualified"
+    UPLOADED          = "uploaded"
+    SCRAPING          = "scraping"
+    SCRAPE_FAILED     = "scrape_failed"     # can still be manually labelled
+    SCRAPED           = "scraped"
+    ANALYZING         = "analyzing"
+    QUALIFIED         = "qualified"         # auto or manual
+    DISQUALIFIED      = "disqualified"      # auto or manual — can still be overridden
+    UNKNOWN           = "unknown"           # AI couldn't decide — can still be overridden
     CONTACTS_FETCHING = "contacts_fetching"
     CONTACTS_READY    = "contacts_ready"
+
+# Company also carries:
+#   label_source: Literal["ai", "manual"] | None
+# so overrides are auditable and distinguishable from AI decisions
 
 class ContactStage(StrEnum):
     FETCHED       = "fetched"
