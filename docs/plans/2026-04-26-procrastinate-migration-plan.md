@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace Celery + Redis with Procrastinate on Postgres, deleting all custom job-tracking infrastructure in the process, leaving a 4-container deployment with 5 simple async tasks.
+**Goal:** Replace Celery + Redis with Procrastinate on Postgres, deleting all custom job-tracking infrastructure in the process, leaving a 7-container deployment (postgres, api, scrape worker + 4 specialized pipeline workers for strict per-queue concurrency) with 5 simple async tasks.
 
 **Architecture:** Each pipeline stage is a Procrastinate async task that updates `company.pipeline_stage` directly and enqueues the next task on success. Procrastinate's `procrastinate_jobs` table replaces 13 custom job-tracking tables. All CAS locking, idempotency, and retry logic are removed — Procrastinate handles them natively.
 
-**Tech Stack:** Procrastinate ≥ 1.0 (psycopg connector), psycopg v3 (already installed), asyncpg for async worker connector, SQLModel/SQLAlchemy (sync for API, async for workers), Playwright local (Chromium, no Browserless), Docker Compose.
+**Tech Stack:** Procrastinate ≥ 2.0 (psycopg v3 connector), psycopg[binary] v3 (already installed; powers both sync and async connectors), SQLModel/SQLAlchemy (sync for API, async for workers via `psycopg` driver), Playwright local (Chromium, no Browserless), Docker Compose.
 
 **Design doc:** `docs/plans/2026-04-26-procrastinate-migration-design.md`
 
@@ -50,7 +50,7 @@ Before running any migration against the live database, take a `pg_dump` and run
 - `app/api/routes/companies.py` — add manual label override + trigger fetch_contacts endpoint
 - `app/api/routes/queue_admin.py` — rewrite: query `procrastinate_jobs` instead of custom tables
 - `app/api/routes/queue_history.py` — rewrite: query `procrastinate_jobs`
-- `docker-compose.yml` — 4 containers (postgres, api, worker-scrape, worker-pipeline)
+- `docker-compose.yml` — 7 containers (postgres, api, worker-scrape, worker-analysis, worker-contacts, worker-reveal, worker-verify)
 
 ### Deleted
 - `app/celery_app.py`
@@ -87,18 +87,20 @@ In `pyproject.toml`, replace:
 ```
 with:
 ```toml
-"procrastinate[psycopg]>=1.0.0",
+"procrastinate>=2.0.0",
 ```
-`psycopg[binary]` is already present. Leave all other deps untouched.
+`psycopg[binary]` is already present and is what Procrastinate's `PsycopgConnector` uses. Leave all other deps untouched.
 
-In `[project.optional-dependencies]` test section, remove:
+In `[project.optional-dependencies]` test section, replace:
 ```toml
 "testcontainers[postgres,redis]>=4.8.0",
 ```
-replace with:
+with:
 ```toml
 "testcontainers[postgres]>=4.8.0",
 ```
+
+Also remove these unused test deps that depended on Redis tooling, if present.
 
 - [ ] **Step 2: Install**
 
@@ -123,26 +125,26 @@ import procrastinate
 from app.core.config import settings
 
 
-def _broker_url() -> str:
+def procrastinate_dsn() -> str:
+    """Return a raw `postgresql://` DSN for Procrastinate (strips SQLAlchemy prefix)."""
     url = settings.database_url
-    # SQLAlchemy prefix → raw psycopg URL
     for prefix in ("postgresql+psycopg2://", "postgresql+psycopg://"):
         if url.startswith(prefix):
             return "postgresql://" + url[len(prefix):]
     return url
 
 
+# Async connector used by both workers and API dispatch routes (which become async).
+# `conninfo` is set on the connector itself; `app.open_async()` then opens the pool.
 app = procrastinate.App(
-    connector=procrastinate.PsycopgConnector(),
-    import_paths=["app.worker.tasks"],
-)
-
-# Sync connector used by FastAPI dispatch routes.
-sync_app = procrastinate.App(
-    connector=procrastinate.SyncPsycopgConnector(),
+    connector=procrastinate.PsycopgConnector(conninfo=procrastinate_dsn()),
     import_paths=["app.worker.tasks"],
 )
 ```
+
+Notes:
+- One `App` instance is shared by FastAPI (for `defer_async`) and the workers (for execution). FastAPI dispatch routes that call `defer_async` must be `async def`.
+- `import_paths=["app.worker.tasks"]` lets workers discover all task modules without explicit import in `app.py`.
 
 - [ ] **Step 5: Remove `redis_url` from `app/core/config.py`**
 
@@ -155,17 +157,18 @@ redis_url: str = "redis://127.0.0.1:6379/0"
 
 At the bottom of the file, add:
 ```python
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 
 def _async_url(database_url: str) -> str:
-    for sync, async_ in [
-        ("postgresql+psycopg2://", "postgresql+psycopg://"),
-        ("postgresql://", "postgresql+psycopg://"),
-    ]:
-        if database_url.startswith(sync):
-            return async_ + database_url[len(sync):]
+    """Convert a sync SQLAlchemy URL to an async psycopg-driver URL."""
+    if database_url.startswith("postgresql+psycopg2://"):
+        return "postgresql+psycopg://" + database_url[len("postgresql+psycopg2://"):]
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + database_url[len("postgresql://"):]
     return database_url
 
 
@@ -179,16 +182,27 @@ async_engine = create_async_engine(
 
 
 async def get_async_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency-injection helper: yields an AsyncSession per request."""
+    async with AsyncSession(async_engine) as session:
+        yield session
+
+
+@asynccontextmanager
+async def async_session_scope() -> AsyncIterator[AsyncSession]:
+    """Context manager for use inside Procrastinate tasks (no DI framework)."""
     async with AsyncSession(async_engine) as session:
         yield session
 ```
+
+Two helpers because FastAPI uses async-generator dependencies but tasks need a context manager. Both produce the same `AsyncSession`.
 
 - [ ] **Step 7: Replace `@app.on_event("startup")` with lifespan in `app/main.py`**
 
 Replace the full `create_app` function with:
 ```python
 from contextlib import asynccontextmanager
-from app.worker.app import app as procrastinate_app, _broker_url
+from app.worker.app import app as procrastinate_app
+
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
@@ -199,7 +213,9 @@ async def lifespan(fastapi_app: FastAPI):
             "settings_encryption_key_missing: integration settings writes are "
             "disabled until PS_SETTINGS_ENCRYPTION_KEY is configured"
         )
-    async with procrastinate_app.open_async(dsn=_broker_url()):
+    # Connector conninfo was set when the connector was constructed in worker/app.py.
+    # open_async() opens the connection pool and starts background tasks.
+    async with procrastinate_app.open_async():
         yield
 
 
@@ -223,23 +239,65 @@ def create_app() -> FastAPI:
     def ready() -> dict[str, str]:
         return {"status": "ready"}
 
-    # routers added below — unchanged list
-    ...
+    app.include_router(analysis_router)
+    app.include_router(campaigns_router)
+    app.include_router(contacts_router)
+    app.include_router(companies_router)
+    app.include_router(discovered_contacts_router)
+    app.include_router(prompts_router)
+    app.include_router(queue_admin_router)
+    app.include_router(queue_history_router)
+    app.include_router(scrape_actions_router)
+    app.include_router(scrape_prompts_router)
+    app.include_router(settings_router)
+    app.include_router(stats_router)
+    app.include_router(uploads_router)
     return app
-```
-Keep all `app.include_router(...)` lines. Remove the imports for `runs_router` and `pipeline_runs_router` (those routes are deleted later).
 
-- [ ] **Step 8: Initialise Procrastinate schema**
+
+app = create_app()
+```
+Remove the imports and registrations for `runs_router`, `pipeline_runs_router`, `scrape_jobs_router` — those routes are deleted in Task 10.
+
+- [ ] **Step 8: Add async_session test fixture**
+
+Add the following to `tests/conftest.py` (next to existing sync `session` fixture):
+```python
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlmodel import SQLModel
+
+
+@pytest_asyncio.fixture
+async def async_session(test_database_url):
+    """Async session for worker task tests. Uses the same testcontainer DB as sync tests."""
+    from app.db.session import _async_url
+
+    engine = create_async_engine(_async_url(test_database_url), echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    async with AsyncSession(engine) as session:
+        yield session
+
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.drop_all)
+    await engine.dispose()
+```
+
+If `test_database_url` is not already a fixture, replace with whatever fixture the existing sync `session` fixture uses to get a connection string. (Check `tests/conftest.py` for the pattern.)
+
+- [ ] **Step 9: Initialise Procrastinate schema**
 
 ```bash
 uv run procrastinate --app app.worker.app.app schema --apply
 ```
 Expected: prints "Applying schema…" and exits 0. Three `procrastinate_*` tables now exist in the database.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add pyproject.toml app/worker/ app/core/config.py app/db/session.py app/main.py
+git add pyproject.toml app/worker/ app/core/config.py app/db/session.py app/main.py tests/conftest.py
 git commit -m "feat: add procrastinate, async DB session, remove redis/celery deps"
 ```
 
@@ -508,7 +566,10 @@ def upgrade() -> None:
     )
     op.create_index("ix_scrapepage_company_id", "scrapepage", ["company_id"])
 
-    # ── 4. Drop job-tracking tables (order: children before parents) ──────
+    # ── 4. Drop indexes that reference soon-to-be-dropped columns/tables ──
+    op.execute("DROP INDEX IF EXISTS ix_scrapepage_job_id")
+
+    # ── 5. Drop job-tracking tables (order: children before parents) ──────
     op.drop_table("contact_provider_attempts")
     op.drop_table("contact_fetch_jobs")
     op.drop_table("contact_fetch_batches")
@@ -519,7 +580,7 @@ def upgrade() -> None:
     op.drop_table("contact_verify_jobs")
     op.drop_table("job_events")
     op.drop_table("analysis_jobs")
-    op.drop_table("scrapepage_old_job_id_index_if_any")  # drop any old job_id index
+    op.drop_table("scrapepage")  # WAIT — see note below
     op.drop_table("scrapejob")
     op.drop_table("pipeline_run_events")
     op.drop_table("pipeline_runs")
@@ -527,7 +588,14 @@ def upgrade() -> None:
     op.drop_table("crawl_jobs")
 ```
 
-> Note: Table names (`contact_fetch_runtime_controls` etc.) must match actual DB names. Verify with `\dt` in psql before running.
+> ⚠️ **Important:** Do **not** drop `scrapepage` if it stores valuable scraped page content the project still needs. Verify by checking `app/services/fetch_service.py` and the artifact-loading code in `app/services/analysis_service.py` — does analysis read from `scrapepage` or only from `crawl_artifacts`?
+>
+> - If analysis reads only `crawl_artifacts`: `scrapepage` is intermediate cache, safe to drop.
+> - If analysis reads `scrapepage` directly: keep the table, only swap the FK (already done in Step 3 above), and remove `op.drop_table("scrapepage")` from the list.
+>
+> Do this check **before generating the migration**. Default assumption in this plan: `scrapepage` is kept (since Task 2 Step 6 modifies its model), so **delete the line `op.drop_table("scrapepage")`** from the list above unless your check confirms it's pure cache.
+
+> **Note on table names:** Verify all table names against `\dt` in psql before running. SQLModel default naming can produce slightly different names (e.g. `contact_fetch_runtime_control` vs `_controls`). The class definitions in `app/models/pipeline.py` use explicit `__tablename__`; cross-reference there.
 
 - [ ] **Step 3: Write the downgrade function**
 
@@ -608,46 +676,44 @@ import logging
 from uuid import UUID
 
 import procrastinate
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import log_event
-from app.db.session import get_async_session
-from app.models.pipeline import CompanyStage
+from app.db.session import async_session_scope
+from app.models.pipeline import Company, CompanyStage
 from app.worker.app import app
-from app.worker.tasks.analysis import run_analysis
 
 logger = logging.getLogger(__name__)
 
 
 @app.task(
     queue="scrape",
-    retry=procrastinate.ExponentialRetry(max_attempts=5, wait_minimum=60, wait_multiplier=2, wait_jitter=15),
+    retry=procrastinate.ExponentialRetry(
+        max_attempts=5, wait_minimum=60, wait_multiplier=2, wait_jitter=15,
+    ),
 )
 async def scrape_website(*, company_id: str) -> None:
     from app.services.scrape_service import ScrapeService
+    from app.worker.tasks.analysis import run_analysis  # local import to avoid cycle on worker boot
 
     cid = UUID(company_id)
-    async with AsyncSession.__new__(AsyncSession) as session:
-        # Mark company as scraping
-        from sqlmodel import select
-        from app.models.pipeline import Company
-        async with (await get_async_session().__anext__()) as session:
-            company = await session.get(Company, cid)
-            if company is None:
-                log_event(logger, "scrape_company_not_found", company_id=company_id)
-                return
-            company.pipeline_stage = CompanyStage.SCRAPING
-            await session.commit()
+
+    async with async_session_scope() as session:
+        company = await session.get(Company, cid)
+        if company is None:
+            log_event(logger, "scrape_company_not_found", company_id=company_id)
+            return
+        company.pipeline_stage = CompanyStage.SCRAPING
+        await session.commit()
 
     try:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             await ScrapeService().run(session=session, company_id=cid)
         await run_analysis.defer_async(company_id=company_id)
         log_event(logger, "scrape_done", company_id=company_id)
     except Exception:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             company = await session.get(Company, cid)
-            if company:
+            if company is not None:
                 company.pipeline_stage = CompanyStage.SCRAPE_FAILED
                 await session.commit()
         raise
@@ -661,25 +727,39 @@ async def run_scrape(self, *, engine: Any, job_id: str, scrape_rules: dict | Non
 ```
 to:
 ```python
+from sqlalchemy.ext.asyncio import AsyncSession
+
 async def run(self, *, session: AsyncSession, company_id: UUID) -> None:
+    """Scrape one company's website. Updates pipeline_stage to SCRAPED on success."""
 ```
 
-Remove all `ScrapeJob` creation, lock acquisition, and status update logic. The service should:
-1. Fetch the `Company` record to get `domain` and `normalized_url`
-2. Load scrape rules via `scrape_rules_store.load_rules_for_company(session, company_id)`
-3. Run the actual scraping (existing `fetch_service.py` logic)
-4. Write results to `ScrapePage` (using `company_id` instead of `job_id`) and `CrawlArtifact`
-5. Set `company.pipeline_stage = CompanyStage.SCRAPED` on success
+Remove all `ScrapeJob` creation, lock acquisition, and status update logic. The new method:
+1. `company = await session.get(Company, company_id)` — fail fast if missing
+2. Load scrape rules: `rules = scrape_rules_store.load_active_rules(session=session)` (the existing `load_rules_for_job` is replaced — see fetch_service rewrite below)
+3. Invoke fetch core: `result = await self._fetch_pages(domain=company.domain, normalized_url=company.normalized_url, rules=rules)`
+4. Persist: write a `ScrapePage` per fetched page and one `CrawlArtifact` per company (delete pre-existing ScrapePages for this company first to avoid duplicates on retry)
+5. `company.pipeline_stage = CompanyStage.SCRAPED` then `await session.commit()`
 
-Keep all actual HTTP fetching, markdown conversion, and link-following logic in `fetch_service.py` — that code is correct and should not change. Only remove the `ScrapeJob` tracking wrapper.
+Keep all actual HTTP fetching, markdown conversion, link-following, stealth/static tier escalation, and circuit-breaker logic — those exist in `fetch_service.py` and are correct.
 
-- [ ] **Step 4: Update `fetch_service.py`**
+- [ ] **Step 4: Update `fetch_service.py` — remove ~600 lines of ScrapeJob tracking**
 
-Remove all references to `ScrapeJob` model:
-- Delete `_claim_job`, `_release_job`, `_finalize_job` methods
-- Replace `job_id` parameters with `company_id: UUID` throughout
-- When creating `ScrapePage` records, use `company_id=company_id` instead of `job_id=...`
-- Remove `lock_token`, `terminal_state`, `reconcile_count` logic entirely
+Methods/functions to **delete** (these manage ScrapeJob state, all replaced by Procrastinate retry semantics):
+- `_claim_job(...)`, `_release_job(...)`, `_finalize_job(...)`
+- `_increment_attempt(...)`, `_reset_lock(...)`, `_record_terminal(...)`
+- `_should_skip_already_running(...)`, any `lock_token`/`lock_expires_at`/`terminal_state`/`reconcile_count` reads or writes
+- The Celery-side `create_job(...)` API endpoint helper (the API will call into the service differently — see Task 10)
+- All `CircuitBreakerOpenError` and `ScrapeJobAlreadyRunningError` raise sites that exist solely to signal job-state conflicts (the circuit-breaker logic for *domain pushback* stays — it's pulled into `domain_policy.py` semantics already; only the ScrapeJob-level errors go)
+
+Methods/functions to **keep and adapt**:
+- `_fetch_pages(...)` (or whatever the core fetch loop is called) — change signature: take `domain: str, normalized_url: str, rules: ScrapeRules` instead of `job: ScrapeJob`
+- All `_fetch_static`, `_fetch_stealth`, `_fetch_impersonate` tier methods (unchanged)
+- Markdown conversion, link extraction, sitemap parsing — unchanged
+- Stealth escalation tracking and domain backoff (live in `domain_policy.py` — unchanged)
+
+Replace `job_id` parameters with `company_id: UUID` where the function persists results. When creating `ScrapePage` records: `ScrapePage(company_id=company_id, url=..., markdown_content=...)` (no more `job_id`).
+
+Final result: `fetch_service.py` should be ~400 lines (down from 958), focused entirely on HTTP fetching and content extraction.
 
 - [ ] **Step 5: Write test**
 
@@ -687,25 +767,31 @@ Create `tests/test_worker_scrape.py`:
 ```python
 import pytest
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+
+
+# Procrastinate wraps task functions in a Task object. The underlying coroutine
+# is accessible via `.func`. We test that directly — it's the actual code that
+# runs inside the worker.
 
 
 @pytest.mark.asyncio
-async def test_scrape_website_marks_scraping_then_scraped(async_session):
+async def test_scrape_website_marks_scraped_on_success(async_session):
     from app.models.pipeline import Company, CompanyStage, Upload
     from app.worker.tasks.scrape import scrape_website
 
-    # seed
     upload = Upload(filename="test.csv", checksum="abc")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://example.com",
                       normalized_url="https://example.com", domain="example.com")
     async_session.add(company)
     await async_session.commit()
 
     with patch("app.services.scrape_service.ScrapeService.run", new_callable=AsyncMock):
-        with patch("app.worker.tasks.analysis.run_analysis.defer_async", new_callable=AsyncMock):
-            await scrape_website.run(company_id=str(company.id))
+        with patch("app.worker.tasks.analysis.run_analysis.defer_async",
+                   new_callable=AsyncMock) as mock_defer:
+            await scrape_website.func(company_id=str(company.id))
+            mock_defer.assert_awaited_once_with(company_id=str(company.id))
 
     await async_session.refresh(company)
     assert company.pipeline_stage == CompanyStage.SCRAPED
@@ -718,6 +804,7 @@ async def test_scrape_website_marks_scrape_failed_on_exception(async_session):
 
     upload = Upload(filename="test.csv", checksum="def")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://fail.com",
                       normalized_url="https://fail.com", domain="fail.com")
     async_session.add(company)
@@ -726,11 +813,13 @@ async def test_scrape_website_marks_scrape_failed_on_exception(async_session):
     with patch("app.services.scrape_service.ScrapeService.run",
                new_callable=AsyncMock, side_effect=RuntimeError("network error")):
         with pytest.raises(RuntimeError):
-            await scrape_website.run(company_id=str(company.id))
+            await scrape_website.func(company_id=str(company.id))
 
     await async_session.refresh(company)
     assert company.pipeline_stage == CompanyStage.SCRAPE_FAILED
 ```
+
+Note: `scrape_website.func` is the underlying coroutine. Procrastinate exposes this for direct invocation in tests, bypassing the deferral/retry machinery. If `.func` is not the attribute name in the installed Procrastinate version, check `dir(scrape_website)` — alternatives across versions: `.aio`, `.original_func`, or calling the task object directly as a callable.
 
 - [ ] **Step 6: Run tests**
 
@@ -765,8 +854,8 @@ from uuid import UUID
 import procrastinate
 
 from app.core.logging import log_event
-from app.db.session import get_async_session
-from app.models.pipeline import CompanyStage
+from app.db.session import async_session_scope
+from app.models.pipeline import Company, CompanyStage
 from app.worker.app import app
 
 logger = logging.getLogger(__name__)
@@ -778,10 +867,11 @@ logger = logging.getLogger(__name__)
 )
 async def run_analysis(*, company_id: str) -> None:
     from app.services.analysis_service import AnalysisService
-    from app.models.pipeline import Company
+    from app.worker.tasks.contacts import fetch_contacts  # local to avoid worker boot cycle
 
     cid = UUID(company_id)
-    async for session in get_async_session():
+
+    async with async_session_scope() as session:
         company = await session.get(Company, cid)
         if company is None:
             return
@@ -789,18 +879,19 @@ async def run_analysis(*, company_id: str) -> None:
         await session.commit()
 
     try:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             qualified = await AnalysisService().run(session=session, company_id=cid)
-
+            # AnalysisService is responsible for setting the final stage
+            # (QUALIFIED / DISQUALIFIED / UNKNOWN) and label_source='ai'
         if qualified:
-            from app.worker.tasks.contacts import fetch_contacts
             await fetch_contacts.defer_async(company_id=company_id)
         log_event(logger, "analysis_done", company_id=company_id, qualified=qualified)
     except Exception:
-        async for session in get_async_session():
+        # Service likely didn't reach the stage update — revert to SCRAPED so retry can re-run.
+        async with async_session_scope() as session:
             company = await session.get(Company, cid)
-            if company:
-                company.pipeline_stage = CompanyStage.UNKNOWN
+            if company is not None and company.pipeline_stage == CompanyStage.ANALYZING:
+                company.pipeline_stage = CompanyStage.SCRAPED
                 await session.commit()
         raise
 ```
@@ -838,8 +929,16 @@ The service should:
 Create `tests/test_worker_analysis.py`:
 ```python
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from uuid import uuid4
+from unittest.mock import AsyncMock, patch
+
+
+# In these tests, AnalysisService.run is mocked. The test asserts:
+# (a) qualified result → fetch_contacts deferred
+# (b) non-qualified result → fetch_contacts NOT deferred
+# Note: the company's final pipeline_stage (QUALIFIED/DISQUALIFIED/UNKNOWN) is
+# set inside AnalysisService.run, which is mocked here — so we don't assert on
+# that stage in these task-level tests. AnalysisService stage transitions are
+# tested separately in tests/test_analysis_service.py.
 
 
 @pytest.mark.asyncio
@@ -849,8 +948,10 @@ async def test_run_analysis_qualified_enqueues_fetch_contacts(async_session):
 
     upload = Upload(filename="test.csv", checksum="aaa")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://good.com",
-                      normalized_url="https://good.com", domain="good.com")
+                      normalized_url="https://good.com", domain="good.com",
+                      pipeline_stage=CompanyStage.SCRAPED)
     async_session.add(company)
     await async_session.commit()
 
@@ -858,11 +959,8 @@ async def test_run_analysis_qualified_enqueues_fetch_contacts(async_session):
                new_callable=AsyncMock, return_value=True):
         with patch("app.worker.tasks.contacts.fetch_contacts.defer_async",
                    new_callable=AsyncMock) as mock_defer:
-            await run_analysis.run(company_id=str(company.id))
+            await run_analysis.func(company_id=str(company.id))
             mock_defer.assert_awaited_once_with(company_id=str(company.id))
-
-    await async_session.refresh(company)
-    assert company.pipeline_stage == CompanyStage.QUALIFIED
 
 
 @pytest.mark.asyncio
@@ -872,8 +970,10 @@ async def test_run_analysis_disqualified_does_not_enqueue(async_session):
 
     upload = Upload(filename="test.csv", checksum="bbb")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://bad.com",
-                      normalized_url="https://bad.com", domain="bad.com")
+                      normalized_url="https://bad.com", domain="bad.com",
+                      pipeline_stage=CompanyStage.SCRAPED)
     async_session.add(company)
     await async_session.commit()
 
@@ -881,11 +981,31 @@ async def test_run_analysis_disqualified_does_not_enqueue(async_session):
                new_callable=AsyncMock, return_value=False):
         with patch("app.worker.tasks.contacts.fetch_contacts.defer_async",
                    new_callable=AsyncMock) as mock_defer:
-            await run_analysis.run(company_id=str(company.id))
+            await run_analysis.func(company_id=str(company.id))
             mock_defer.assert_not_awaited()
 
+
+@pytest.mark.asyncio
+async def test_run_analysis_reverts_stage_on_exception(async_session):
+    from app.models.pipeline import Company, CompanyStage, Upload
+    from app.worker.tasks.analysis import run_analysis
+
+    upload = Upload(filename="test.csv", checksum="ccc")
+    async_session.add(upload)
+    await async_session.commit()
+    company = Company(upload_id=upload.id, raw_url="https://err.com",
+                      normalized_url="https://err.com", domain="err.com",
+                      pipeline_stage=CompanyStage.SCRAPED)
+    async_session.add(company)
+    await async_session.commit()
+
+    with patch("app.services.analysis_service.AnalysisService.run",
+               new_callable=AsyncMock, side_effect=RuntimeError("LLM error")):
+        with pytest.raises(RuntimeError):
+            await run_analysis.func(company_id=str(company.id))
+
     await async_session.refresh(company)
-    assert company.pipeline_stage == CompanyStage.DISQUALIFIED
+    assert company.pipeline_stage == CompanyStage.SCRAPED  # reverted from ANALYZING
 ```
 
 - [ ] **Step 4: Run tests**
@@ -922,8 +1042,8 @@ from uuid import UUID
 import procrastinate
 
 from app.core.logging import log_event
-from app.db.session import get_async_session
-from app.models.pipeline import CompanyStage
+from app.db.session import async_session_scope
+from app.models.pipeline import Company, CompanyStage
 from app.worker.app import app
 
 logger = logging.getLogger(__name__)
@@ -935,10 +1055,10 @@ logger = logging.getLogger(__name__)
 )
 async def fetch_contacts(*, company_id: str) -> None:
     from app.services.contact_service import ContactService
-    from app.models.pipeline import Company
 
     cid = UUID(company_id)
-    async for session in get_async_session():
+
+    async with async_session_scope() as session:
         company = await session.get(Company, cid)
         if company is None:
             return
@@ -946,14 +1066,21 @@ async def fetch_contacts(*, company_id: str) -> None:
         await session.commit()
 
     try:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             await ContactService().run(session=session, company_id=cid)
+            # ContactService sets CONTACTS_READY on success
         log_event(logger, "contacts_fetched", company_id=company_id)
     except Exception:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             company = await session.get(Company, cid)
-            if company:
-                company.pipeline_stage = CompanyStage.QUALIFIED
+            if company is not None and company.pipeline_stage == CompanyStage.CONTACTS_FETCHING:
+                # Revert to whichever label preceded — fall back to QUALIFIED
+                # if no record (manual override may have set DISQUALIFIED/UNKNOWN
+                # then triggered fetch).
+                company.pipeline_stage = (
+                    CompanyStage.QUALIFIED if company.label_source != "manual"
+                    else CompanyStage.QUALIFIED  # manual overrides also revert here
+                )
                 await session.commit()
         raise
 ```
@@ -998,27 +1125,28 @@ Create `tests/test_worker_contacts.py`:
 ```python
 import pytest
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 
 @pytest.mark.asyncio
-async def test_fetch_contacts_sets_contacts_ready(async_session):
+async def test_fetch_contacts_marks_contacts_fetching_then_calls_service(async_session):
+    """ContactService is responsible for the final CONTACTS_READY transition;
+    the task only sets CONTACTS_FETCHING and reverts on error."""
     from app.models.pipeline import Company, CompanyStage, Upload
     from app.worker.tasks.contacts import fetch_contacts
 
     upload = Upload(filename="test.csv", checksum="ccc")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://co.com",
                       normalized_url="https://co.com", domain="co.com",
                       pipeline_stage=CompanyStage.QUALIFIED)
     async_session.add(company)
     await async_session.commit()
 
-    with patch("app.services.contact_service.ContactService.run", new_callable=AsyncMock):
-        await fetch_contacts.run(company_id=str(company.id))
-
-    await async_session.refresh(company)
-    assert company.pipeline_stage == CompanyStage.CONTACTS_READY
+    with patch("app.services.contact_service.ContactService.run",
+               new_callable=AsyncMock) as mock_run:
+        await fetch_contacts.func(company_id=str(company.id))
+        mock_run.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1028,6 +1156,7 @@ async def test_fetch_contacts_reverts_to_qualified_on_error(async_session):
 
     upload = Upload(filename="test.csv", checksum="ddd")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://fail2.com",
                       normalized_url="https://fail2.com", domain="fail2.com",
                       pipeline_stage=CompanyStage.QUALIFIED)
@@ -1037,7 +1166,7 @@ async def test_fetch_contacts_reverts_to_qualified_on_error(async_session):
     with patch("app.services.contact_service.ContactService.run",
                new_callable=AsyncMock, side_effect=RuntimeError("api error")):
         with pytest.raises(RuntimeError):
-            await fetch_contacts.run(company_id=str(company.id))
+            await fetch_contacts.func(company_id=str(company.id))
 
     await async_session.refresh(company)
     assert company.pipeline_stage == CompanyStage.QUALIFIED
@@ -1066,6 +1195,17 @@ git commit -m "feat: fetch_contacts task, simplify ContactService, remove CAS/ba
 - Modify: `app/services/contact_reveal_service.py` (946 → ~200 lines)
 - Delete: `app/services/contact_reveal_queue_service.py`
 
+### Reveal data flow (read first)
+
+Before writing the task: in this codebase, `DiscoveredContact` is the raw provider data (Snov/Apollo discovered people, including `provider_native_person_id` used to call reveal endpoints). `ProspectContact` is the user-facing prospect, with a `title_match: bool` flag set by title-rule matching. The current reveal flow:
+
+1. After `fetch_contacts`, `DiscoveredContact` rows exist for a company.
+2. User defines title rules → `rematch_discovered_contacts` (in `title_match_service.py`) creates/updates `ProspectContact` rows for matching discovered contacts. Each `ProspectContact` is associated 1:1 with a `DiscoveredContact` (look at the existing schema for the FK or matching key — likely `(company_id, name, title)` or a direct FK).
+3. User triggers reveal → for each matching `ProspectContact`, enqueue `reveal_email(contact_id=str(prospect_contact.id))`.
+4. `RevealService.run(session, contact_id)` loads the `ProspectContact`, finds its corresponding `DiscoveredContact` (for the provider person ID), calls Snov/Apollo, and writes the resulting email into `ProspectContactEmail`.
+
+**The task argument is `ProspectContact.id`.** All `pipeline_stage` updates in this task target `ProspectContact.pipeline_stage` (the `ContactStage` enum).
+
 - [ ] **Step 1: Create `app/worker/tasks/reveal.py`**
 
 ```python
@@ -1077,8 +1217,8 @@ from uuid import UUID
 import procrastinate
 
 from app.core.logging import log_event
-from app.db.session import get_async_session
-from app.models.pipeline import ContactStage
+from app.db.session import async_session_scope
+from app.models.pipeline import ContactStage, ProspectContact
 from app.worker.app import app
 
 logger = logging.getLogger(__name__)
@@ -1089,11 +1229,13 @@ logger = logging.getLogger(__name__)
     retry=procrastinate.ExponentialRetry(max_attempts=3, wait_minimum=120, wait_multiplier=2),
 )
 async def reveal_email(*, contact_id: str) -> None:
+    """Reveal email for one ProspectContact. contact_id refers to ProspectContact.id."""
     from app.services.contact_reveal_service import RevealService
-    from app.models.pipeline import ProspectContact
+    from app.worker.tasks.verify import verify_email
 
     cid = UUID(contact_id)
-    async for session in get_async_session():
+
+    async with async_session_scope() as session:
         contact = await session.get(ProspectContact, cid)
         if contact is None:
             return
@@ -1101,16 +1243,15 @@ async def reveal_email(*, contact_id: str) -> None:
         await session.commit()
 
     try:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             await RevealService().run(session=session, contact_id=cid)
-
-        from app.worker.tasks.verify import verify_email
+            # RevealService sets pipeline_stage = REVEALED on success
         await verify_email.defer_async(contact_id=contact_id)
         log_event(logger, "email_revealed", contact_id=contact_id)
     except Exception:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             contact = await session.get(ProspectContact, cid)
-            if contact:
+            if contact is not None:
                 contact.pipeline_stage = ContactStage.REVEAL_FAILED
                 await session.commit()
         raise
@@ -1118,10 +1259,11 @@ async def reveal_email(*, contact_id: str) -> None:
 
 - [ ] **Step 2: Rewrite `app/services/contact_reveal_service.py`**
 
-New public interface:
+Rename the class from `ContactRevealService` → `RevealService`. New public interface:
 ```python
-async def run(self, *, session: AsyncSession, contact_id: UUID) -> None:
-    """Reveal email for one ProspectContact using Snov or Apollo."""
+class RevealService:
+    async def run(self, *, session: AsyncSession, contact_id: UUID) -> None:
+        """Reveal email for one ProspectContact using Snov or Apollo."""
 ```
 
 Remove entirely:
@@ -1132,16 +1274,18 @@ Remove entirely:
 - All `ContactRevealJob`, `ContactRevealAttempt`, `ContactRevealBatch` references
 
 Keep and async-ify:
-- `_reveal_with_apollo()` → calls `apollo_client` directly
-- `_reveal_with_snov()` → calls `snov_client` directly
-- `_persist_revealed_contact()` → writes email to `ProspectContactEmail`
+- `_reveal_with_apollo(...)` → calls `apollo_client` directly with `provider_native_person_id`
+- `_reveal_with_snov(...)` → calls `snov_client` directly
+- `_persist_revealed_contact(...)` → writes email to `ProspectContactEmail` (existing logic, change session arg type to `AsyncSession`)
+- `_first_member_job_id`, `_find_existing_contact`, `_upsert_contact_email` (helpers — adapt to async session)
 
 The new `run()`:
-1. Load `ProspectContact` + associated `DiscoveredContact` (for provider person IDs)
-2. Try Snov: `result = await self._reveal_with_snov(contact)`
-3. If no email, try Apollo: `result = await self._reveal_with_apollo(contact)`
-4. Persist email: `await self._persist_revealed_contact(session, contact_id, result)`
-5. Set `contact.pipeline_stage = ContactStage.REVEALED`
+1. Load `ProspectContact` by `contact_id`. Return early if missing or already has a verified email.
+2. Locate the corresponding `DiscoveredContact` for this prospect — use whatever join the current `_load_reveal_members` uses (likely `(company_id + name + title)` or a `discovered_contact_id` FK on `ProspectContact`). This gives access to `provider_native_person_id` for Snov/Apollo.
+3. Try Snov: `result = await self._reveal_with_snov(discovered=discovered_contact)`. If no email returned, try Apollo: `result = await self._reveal_with_apollo(discovered=discovered_contact)`.
+4. If at least one provider returned an email, call `await self._persist_revealed_contact(session=session, contact=prospect, result=result)` and set `prospect.pipeline_stage = ContactStage.REVEALED`.
+5. If both providers returned no email, set `prospect.pipeline_stage = ContactStage.REVEAL_FAILED` and return without raising (this is "no result", not an error).
+6. Raise on transport-level errors (network, 5xx) so Procrastinate retries.
 
 - [ ] **Step 3: Delete `contact_reveal_queue_service.py`**
 
@@ -1155,23 +1299,23 @@ Create `tests/test_worker_reveal.py`:
 ```python
 import pytest
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 
 @pytest.mark.asyncio
-async def test_reveal_email_sets_revealed_and_enqueues_verify(async_session):
+async def test_reveal_email_calls_service_and_enqueues_verify(async_session):
     from app.models.pipeline import ProspectContact, ContactStage, Company, Upload
     from app.worker.tasks.reveal import reveal_email
 
     upload = Upload(filename="t.csv", checksum="eee")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://x.com",
                       normalized_url="https://x.com", domain="x.com")
     async_session.add(company)
     await async_session.commit()
 
     contact = ProspectContact(company_id=company.id, full_name="Jane Doe",
-                               pipeline_stage=ContactStage.FETCHED)
+                              pipeline_stage=ContactStage.FETCHED)
     async_session.add(contact)
     await async_session.commit()
 
@@ -1179,11 +1323,34 @@ async def test_reveal_email_sets_revealed_and_enqueues_verify(async_session):
                new_callable=AsyncMock):
         with patch("app.worker.tasks.verify.verify_email.defer_async",
                    new_callable=AsyncMock) as mock_defer:
-            await reveal_email.run(contact_id=str(contact.id))
+            await reveal_email.func(contact_id=str(contact.id))
             mock_defer.assert_awaited_once_with(contact_id=str(contact.id))
 
+
+@pytest.mark.asyncio
+async def test_reveal_email_marks_reveal_failed_on_exception(async_session):
+    from app.models.pipeline import ProspectContact, ContactStage, Company, Upload
+    from app.worker.tasks.reveal import reveal_email
+
+    upload = Upload(filename="t.csv", checksum="fff")
+    async_session.add(upload)
+    await async_session.commit()
+    company = Company(upload_id=upload.id, raw_url="https://x.com",
+                      normalized_url="https://x.com", domain="x.com")
+    async_session.add(company)
+    await async_session.commit()
+    contact = ProspectContact(company_id=company.id, full_name="John Doe",
+                              pipeline_stage=ContactStage.FETCHED)
+    async_session.add(contact)
+    await async_session.commit()
+
+    with patch("app.services.contact_reveal_service.RevealService.run",
+               new_callable=AsyncMock, side_effect=RuntimeError("provider error")):
+        with pytest.raises(RuntimeError):
+            await reveal_email.func(contact_id=str(contact.id))
+
     await async_session.refresh(contact)
-    assert contact.pipeline_stage == ContactStage.REVEALED
+    assert contact.pipeline_stage == ContactStage.REVEAL_FAILED
 ```
 
 - [ ] **Step 5: Run tests**
@@ -1219,8 +1386,8 @@ from uuid import UUID
 import procrastinate
 
 from app.core.logging import log_event
-from app.db.session import get_async_session
-from app.models.pipeline import ContactStage
+from app.db.session import async_session_scope
+from app.models.pipeline import ContactStage, ProspectContact
 from app.worker.app import app
 
 logger = logging.getLogger(__name__)
@@ -1232,10 +1399,10 @@ logger = logging.getLogger(__name__)
 )
 async def verify_email(*, contact_id: str) -> None:
     from app.services.contact_verify_service import VerifyService
-    from app.models.pipeline import ProspectContact
 
     cid = UUID(contact_id)
-    async for session in get_async_session():
+
+    async with async_session_scope() as session:
         contact = await session.get(ProspectContact, cid)
         if contact is None:
             return
@@ -1243,13 +1410,14 @@ async def verify_email(*, contact_id: str) -> None:
         await session.commit()
 
     try:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             await VerifyService().run(session=session, contact_id=cid)
+            # VerifyService sets pipeline_stage = VERIFIED or CAMPAIGN_READY
         log_event(logger, "email_verified", contact_id=contact_id)
     except Exception:
-        async for session in get_async_session():
+        async with async_session_scope() as session:
             contact = await session.get(ProspectContact, cid)
-            if contact:
+            if contact is not None and contact.pipeline_stage == ContactStage.VERIFYING:
                 contact.pipeline_stage = ContactStage.REVEALED
                 await session.commit()
         raise
@@ -1257,22 +1425,23 @@ async def verify_email(*, contact_id: str) -> None:
 
 - [ ] **Step 2: Rewrite `app/services/contact_verify_service.py`**
 
-New public interface:
+Rename the class from `ContactVerifyService` → `VerifyService`. New public interface:
 ```python
-async def run(self, *, session: AsyncSession, contact_id: UUID) -> None:
-    """Verify email for one ProspectContact via ZeroBounce."""
+class VerifyService:
+    async def run(self, *, session: AsyncSession, contact_id: UUID) -> None:
+        """Verify email for one ProspectContact via ZeroBounce."""
 ```
 
 Remove: `run_verify_job()`, `_complete_job()`, `_fail_job()`, all `ContactVerifyJob` CRUD.
 
-Keep: `normalize_zerobounce_status()`, `is_contact_verification_eligible()`, ZeroBounce API call logic.
+Keep: `normalize_zerobounce_status()`, `is_contact_verification_eligible()`, ZeroBounce API call logic (adapt to async HTTP if not already).
 
 The new `run()`:
-1. Load `ProspectContact` and its `ProspectContactEmail` records
-2. Skip contacts with no email or already verified
-3. Call ZeroBounce for each email
-4. Update `ProspectContactEmail.verification_status`
-5. Set `contact.pipeline_stage = ContactStage.CAMPAIGN_READY` if at least one valid email
+1. Load `ProspectContact` and its `ProspectContactEmail` rows.
+2. If no email rows exist → set `pipeline_stage = ContactStage.REVEALED` (rolled back from VERIFYING) and return.
+3. For each `ProspectContactEmail` not yet verified, call ZeroBounce and update `verification_status`.
+4. If at least one email comes back with a valid status (`valid` per `normalize_zerobounce_status`) → `contact.pipeline_stage = ContactStage.CAMPAIGN_READY`.
+5. Otherwise → `contact.pipeline_stage = ContactStage.VERIFIED` (verified but no valid email).
 
 - [ ] **Step 3: Write test**
 
@@ -1280,32 +1449,56 @@ Create `tests/test_worker_verify.py`:
 ```python
 import pytest
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 
 @pytest.mark.asyncio
-async def test_verify_email_sets_campaign_ready(async_session):
+async def test_verify_email_calls_service(async_session):
+    """VerifyService is responsible for the final stage transition."""
     from app.models.pipeline import ProspectContact, ContactStage, Company, Upload
     from app.worker.tasks.verify import verify_email
 
-    upload = Upload(filename="t.csv", checksum="fff")
+    upload = Upload(filename="t.csv", checksum="ggg")
     async_session.add(upload)
+    await async_session.commit()
     company = Company(upload_id=upload.id, raw_url="https://y.com",
                       normalized_url="https://y.com", domain="y.com")
     async_session.add(company)
     await async_session.commit()
-
     contact = ProspectContact(company_id=company.id, full_name="Bob Smith",
-                               pipeline_stage=ContactStage.REVEALED)
+                              pipeline_stage=ContactStage.REVEALED)
     async_session.add(contact)
     await async_session.commit()
 
     with patch("app.services.contact_verify_service.VerifyService.run",
-               new_callable=AsyncMock):
-        await verify_email.run(contact_id=str(contact.id))
+               new_callable=AsyncMock) as mock_run:
+        await verify_email.func(contact_id=str(contact.id))
+        mock_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_verify_email_reverts_to_revealed_on_exception(async_session):
+    from app.models.pipeline import ProspectContact, ContactStage, Company, Upload
+    from app.worker.tasks.verify import verify_email
+
+    upload = Upload(filename="t.csv", checksum="hhh")
+    async_session.add(upload)
+    await async_session.commit()
+    company = Company(upload_id=upload.id, raw_url="https://y.com",
+                      normalized_url="https://y.com", domain="y.com")
+    async_session.add(company)
+    await async_session.commit()
+    contact = ProspectContact(company_id=company.id, full_name="Eve",
+                              pipeline_stage=ContactStage.REVEALED)
+    async_session.add(contact)
+    await async_session.commit()
+
+    with patch("app.services.contact_verify_service.VerifyService.run",
+               new_callable=AsyncMock, side_effect=RuntimeError("zb timeout")):
+        with pytest.raises(RuntimeError):
+            await verify_email.func(contact_id=str(contact.id))
 
     await async_session.refresh(contact)
-    assert contact.pipeline_stage == ContactStage.CAMPAIGN_READY
+    assert contact.pipeline_stage == ContactStage.REVEALED
 ```
 
 - [ ] **Step 4: Run tests**
@@ -1337,12 +1530,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from app.core.logging import log_event
-from app.db.session import get_async_session
+from app.db.session import async_session_scope
 from app.models.pipeline import AiUsageEvent, Company, CompanyStage, ContactStage, ProspectContact
 from app.worker.app import app
 
@@ -1351,93 +1542,74 @@ logger = logging.getLogger(__name__)
 _STAGE_TIMEOUT_MINUTES = 35
 
 
+# Procrastinate periodic tasks must accept a `timestamp` int argument.
+# The decorator schedules them via cron; the worker passes the firing time.
+
 @app.periodic(cron="*/10 * * * *")
+@app.task(queue="periodic")
 async def reconcile_stuck_jobs(timestamp: int) -> None:
     """Reset companies/contacts stuck in transitional states for > 35 min."""
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STAGE_TIMEOUT_MINUTES)
 
-    async for session in get_async_session():
-        # Companies stuck in 'scraping' → reset to 'uploaded' (re-enqueue will happen next scrape trigger)
-        stuck_scraping = await session.exec(
-            select(Company).where(
-                col(Company.pipeline_stage) == CompanyStage.SCRAPING,
-                col(Company.updated_at) < cutoff,
-            )
-        )
-        reset_scraping = 0
-        for company in stuck_scraping.all():
-            company.pipeline_stage = CompanyStage.UPLOADED
-            session.add(company)
-            reset_scraping += 1
+    company_revert = {
+        CompanyStage.SCRAPING:          CompanyStage.UPLOADED,
+        CompanyStage.ANALYZING:         CompanyStage.SCRAPED,
+        CompanyStage.CONTACTS_FETCHING: CompanyStage.QUALIFIED,
+    }
+    contact_revert = {
+        ContactStage.REVEALING: ContactStage.FETCHED,
+        ContactStage.VERIFYING: ContactStage.REVEALED,
+    }
 
-        # Companies stuck in 'analyzing' → reset to 'scraped'
-        stuck_analyzing = await session.exec(
-            select(Company).where(
-                col(Company.pipeline_stage) == CompanyStage.ANALYZING,
-                col(Company.updated_at) < cutoff,
-            )
-        )
-        reset_analyzing = 0
-        for company in stuck_analyzing.all():
-            company.pipeline_stage = CompanyStage.SCRAPED
-            session.add(company)
-            reset_analyzing += 1
+    reset_company = 0
+    reset_contact = 0
 
-        # Companies stuck in 'contacts_fetching' → reset to 'qualified'
-        stuck_fetching = await session.exec(
-            select(Company).where(
-                col(Company.pipeline_stage) == CompanyStage.CONTACTS_FETCHING,
-                col(Company.updated_at) < cutoff,
+    async with async_session_scope() as session:
+        for stuck_stage, revert_stage in company_revert.items():
+            result = await session.exec(
+                select(Company).where(
+                    col(Company.pipeline_stage) == stuck_stage,
+                    col(Company.updated_at) < cutoff,
+                )
             )
-        )
-        reset_fetching = 0
-        for company in stuck_fetching.all():
-            company.pipeline_stage = CompanyStage.QUALIFIED
-            session.add(company)
-            reset_fetching += 1
+            for company in result.all():
+                company.pipeline_stage = revert_stage
+                session.add(company)
+                reset_company += 1
 
-        # Contacts stuck in transitional stages → revert
-        stage_revert = {
-            ContactStage.REVEALING: ContactStage.FETCHED,
-            ContactStage.VERIFYING: ContactStage.REVEALED,
-        }
-        reset_contacts = 0
-        for stuck_stage, revert_stage in stage_revert.items():
-            stuck_contacts = await session.exec(
+        for stuck_stage, revert_stage in contact_revert.items():
+            result = await session.exec(
                 select(ProspectContact).where(
                     col(ProspectContact.pipeline_stage) == stuck_stage,
                     col(ProspectContact.updated_at) < cutoff,
                 )
             )
-            for contact in stuck_contacts.all():
+            for contact in result.all():
                 contact.pipeline_stage = revert_stage
                 session.add(contact)
-                reset_contacts += 1
+                reset_contact += 1
 
         await session.commit()
 
     log_event(
-        logger,
-        "reconciler_done",
-        reset_scraping=reset_scraping,
-        reset_analyzing=reset_analyzing,
-        reset_fetching=reset_fetching,
-        reset_contacts=reset_contacts,
+        logger, "reconciler_done",
+        reset_company=reset_company, reset_contact=reset_contact,
     )
 
 
 @app.periodic(cron="*/15 * * * *")
+@app.task(queue="periodic")
 async def reconcile_openrouter_costs(timestamp: int) -> None:
     """Mark billable OpenRouter events as reconciled."""
-    async for session in get_async_session():
-        rows = (await session.exec(
+    async with async_session_scope() as session:
+        result = await session.exec(
             select(AiUsageEvent).where(
                 col(AiUsageEvent.provider) == "openrouter",
                 col(AiUsageEvent.billed_cost_usd).is_not(None),
                 col(AiUsageEvent.reconciliation_status) != "reconciled",
             )
-        )).all()
-
+        )
+        rows = list(result.all())
         for row in rows:
             row.reconciliation_status = "reconciled"
             session.add(row)
@@ -1446,13 +1618,14 @@ async def reconcile_openrouter_costs(timestamp: int) -> None:
     log_event(logger, "openrouter_cost_reconciliation_done", updated=len(rows))
 ```
 
+Note: when adding `--queues` to the worker-pipeline command in Task 12, include `periodic` so reconciliation tasks get picked up.
+
 - [ ] **Step 2: Write test**
 
 Create `tests/test_worker_periodic.py`:
 ```python
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 
 @pytest.mark.asyncio
@@ -1460,8 +1633,9 @@ async def test_reconcile_stuck_jobs_resets_scraping(async_session):
     from app.models.pipeline import Company, CompanyStage, Upload
     from app.worker.tasks.periodic import reconcile_stuck_jobs
 
-    upload = Upload(filename="t.csv", checksum="ggg")
+    upload = Upload(filename="t.csv", checksum="iii")
     async_session.add(upload)
+    await async_session.commit()
     old_time = datetime.now(timezone.utc) - timedelta(minutes=40)
     company = Company(
         upload_id=upload.id,
@@ -1474,10 +1648,35 @@ async def test_reconcile_stuck_jobs_resets_scraping(async_session):
     async_session.add(company)
     await async_session.commit()
 
-    await reconcile_stuck_jobs.run(timestamp=0)
+    await reconcile_stuck_jobs.func(timestamp=0)
 
     await async_session.refresh(company)
     assert company.pipeline_stage == CompanyStage.UPLOADED
+
+
+@pytest.mark.asyncio
+async def test_reconcile_stuck_jobs_does_not_reset_recent(async_session):
+    """Companies updated within the timeout window must not be reset."""
+    from app.models.pipeline import Company, CompanyStage, Upload
+    from app.worker.tasks.periodic import reconcile_stuck_jobs
+
+    upload = Upload(filename="t.csv", checksum="jjj")
+    async_session.add(upload)
+    await async_session.commit()
+    company = Company(
+        upload_id=upload.id,
+        raw_url="https://recent.com",
+        normalized_url="https://recent.com",
+        domain="recent.com",
+        pipeline_stage=CompanyStage.SCRAPING,
+    )
+    async_session.add(company)
+    await async_session.commit()
+
+    await reconcile_stuck_jobs.func(timestamp=0)
+
+    await async_session.refresh(company)
+    assert company.pipeline_stage == CompanyStage.SCRAPING
 ```
 
 - [ ] **Step 3: Run test**
@@ -1515,6 +1714,15 @@ git commit -m "feat: periodic reconciliation tasks in Procrastinate, delete app/
 
 - [ ] **Step 1: Add manual override endpoint to `app/api/routes/companies.py`**
 
+Add these imports at the top of the file:
+```python
+from typing import Literal
+
+from pydantic import BaseModel
+
+from app.models.pipeline import CompanyStage
+```
+
 Add this endpoint:
 ```python
 class ManualLabelRequest(BaseModel):
@@ -1525,6 +1733,7 @@ class ManualLabelRequest(BaseModel):
 class ManualLabelResponse(BaseModel):
     company_id: UUID
     pipeline_stage: str
+    label_source: str
     contacts_enqueued: bool
 
 
@@ -1538,13 +1747,14 @@ async def manually_label_company(
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found.")
 
-    company.pipeline_stage = payload.label
+    company.pipeline_stage = CompanyStage(payload.label)
     company.label_source = "manual"
     session.add(company)
     session.commit()
+    session.refresh(company)
 
     contacts_enqueued = False
-    if payload.enqueue_contacts:
+    if payload.enqueue_contacts and payload.label == "qualified":
         from app.worker.tasks.contacts import fetch_contacts
         await fetch_contacts.defer_async(company_id=str(company_id))
         contacts_enqueued = True
@@ -1552,11 +1762,14 @@ async def manually_label_company(
     return ManualLabelResponse(
         company_id=company_id,
         pipeline_stage=company.pipeline_stage,
+        label_source=company.label_source,
         contacts_enqueued=contacts_enqueued,
     )
 ```
 
-Note: this route is `async def` because it conditionally calls `defer_async`.
+Notes:
+- Route is `async def` because it conditionally calls `defer_async`.
+- Contact fetch is only enqueued when the manual label is `qualified` — labelling something `disqualified` or `unknown` doesn't trigger fetch even if `enqueue_contacts=true`.
 
 - [ ] **Step 2: Update contact fetch dispatch in `app/api/routes/contacts.py`**
 
@@ -1844,7 +2057,7 @@ git commit -m "chore: delete celery, idempotency, redis, pipeline orchestration 
 
 ---
 
-## Task 12: Docker — 4 Containers, Playwright, No Redis
+## Task 12: Docker — 7 Containers, Playwright, No Redis
 
 **Files:**
 - Create: `Dockerfile.worker-scrape`
@@ -1878,7 +2091,27 @@ CMD ["uv", "run", "procrastinate", "--app", "app.worker.app.app", "worker",
      "--concurrency", "6"]
 ```
 
-- [ ] **Step 2: Rewrite `docker-compose.yml` to 4 services**
+### Note on per-queue concurrency
+
+Procrastinate's `--concurrency` flag is a global slot count for a worker process — it does not enforce per-queue limits the way Celery's separate worker pools do. With one worker process listening to all four pipeline queues at `--concurrency 12`, on a busy day you might end up with 12 verify jobs running simultaneously and zero contact jobs.
+
+For this design (rate-limited external APIs per queue), the cleanest answer is **one worker container per queue**. This keeps strict per-queue concurrency. It costs ~50–100MB extra RAM per container — well within the 12GB budget.
+
+This means **5 worker containers total**, not 2. Updated topology:
+
+```
+postgres
+api
+worker-scrape       (concurrency 6,  queue: scrape)
+worker-analysis     (concurrency 4,  queue: analysis)
+worker-contacts     (concurrency 4,  queue: contacts)
+worker-reveal       (concurrency 3,  queue: reveal)
+worker-verify       (concurrency 2,  queues: verify, periodic)
+```
+
+Total: 7 containers. Still much simpler than the current 10. `worker-verify` also runs the periodic queue (reconciliation) since it's the lowest-traffic worker.
+
+- [ ] **Step 2: Rewrite `docker-compose.yml`**
 
 ```yaml
 services:
@@ -1912,23 +2145,45 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker-scrape
-    environment:
-      DATABASE_URL: postgresql://prospect:${POSTGRES_PASSWORD}@postgres:5432/prospect
+    environment: &worker_env
+      DATABASE_URL: postgresql+psycopg2://prospect:${POSTGRES_PASSWORD}@postgres:5432/prospect
       PS_SETTINGS_ENCRYPTION_KEY: ${PS_SETTINGS_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy
 
-  worker-pipeline:
+  worker-analysis:
     build: .
-    command: [
-      "uv", "run", "procrastinate", "--app", "app.worker.app.app", "worker",
-      "--queues", "analysis,contacts,reveal,verify",
-      "--concurrency", "12"
-    ]
-    environment:
-      DATABASE_URL: postgresql://prospect:${POSTGRES_PASSWORD}@postgres:5432/prospect
-      PS_SETTINGS_ENCRYPTION_KEY: ${PS_SETTINGS_ENCRYPTION_KEY}
+    command: ["uv", "run", "procrastinate", "--app", "app.worker.app.app", "worker",
+              "--queues", "analysis", "--concurrency", "4"]
+    environment: *worker_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker-contacts:
+    build: .
+    command: ["uv", "run", "procrastinate", "--app", "app.worker.app.app", "worker",
+              "--queues", "contacts", "--concurrency", "4"]
+    environment: *worker_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker-reveal:
+    build: .
+    command: ["uv", "run", "procrastinate", "--app", "app.worker.app.app", "worker",
+              "--queues", "reveal", "--concurrency", "3"]
+    environment: *worker_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker-verify:
+    build: .
+    command: ["uv", "run", "procrastinate", "--app", "app.worker.app.app", "worker",
+              "--queues", "verify,periodic", "--concurrency", "2"]
+    environment: *worker_env
     depends_on:
       postgres:
         condition: service_healthy
@@ -1937,7 +2192,7 @@ volumes:
   postgres_data:
 ```
 
-Note: `--concurrency 12` for worker-pipeline gives ~3 slots per queue. Procrastinate distributes across queues automatically. Tune based on observed load.
+The `DATABASE_URL` uses the SQLAlchemy `+psycopg2` prefix everywhere because the API uses sync SQLAlchemy with psycopg2-style URLs. The `_async_url` and `procrastinate_dsn` helpers (Tasks 1 Steps 4 and 6) translate it to async/raw forms as needed.
 
 - [ ] **Step 3: Remove Redis env var references from `.env` and `.env.example`**
 
@@ -1956,7 +2211,7 @@ docker compose run --rm api uv run procrastinate --app app.worker.app.app schema
 docker compose up
 ```
 
-Expected: all 4 containers healthy. No Redis container. No Beat container.
+Expected: all 7 containers healthy. No Redis container. No Beat container.
 
 - [ ] **Step 5: Smoke test**
 

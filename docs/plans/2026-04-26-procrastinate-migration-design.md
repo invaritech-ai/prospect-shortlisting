@@ -19,14 +19,19 @@ The current codebase has ~8,800 lines across services and tasks. A large portion
 ## Deployment
 
 **Current:** 10+ containers (api, redis, beat, 8 workers)  
-**Target:** 4 containers
+**Target:** 7 containers (one worker per pipeline stage for strict per-queue concurrency)
 
 ```
 postgres          ← existing; Procrastinate adds its own tables here
 api               ← FastAPI, largely unchanged
-worker-scrape     ← Procrastinate worker, queue=scrape, concurrency=6-8
-worker-pipeline   ← Procrastinate worker, 4 queues, per-queue concurrency
+worker-scrape     ← Procrastinate worker, queue=scrape, concurrency=6
+worker-analysis   ← queue=analysis, concurrency=4
+worker-contacts   ← queue=contacts, concurrency=4
+worker-reveal     ← queue=reveal,   concurrency=3
+worker-verify     ← queues=verify+periodic, concurrency=2
 ```
+
+We split rather than collapse because Procrastinate's `--concurrency` is global per worker process — running all four pipeline queues in one worker would let any queue saturate the slot pool. Separate workers give us the per-queue rate-limiting the design requires for external API providers (Snov, Apollo, ZeroBounce, OpenAI).
 
 **worker-pipeline queue concurrency:**
 | Queue     | Concurrency | Constraint            |
