@@ -278,7 +278,82 @@ No Redis inspection. No separate monitoring infra. Admin UI can surface this via
 
 ---
 
-## Migration Path
+## Database Migration Strategy
+
+### Do not start with a clean database
+
+The live database contains irreplaceable business data. The migration runs against it in-place using Alembic. No ETL, no parallel database, no data loss risk.
+
+### What is preserved (untouched tables)
+
+```
+campaigns                  uploads                   companies
+crawl_artifacts            classification_results    company_feedback
+discovered_contacts        prospect_contacts         prospect_contact_emails
+title_match_rules          prompts                   scrape_prompts
+ai_usage_events            settings
+```
+
+### What is dropped (job tracking infrastructure only)
+
+```
+crawl_jobs                 analysis_jobs
+contact_fetch_batches      contact_fetch_jobs
+contact_fetch_runtime_control
+contact_provider_attempts
+contact_reveal_batches     contact_reveal_jobs       contact_reveal_attempts
+contact_verify_jobs        job_events
+pipeline_runs              pipeline_run_events
+```
+
+None of this is business data. It is transient job state that Procrastinate will own going forward. Dropping it is safe.
+
+### Schema changes to existing tables
+
+**`companies` table:**
+
+| Change | Detail |
+|--------|--------|
+| Expand `pipeline_stage` enum | Add: `scraping`, `scrape_failed`, `analyzing`, `qualified`, `disqualified`, `unknown`, `contacts_fetching`. Rename `contact_ready` → `contacts_ready`. |
+| Add column `label_source` | `TEXT`, nullable. Values: `'ai'` or `'manual'`. Null for companies not yet labelled. |
+| Data backfill for `pipeline_stage` | `classified` rows: join `classification_results` to determine `qualified` vs `disqualified` vs `unknown`. `contact_ready` → `contacts_ready`. |
+
+**`prospect_contacts` / `discovered_contacts` tables:**
+
+| Change | Detail |
+|--------|--------|
+| Expand `pipeline_stage` enum | Add: `revealing`, `revealed`, `reveal_failed`, `verifying`. |
+| Data backfill | Existing `fetched` rows stay `fetched`. No other backfill needed — in-flight jobs at time of migration are handled by reconciler on first run. |
+
+**Procrastinate tables (new):**
+
+Procrastinate adds its own tables via its own migration command (`procrastinate migrate`). These are additive — no existing tables touched.
+
+```
+procrastinate_jobs
+procrastinate_events
+procrastinate_periodic_defers
+```
+
+### Migration execution order
+
+This is the only step with meaningful risk. Follow this sequence strictly:
+
+1. **Take a full DB dump** before any migration runs (`pg_dump`)
+2. Run the Alembic migration on a **copy of the live DB first** — verify data counts match before and after
+3. Specifically verify the `classified` → `qualified/disqualified/unknown` backfill by checking row counts against `classification_results`
+4. Deploy new code with old workers **stopped** (maintenance window, minutes not hours)
+5. Run `procrastinate migrate` to add Procrastinate tables
+6. Run Alembic migration against live DB
+7. Start new workers
+
+### Rollback plan
+
+If the migration fails after step 6: restore from pg_dump taken in step 1. The old code can be redeployed against the restored DB. The window between dump and migration is the only unrecoverable gap — keep it short.
+
+---
+
+## Implementation Sequence
 
 This is a green-field rewrite of the infrastructure layer, not the business logic. The sequence:
 
@@ -286,11 +361,11 @@ This is a green-field rewrite of the infrastructure layer, not the business logi
 2. Write `procrastinate_app.py` (replaces `celery_app.py`)
 3. Write 5 tasks (thin wrappers over existing service logic)
 4. Simplify services — strip out CAS locking, dispatch, manual retry
-5. Collapse DB models — delete job tables, write Alembic migration
+5. Collapse DB models — delete job tables, write Alembic migration with backfill
 6. Remove Celery, Beat, Redis from `docker-compose.yml`
 7. Update API routes that expose job state (point at `procrastinate_jobs`)
 8. Update `worker-scrape` Dockerfile to install Playwright + Chromium
-9. Test end-to-end on a small campaign before removing old tables
+9. Test end-to-end on a DB copy before touching live
 
 **Estimated effort:** 3–4 days of focused work.  
-**Risk:** Low. All provider clients, scraping logic, and AI logic are untouched. The only changes are the wiring between them.
+**Risk:** Low for code. The only elevated-risk step is the DB enum backfill — mitigated by testing on a DB copy first.
