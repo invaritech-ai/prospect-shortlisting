@@ -30,7 +30,7 @@ def effective_company_label(session: Session, company_id: UUID) -> str | None:
 
     row = session.exec(
         select(ClassificationResult.predicted_label)
-        .join(AnalysisJob, AnalysisJob.id == ClassificationResult.analysis_job_id)
+        .join(AnalysisJob, col(AnalysisJob.id) == col(ClassificationResult.analysis_job_id))
         .where(
             col(AnalysisJob.company_id) == company_id,
             col(ClassificationResult.is_stale).is_(False),

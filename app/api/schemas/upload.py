@@ -135,6 +135,11 @@ class CompanyScrapeResult(BaseModel):
     idempotency_replayed: bool = False
 
 
+class CompanyDeleteQueued(BaseModel):
+    queued_count: int
+    queued_ids: list[UUID]
+
+
 class CompanyIdsResult(BaseModel):
     ids: list[UUID]
     total: int

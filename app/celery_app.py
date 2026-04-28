@@ -7,7 +7,7 @@ from celery.schedules import crontab
 from app.core.config import settings
 
 app = Celery("prospect")
-app.autodiscover_tasks(["app.tasks.scrape", "app.tasks.analysis", "app.tasks.beat", "app.tasks.contacts"])
+app.autodiscover_tasks(["app.tasks.scrape", "app.tasks.analysis", "app.tasks.beat", "app.tasks.contacts", "app.tasks.company"])
 
 # Build TCP keepalive options conditionally — TCP_KEEPIDLE is Linux-only;
 # macOS/BSD uses TCP_KEEPALIVE instead.
@@ -79,6 +79,7 @@ app.conf.update(
         "app.tasks.contacts.reveal_contact_apollo_attempt": {"queue": "contacts_reveal_apollo"},
         "app.tasks.contacts.reveal_contact_snov_attempt": {"queue": "contacts_reveal_snov"},
         "app.tasks.contacts.verify_contacts_batch": {"queue": "contacts_verify"},
+        "app.tasks.company.cascade_delete_companies": {"queue": "pipeline"},
     },
     # Celery Beat periodic schedule.
     beat_schedule={

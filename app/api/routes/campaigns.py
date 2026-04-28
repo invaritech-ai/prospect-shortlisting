@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlmodel import Session, col, select
 
 from app.api.schemas.campaign import (
@@ -35,6 +35,19 @@ def _as_campaign_read(
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,
     )
+
+
+def _get_campaign_counts(session: Session, campaign_id: UUID) -> tuple[int, int]:
+    upload_count = session.exec(
+        select(func.count()).select_from(Upload).where(col(Upload.campaign_id) == campaign_id)
+    ).one()
+    company_count = session.exec(
+        select(func.count())
+        .select_from(Company)
+        .join(Upload, col(Upload.id) == col(Company.upload_id))
+        .where(col(Upload.campaign_id) == campaign_id)
+    ).one()
+    return int(upload_count), int(company_count)
 
 
 @router.post("/campaigns", response_model=CampaignRead, status_code=status.HTTP_201_CREATED)
@@ -112,6 +125,15 @@ def list_campaigns(
     )
 
 
+@router.get("/campaigns/{campaign_id}", response_model=CampaignRead)
+def get_campaign(campaign_id: UUID, session: Session = Depends(get_session)) -> CampaignRead:
+    campaign = session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    upload_count, company_count = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)
+
+
 @router.patch("/campaigns/{campaign_id}", response_model=CampaignRead)
 def update_campaign(
     campaign_id: UUID,
@@ -147,10 +169,7 @@ def delete_campaign(campaign_id: UUID, session: Session = Depends(get_session)) 
     campaign = session.get(Campaign, campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
-    uploads = list(session.exec(select(Upload).where(col(Upload.campaign_id) == campaign_id)))
-    for upload in uploads:
-        upload.campaign_id = None
-        session.add(upload)
+    session.execute(update(Upload).where(col(Upload.campaign_id) == campaign_id).values(campaign_id=None))
     session.delete(campaign)
     session.commit()
 
@@ -165,28 +184,44 @@ def assign_uploads_to_campaign(
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
     upload_ids = list(dict.fromkeys(payload.upload_ids))
-    uploads = list(session.exec(select(Upload).where(col(Upload.id).in_(upload_ids))))
-    if not uploads:
-        raise HTTPException(status_code=404, detail="No uploads found to assign.")
-    now = utcnow()
-    for upload in uploads:
-        upload.campaign_id = campaign_id
-        session.add(upload)
-    campaign.updated_at = now
+    already_claimed = session.exec(
+        select(func.count())
+        .select_from(Upload)
+        .where(
+            col(Upload.id).in_(upload_ids),
+            col(Upload.campaign_id).is_not(None),
+            col(Upload.campaign_id) != campaign_id,
+        )
+    ).one()
+    if already_claimed:
+        raise HTTPException(status_code=409, detail="One or more uploads are already assigned to another campaign.")
+    session.execute(
+        update(Upload).where(col(Upload.id).in_(upload_ids)).values(campaign_id=campaign_id)
+    )
+    campaign.updated_at = utcnow()
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
-    upload_count = session.exec(
-        select(func.count()).select_from(Upload).where(col(Upload.campaign_id) == campaign_id)
-    ).one()
-    company_count = session.exec(
-        select(func.count())
-        .select_from(Company)
-        .join(Upload, col(Upload.id) == col(Company.upload_id))
-        .where(col(Upload.campaign_id) == campaign_id)
-    ).one()
-    return _as_campaign_read(
-        campaign=campaign,
-        upload_count=upload_count or 0,
-        company_count=company_count or 0,
+    upload_count, company_count = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)
+
+
+@router.post("/campaigns/{campaign_id}/unassign-uploads", response_model=CampaignRead)
+def unassign_uploads_from_campaign(
+    campaign_id: UUID,
+    payload: CampaignAssignUploadsRequest,
+    session: Session = Depends(get_session),
+) -> CampaignRead:
+    campaign = session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    upload_ids = list(dict.fromkeys(payload.upload_ids))
+    session.execute(
+        update(Upload).where(col(Upload.id).in_(upload_ids)).values(campaign_id=None)
     )
+    campaign.updated_at = utcnow()
+    session.add(campaign)
+    session.commit()
+    session.refresh(campaign)
+    upload_count, company_count = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)

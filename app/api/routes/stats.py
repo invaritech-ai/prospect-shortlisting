@@ -10,14 +10,17 @@ from sqlalchemy import case, literal_column
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
-from app.models import AiUsageEvent, AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, PipelineRun, ProspectContact, ScrapeJob, Upload
+from app.models import AiUsageEvent, AnalysisJob, Company, CompanyFeedback, ContactFetchJob, ContactVerifyJob, PipelineRun, ProspectContact, ScrapeJob, Upload
 from app.models.pipeline import (
     AnalysisJobState,
+    CompanyPipelineStage,
     ContactFetchJobState,
     ContactRevealBatch,
     ContactRevealJob,
     ContactVerifyJobState,
 )
+from app.api.schemas.upload import CompanyCounts
+from app.services.company_service import latest_classification_subquery, latest_scrape_subquery
 
 
 # A running scrape job that hasn't updated in > 35 min is considered stuck
@@ -814,4 +817,86 @@ def get_cost_stats(
         limit=limit,
         offset=offset,
         items=items,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Company counts (moved from companies.py)
+# ---------------------------------------------------------------------------
+
+@router.get("/companies/counts", response_model=CompanyCounts)
+def get_company_counts(
+    session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
+    upload_id: UUID | None = Query(default=None),
+) -> CompanyCounts:
+    from app.services.company_service import validate_campaign_upload_scope
+    validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
+
+    latest_classification = latest_classification_subquery()
+    latest_scrape = latest_scrape_subquery()
+    effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_classification.c.predicted_label)
+    decision_lower = func.lower(func.coalesce(effective_decision, ""))
+    scrape_status = latest_scrape.c.status
+
+    counts_stmt = (
+        select(  # type: ignore[call-overload]
+            func.count().label("total"),
+            func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("scrape_not_started"),
+            func.sum(case((scrape_status.in_(["created", "running"]), 1), else_=0)).label("scrape_in_progress"),
+            func.sum(case((scrape_status == "cancelled", 1), else_=0)).label("scrape_cancelled"),
+            func.sum(case((scrape_status == "site_unavailable", 1), else_=0)).label("scrape_permanent_fail"),
+            func.sum(case((scrape_status.in_(["failed", "step1_failed", "dead"]), 1), else_=0)).label("scrape_soft_fail"),
+            func.sum(case((decision_lower == "", 1), else_=0)).label("unlabeled"),
+            func.sum(case((decision_lower == "possible", 1), else_=0)).label("possible"),
+            func.sum(case((decision_lower == "unknown", 1), else_=0)).label("unknown"),
+            func.sum(case((decision_lower == "crap", 1), else_=0)).label("crap"),
+            func.sum(case((scrape_status == "completed", 1), else_=0)).label("scrape_done"),
+            func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("not_scraped"),
+            func.sum(case((scrape_status.in_(["failed", "step1_failed", "dead"]), 1), else_=0)).label("scrape_failed"),
+        )
+        .select_from(Company)
+        .join(Upload, col(Upload.id) == col(Company.upload_id))
+        .outerjoin(latest_classification, latest_classification.c.company_id == col(Company.id))
+        .outerjoin(latest_scrape, latest_scrape.c.normalized_url == col(Company.normalized_url))
+        .outerjoin(CompanyFeedback, col(CompanyFeedback.company_id) == col(Company.id))
+        .where(col(Upload.campaign_id) == campaign_id)
+    )
+    if upload_id is not None:
+        counts_stmt = counts_stmt.where(col(Company.upload_id) == upload_id)
+    row = session.exec(counts_stmt).one()  # type: ignore[call-overload]
+
+    stage_stmt = (
+        select(  # type: ignore[call-overload]
+            func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.UPLOADED, 1), else_=0)).label("uploaded"),
+            func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.SCRAPED, 1), else_=0)).label("scraped"),
+            func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.CLASSIFIED, 1), else_=0)).label("classified"),
+            func.sum(case((col(Company.pipeline_stage) == CompanyPipelineStage.CONTACT_READY, 1), else_=0)).label("contact_ready"),
+        )
+        .select_from(Company)
+        .join(Upload, col(Upload.id) == col(Company.upload_id))
+        .where(col(Upload.campaign_id) == campaign_id)
+    )
+    if upload_id is not None:
+        stage_stmt = stage_stmt.where(col(Company.upload_id) == upload_id)
+    stage_row = session.exec(stage_stmt).one()
+
+    return CompanyCounts(
+        total=row[0] or 0,
+        scrape_not_started=row[1] or 0,
+        scrape_in_progress=row[2] or 0,
+        scrape_cancelled=row[3] or 0,
+        scrape_permanent_fail=row[4] or 0,
+        scrape_soft_fail=row[5] or 0,
+        uploaded=stage_row[0] or 0,
+        scraped=stage_row[1] or 0,
+        classified=stage_row[2] or 0,
+        contact_ready=stage_row[3] or 0,
+        unlabeled=row[6] or 0,
+        possible=row[7] or 0,
+        unknown=row[8] or 0,
+        crap=row[9] or 0,
+        scrape_done=row[10] or 0,
+        scrape_failed=row[12] or 0,
+        not_scraped=row[11] or 0,
     )
