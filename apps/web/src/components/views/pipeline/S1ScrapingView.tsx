@@ -4,7 +4,7 @@ import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
-import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
+import { PipelineStageCompanyTableRow } from './PipelineStageCompanyTableRow'
 
 interface S1ScrapingViewProps {
   companies: CompanyList | null
@@ -302,34 +302,15 @@ export function S1ScrapingView({
               </tr>
             )}
             {visibleCompanies.map((c) => (
-              <tr
+              <PipelineStageCompanyTableRow
                 key={c.id}
-                className="border-b border-(--oc-border) last:border-0 transition"
-                style={selectedSet.has(c.id) ? { backgroundColor: 'var(--s1-bg)' } : {}}
+                company={c}
+                selected={selectedSet.has(c.id)}
+                checkboxDisabled={isLoading}
+                onToggle={() => onToggleRow(c.id)}
+                stageAccentVar="--s1"
+                stageBgVar="--s1-bg"
               >
-                <td className="p-3">
-                  <input
-                    type="checkbox"
-                    disabled={isLoading}
-                    checked={selectedSet.has(c.id)}
-                    onChange={() => onToggleRow(c.id)}
-                    className="cursor-pointer disabled:cursor-not-allowed"
-                  />
-                </td>
-                <td className="p-3">
-                  <a
-                    href={c.normalized_url || c.raw_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-[12px] font-medium hover:underline"
-                    style={{ color: 'var(--s1)' }}
-                  >
-                    {c.domain}
-                  </a>
-                </td>
-                <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
-                  <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
-                </td>
                 <td className="p-3">
                   {c.latest_scrape_status ? (
                     <Badge className={scrapeBadgeClass(c.latest_scrape_status)}>
@@ -364,7 +345,7 @@ export function S1ScrapingView({
                     )}
                   </div>
                 </td>
-              </tr>
+              </PipelineStageCompanyTableRow>
             ))}
           </tbody>
         </table>

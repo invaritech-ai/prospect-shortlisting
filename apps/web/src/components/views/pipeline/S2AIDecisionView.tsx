@@ -8,7 +8,7 @@ import { decisionBgClass } from '../../ui/badgeUtils'
 import { SortableHeader } from '../../ui/SortableHeader'
 import { Pager } from '../../ui/Pager'
 import { QuickLabelPicker } from '../../ui/QuickLabelPicker'
-import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
+import { PipelineStageCompanyTableRow } from './PipelineStageCompanyTableRow'
 
 interface S2AIDecisionViewProps {
   companies: CompanyList | null
@@ -298,34 +298,15 @@ export function S2AIDecisionView({
               const isSavingManualLabel = !!manualLabelActionState[c.id]
 
               return (
-              <tr
+              <PipelineStageCompanyTableRow
                 key={c.id}
-                className="border-b border-(--oc-border) last:border-0 transition"
-                style={selectedSet.has(c.id) ? { backgroundColor: 'var(--s2-bg)' } : {}}
+                company={c}
+                selected={selectedSet.has(c.id)}
+                checkboxDisabled={isLoading}
+                onToggle={() => onToggleRow(c.id)}
+                stageAccentVar="--s2"
+                stageBgVar="--s2-bg"
               >
-                <td className="p-3">
-                  <input
-                    type="checkbox"
-                    disabled={isLoading}
-                    checked={selectedSet.has(c.id)}
-                    onChange={() => onToggleRow(c.id)}
-                    className="cursor-pointer disabled:cursor-not-allowed"
-                  />
-                </td>
-                <td className="p-3">
-                  <a
-                    href={c.normalized_url || c.raw_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-[12px] font-medium hover:underline"
-                    style={{ color: 'var(--s2)' }}
-                  >
-                    {c.domain}
-                  </a>
-                </td>
-                <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
-                  <RelativeTimeLabel timestamp={c.last_activity} prefix="" />
-                </td>
                 <td className="p-3">
                   <div className="flex items-center gap-2">
                     {decisionDisplay.badgeLabel ? (
@@ -376,7 +357,7 @@ export function S2AIDecisionView({
                     )}
                   </div>
                 </td>
-              </tr>
+              </PipelineStageCompanyTableRow>
               )
             })}
           </tbody>

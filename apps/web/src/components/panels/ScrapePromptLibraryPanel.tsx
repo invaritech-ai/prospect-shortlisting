@@ -1,10 +1,16 @@
-import { useState } from 'react'
 import type { ScrapePromptRead, ScrapeRules } from '../../lib/types'
 import { parseUTC } from '../../lib/api'
 import { Drawer } from '../ui/Drawer'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
-import { Skeleton } from '../ui/Skeleton'
+import {
+  DeleteConfirmButtonGroup,
+  PromptEditorFieldLabel,
+  PromptLibraryAsideEmpty,
+  PromptLibraryAsideSkeleton,
+  PromptLibraryFormError,
+  promptListCardClassNames,
+} from './promptLibraryShared'
 import { IconPlus, IconRefresh } from '../ui/icons'
 
 interface ScrapePromptLibraryPanelProps {
@@ -62,17 +68,10 @@ function ScrapePromptListItem({
   onDelete: () => void
   onActivate: () => void
 }) {
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const isSystemDefault = prompt.is_system_default
 
   return (
-    <div
-      className={`rounded-2xl border p-3 transition ${
-        isEditing
-          ? 'border-[var(--oc-accent)] bg-[var(--oc-accent-soft)]/40'
-          : 'border-[var(--oc-border)] bg-[var(--oc-surface)]'
-      }`}
-    >
+    <div className={promptListCardClassNames(isEditing)}>
       <button type="button" onClick={onSelect} className="block w-full text-left">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -109,38 +108,13 @@ function ScrapePromptListItem({
           >
             Activate
           </button>
-          {!prompt.is_system_default && (
-            <>
-              {confirmDelete ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => { setConfirmDelete(false); onDelete() }}
-                    disabled={isDeleting}
-                    className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
-                  >
-                    {isDeleting ? '…' : 'Confirm'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDelete(false)}
-                    className="rounded-lg border border-[var(--oc-border)] bg-white px-2.5 py-1 text-[11px] text-[var(--oc-muted)] transition hover:border-[var(--oc-accent)]"
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(true)}
-                  disabled={isSaving || isDeleting}
-                  className="rounded-lg border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-600 transition hover:border-rose-400 hover:bg-rose-50 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              )}
-            </>
-          )}
+          {!prompt.is_system_default ? (
+            <DeleteConfirmButtonGroup
+              disabled={isSaving || isDeleting}
+              isDeleting={isDeleting}
+              onConfirmDelete={onDelete}
+            />
+          ) : null}
         </div>
       </div>
     </div>
@@ -214,17 +188,9 @@ export function ScrapePromptLibraryPanel({
             </Button>
           </div>
           {isPromptsLoading && prompts.length === 0 ? (
-            <div className="space-y-2">
-              <Skeleton className="h-20 w-full rounded-2xl" />
-              <Skeleton className="h-20 w-full rounded-2xl" />
-              <Skeleton className="h-20 w-full rounded-2xl" />
-            </div>
+            <PromptLibraryAsideSkeleton />
           ) : prompts.length === 0 ? (
-            <div className="rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4">
-              <p className="text-sm text-[var(--oc-muted)]">
-                No scrape prompts saved yet. Create one on the right.
-              </p>
-            </div>
+            <PromptLibraryAsideEmpty message="No scrape prompts saved yet. Create one on the right." />
           ) : (
             <div className="space-y-2">
               {prompts.map((prompt) => (
@@ -261,9 +227,7 @@ export function ScrapePromptLibraryPanel({
 
           <div className="space-y-4">
             <label className="block">
-              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
-                Name
-              </span>
+              <PromptEditorFieldLabel>Name</PromptEditorFieldLabel>
               <input
                 type="text"
                 value={promptName}
@@ -275,9 +239,7 @@ export function ScrapePromptLibraryPanel({
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
-                Intent text
-              </span>
+              <PromptEditorFieldLabel>Intent text</PromptEditorFieldLabel>
               <textarea
                 value={promptIntentText}
                 onChange={(e) => onSetPromptIntentText(e.target.value)}
@@ -289,9 +251,7 @@ export function ScrapePromptLibraryPanel({
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
-                Compiled prompt (read-only)
-              </span>
+              <PromptEditorFieldLabel>Compiled prompt (read-only)</PromptEditorFieldLabel>
               <textarea
                 value={editingPrompt?.compiled_prompt_text ?? 'No compiled prompt available yet.'}
                 readOnly
@@ -301,9 +261,7 @@ export function ScrapePromptLibraryPanel({
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
-                Structured rules (read-only)
-              </span>
+              <PromptEditorFieldLabel>Structured rules (read-only)</PromptEditorFieldLabel>
               <pre className="w-full overflow-x-auto whitespace-pre-wrap wrap-break-word rounded-2xl border border-(--oc-border) bg-(--oc-surface) px-4 py-3 font-mono text-xs leading-6 text-(--oc-muted)">
                 {formatScrapeRulesPreview(editingPrompt?.scrape_rules_structured)}
               </pre>
@@ -326,11 +284,7 @@ export function ScrapePromptLibraryPanel({
             )}
           </div>
 
-          {promptError && (
-            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3">
-              <p className="text-sm font-medium text-rose-800">{promptError}</p>
-            </div>
-          )}
+          {promptError ? <PromptLibraryFormError message={promptError} /> : null}
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <Button variant="primary" size="md" onClick={onSaveAsNew} loading={isPromptSaving}>
