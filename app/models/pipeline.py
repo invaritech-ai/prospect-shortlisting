@@ -82,11 +82,6 @@ class CompanyPipelineStage(StrEnum):
     CONTACT_READY = "contact_ready"
 
 
-class ContactPipelineStage(StrEnum):
-    FETCHED = "fetched"
-    VERIFIED = "verified"
-    CAMPAIGN_READY = "campaign_ready"
-
 
 class ContactVerifyJobState(StrEnum):
     QUEUED = "queued"
@@ -644,23 +639,18 @@ class ContactVerifyJob(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
-class DiscoveredContact(SQLModel, table=True):
-    """Provider-native contact candidate surfaced for reveal.
+class Contact(SQLModel, table=True):
+    """Unified contact record: fetch → title match → email reveal → verification."""
 
-    ``provider_person_id`` is opaque, provider-native, and must remain non-empty.
-    Do not synthesize fallback identities for this field.
-    """
-
-    __tablename__ = "discovered_contacts"
+    __tablename__ = "contacts"
     __table_args__ = (
-        UniqueConstraint("company_id", "provider", "provider_person_id", name="uq_discovered_contacts_provider_key"),
+        UniqueConstraint("company_id", "provider", "provider_person_id", name="uq_contacts_provider_key"),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     contact_fetch_job_id: UUID | None = Field(default=None, foreign_key="contact_fetch_jobs.id", index=True)
     provider: str = Field(max_length=32, index=True)
-    # Opaque provider-native identity. Never derive a synthetic fallback value.
     provider_person_id: str = Field(max_length=255, index=True)
     first_name: str = Field(default="", max_length=255)
     last_name: str = Field(default="", max_length=255)
@@ -670,83 +660,34 @@ class DiscoveredContact(SQLModel, table=True):
     source_url: str | None = Field(default=None, max_length=2048)
     provider_has_email: bool | None = Field(default=None, index=True)
     provider_metadata_json: dict[str, Any] | None = Field(
-        default=None,
-        sa_column=Column(JSON, nullable=True),
+        default=None, sa_column=Column(JSON, nullable=True)
     )
     raw_payload_json: dict[str, Any] | None = Field(
-        default=None,
-        sa_column=Column(JSON, nullable=True),
+        default=None, sa_column=Column(JSON, nullable=True)
     )
     is_active: bool = Field(default=True, index=True)
     backfilled: bool = Field(default=False, index=True)
-    discovered_at: datetime = Field(default_factory=utcnow, index=True)
-    last_seen_at: datetime = Field(default_factory=utcnow, index=True)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
 
-
-class ProspectContact(SQLModel, table=True):
-    """Contact record fetched from a contact provider for a company."""
-
-    __tablename__ = "prospect_contacts"
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    company_id: UUID = Field(foreign_key="companies.id", index=True)
-    contact_fetch_job_id: UUID = Field(foreign_key="contact_fetch_jobs.id", index=True)
-    source: str = Field(default="snov", max_length=32)
-
-    first_name: str = Field(max_length=255)
-    last_name: str = Field(max_length=255)
-    title: str | None = Field(default=None, max_length=512)
-    title_match: bool = Field(default=False, index=True)
-    linkedin_url: str | None = Field(default=None, max_length=2048)
-    pipeline_stage: ContactPipelineStage = Field(
-        default=ContactPipelineStage.FETCHED,
-        sa_column=Column(Text, nullable=False, index=True),
-    )
-
+    # Email reveal
     email: str | None = Field(default=None, max_length=512, index=True)
+    email_provider: str | None = Field(default=None, max_length=32)
+    email_confidence: float | None = Field(default=None)
     provider_email_status: str | None = Field(default=None, max_length=32, index=True)
-    # unverified | valid | invalid | catch_all | unknown | spamtrap | abuse | do_not_mail
-    verification_status: str = Field(default="unverified", max_length=32, index=True)
-    snov_confidence: float | None = Field(default=None)
+    reveal_raw_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
-    snov_prospect_raw: dict[str, Any] | None = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
-    )
-    apollo_prospect_raw: dict[str, Any] | None = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
-    )
-    snov_email_raw: dict[str, Any] | None = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
-    )
+    # Verification
+    verification_status: str = Field(default="unverified", max_length=32, index=True)
     zerobounce_raw: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow)
+    # Pipeline stage: fetched | email_revealed | campaign_ready
+    pipeline_stage: str = Field(default="fetched", max_length=32, index=True)
 
-
-class ProspectContactEmail(SQLModel, table=True):
-    """Normalized email records attached to a prospect contact."""
-
-    __tablename__ = "prospect_contact_emails"
-    __table_args__ = (
-        UniqueConstraint(
-            "contact_id",
-            "email_normalized",
-            name="uq_prospect_contact_emails_contact_email",
-        ),
-    )
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    contact_id: UUID = Field(foreign_key="prospect_contacts.id", index=True)
-    source: str = Field(default="snov", max_length=32, index=True)
-    email: str = Field(max_length=512)
-    email_normalized: str = Field(max_length=512, index=True)
-    provider_email_status: str | None = Field(default=None, max_length=32, index=True)
-    is_primary: bool = Field(default=False, index=True)
+    discovered_at: datetime = Field(default_factory=utcnow, index=True)
+    last_seen_at: datetime = Field(default_factory=utcnow, index=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
