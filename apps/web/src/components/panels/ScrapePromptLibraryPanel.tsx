@@ -5,13 +5,15 @@ import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import {
   DeleteConfirmButtonGroup,
+  PromptEnabledField,
   PromptEditorFieldLabel,
-  PromptLibraryAsideEmpty,
-  PromptLibraryAsideSkeleton,
+  PromptEditorHeader,
+  PromptLibraryAside,
   PromptLibraryFormError,
+  PromptLibraryRefreshButton,
+  PromptListItemCard,
+  PromptNameField,
 } from './promptLibraryShared'
-import { promptListCardClassNames } from './promptLibraryStyles'
-import { IconPlus, IconRefresh } from '../ui/icons'
 
 interface ScrapePromptLibraryPanelProps {
   isOpen: boolean
@@ -71,18 +73,13 @@ function ScrapePromptListItem({
   const isSystemDefault = prompt.is_system_default
 
   return (
-    <div className={promptListCardClassNames(isEditing)}>
-      <button type="button" onClick={onSelect} className="block w-full text-left">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-bold text-[var(--oc-accent-ink)]">{prompt.name}</p>
-            <p className="mt-0.5 text-[11px] text-[var(--oc-muted)]">
-              Updated {parseUTC(prompt.updated_at).toLocaleString()}
-            </p>
-          </div>
-          {isSelected && <Badge variant="info">Selected</Badge>}
-        </div>
-      </button>
+    <PromptListItemCard
+      isEditing={isEditing}
+      name={prompt.name}
+      meta={<>Updated {parseUTC(prompt.updated_at).toLocaleString()}</>}
+      selectedLabel={isSelected ? 'Selected' : null}
+      onSelect={onSelect}
+    >
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {prompt.id === activePromptId && <Badge variant="success">Active</Badge>}
         <Badge variant={prompt.enabled ? 'success' : 'fail'}>
@@ -117,7 +114,7 @@ function ScrapePromptListItem({
           ) : null}
         </div>
       </div>
-    </div>
+    </PromptListItemCard>
   )
 }
 
@@ -147,11 +144,7 @@ export function ScrapePromptLibraryPanel({
   onSetPromptEnabled,
   onRefresh,
 }: ScrapePromptLibraryPanelProps) {
-  const headerActions = (
-    <Button variant="secondary" size="xs" onClick={onRefresh} loading={isPromptsLoading}>
-      <IconRefresh size={14} />
-    </Button>
-  )
+  const headerActions = <PromptLibraryRefreshButton isLoading={isPromptsLoading} onRefresh={onRefresh} />
 
   const selectedPrompt = prompts.find((p) => p.id === selectedPromptId) ?? null
   const editingPrompt = prompts.find((p) => p.id === editingPromptId) ?? null
@@ -179,64 +172,45 @@ export function ScrapePromptLibraryPanel({
       headerActions={headerActions}
     >
       <div className="flex h-full flex-col xl:flex-row">
-        <aside className="flex-shrink-0 border-b border-[var(--oc-border)] p-4 xl:w-[300px] xl:border-b-0 xl:border-r xl:overflow-y-auto">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-bold">Saved scrape prompts</h3>
-            <Button variant="secondary" size="xs" onClick={onNewPrompt}>
-              <IconPlus size={13} />
-              New
-            </Button>
-          </div>
-          {isPromptsLoading && prompts.length === 0 ? (
-            <PromptLibraryAsideSkeleton />
-          ) : prompts.length === 0 ? (
-            <PromptLibraryAsideEmpty message="No scrape prompts saved yet. Create one on the right." />
-          ) : (
-            <div className="space-y-2">
-              {prompts.map((prompt) => (
-                <ScrapePromptListItem
-                  key={prompt.id}
-                  prompt={prompt}
-                  isEditing={editingPromptId === prompt.id}
-                  isSelected={selectedPromptId === prompt.id}
-                  isSaving={isPromptSaving}
-                  isDeleting={isPromptDeleting}
-                  activePromptId={activePromptId}
-                  onSelect={() => onSelectPrompt(prompt)}
-                  onToggleEnabled={() => onTogglePromptEnabled(prompt)}
-                  onDelete={() => onDeletePrompt(prompt)}
-                  onActivate={() => onActivatePrompt(prompt)}
-                />
-              ))}
-            </div>
+        <PromptLibraryAside
+          title="Saved scrape prompts"
+          widthClassName="xl:w-[300px]"
+          emptyMessage="No scrape prompts saved yet. Create one on the right."
+          isLoading={isPromptsLoading}
+          items={prompts}
+          getItemKey={(prompt) => prompt.id}
+          onNewPrompt={onNewPrompt}
+          renderItem={(prompt) => (
+            <ScrapePromptListItem
+              prompt={prompt}
+              isEditing={editingPromptId === prompt.id}
+              isSelected={selectedPromptId === prompt.id}
+              isSaving={isPromptSaving}
+              isDeleting={isPromptDeleting}
+              activePromptId={activePromptId}
+              onSelect={() => onSelectPrompt(prompt)}
+              onToggleEnabled={() => onTogglePromptEnabled(prompt)}
+              onDelete={() => onDeletePrompt(prompt)}
+              onActivate={() => onActivatePrompt(prompt)}
+            />
           )}
-        </aside>
+        />
 
         <section className="flex-1 overflow-y-auto p-5">
-          <div className="mb-5 flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-base font-bold tracking-tight">
-                {editingPromptId ? 'Edit scrape prompt' : 'New scrape prompt'}
-              </h3>
-              <p className="mt-0.5 text-xs text-[var(--oc-muted)]">
-                Edit intent in plain English; compiled text and structured rules are generated.
-              </p>
-            </div>
-            <span className="oc-kbd">{editingPromptId ? 'editing' : 'new draft'}</span>
-          </div>
+          <PromptEditorHeader
+            isEditing={Boolean(editingPromptId)}
+            editingTitle="Edit scrape prompt"
+            newTitle="New scrape prompt"
+            description="Edit intent in plain English; compiled text and structured rules are generated."
+          />
 
           <div className="space-y-4">
-            <label className="block">
-              <PromptEditorFieldLabel>Name</PromptEditorFieldLabel>
-              <input
-                type="text"
-                value={promptName}
-                onChange={(e) => onSetPromptName(e.target.value)}
-                readOnly={isEditingSystemDefault}
-                className="w-full rounded-xl border border-[var(--oc-border)] bg-white px-4 py-2.5 text-sm text-[var(--oc-text)] outline-none transition focus:border-[var(--oc-accent)] focus:ring-2 focus:ring-[var(--oc-accent)]/10"
-                placeholder="S1 discovery prompt v2"
-              />
-            </label>
+            <PromptNameField
+              value={promptName}
+              onChange={onSetPromptName}
+              placeholder="S1 discovery prompt v2"
+              readOnly={isEditingSystemDefault}
+            />
 
             <label className="block">
               <PromptEditorFieldLabel>Intent text</PromptEditorFieldLabel>
@@ -267,16 +241,11 @@ export function ScrapePromptLibraryPanel({
               </pre>
             </label>
 
-            <label className="flex cursor-pointer items-center gap-2.5">
-              <input
-                type="checkbox"
-                checked={promptEnabled}
-                onChange={(e) => onSetPromptEnabled(e.target.checked)}
-                disabled={isEditingSystemDefault}
-                className="h-4 w-4 rounded border-[var(--oc-border)] accent-[var(--oc-accent)]"
-              />
-              <span className="text-sm font-semibold text-[var(--oc-text)]">Enabled</span>
-            </label>
+            <PromptEnabledField
+              checked={promptEnabled}
+              onChange={onSetPromptEnabled}
+              disabled={isEditingSystemDefault}
+            />
             {isEditingSystemDefault && (
               <p className="text-xs text-[var(--oc-muted)]">
                 System default scrape prompt is read-only.
