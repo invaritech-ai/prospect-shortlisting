@@ -498,3 +498,35 @@ def test_list_companies_uses_latest_contact_fetch_activity_timestamp(sqlite_sess
         sqlite_session.exec(delete(Company).where(col(Company.id) == company.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()
+
+
+def test_list_companies_sort_scrape_updated_at_desc(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Scrape Sort"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "scrape-sort.csv", campaign_id=campaign.id)
+    c_old = _seed_company(sqlite_session, upload_id=upload.id, domain="aa.example")
+    c_new = _seed_company(sqlite_session, upload_id=upload.id, domain="zz.example")
+    try:
+        j_old = _seed_scrape_job(sqlite_session, company=c_old, status="completed", terminal_state=True)
+        j_old.updated_at = utcnow() - timedelta(hours=3)
+        j_new = _seed_scrape_job(sqlite_session, company=c_new, status="completed", terminal_state=True)
+        j_new.updated_at = utcnow()
+        sqlite_session.commit()
+
+        response = list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            include_total=True,
+            limit=25,
+            offset=0,
+            sort_by="scrape_updated_at",
+            sort_dir="desc",
+        )
+
+        assert response.total == 2
+        assert response.items[0].domain == "zz.example"
+        assert response.items[1].domain == "aa.example"
+    finally:
+        sqlite_session.exec(delete(ScrapeJob).where(col(ScrapeJob.normalized_url).in_([c_old.normalized_url, c_new.normalized_url])))
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()

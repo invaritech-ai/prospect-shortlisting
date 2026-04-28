@@ -11,7 +11,13 @@ from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
 from app.models import AiUsageEvent, AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, PipelineRun, ProspectContact, ScrapeJob, Upload
-from app.models.pipeline import AnalysisJobState, ContactFetchJobState, ContactVerifyJobState
+from app.models.pipeline import (
+    AnalysisJobState,
+    ContactFetchJobState,
+    ContactRevealBatch,
+    ContactRevealJob,
+    ContactVerifyJobState,
+)
 
 
 # A running scrape job that hasn't updated in > 35 min is considered stuck
@@ -42,6 +48,7 @@ class StatsResponse(BaseModel):
     scrape: PipelineStageStats
     analysis: PipelineStageStats
     contact_fetch: PipelineStageStats
+    contact_reveal: PipelineStageStats
     validation: PipelineStageStats
     costs: dict[str, object] | None = None
     as_of: datetime
@@ -435,6 +442,55 @@ def _contact_fetch_stats(session: Session, campaign_id: UUID, upload_id: UUID | 
     )
 
 
+def _contact_reveal_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
+    base = (
+        select(
+            func.count().label("total"),
+            func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.SUCCEEDED, 1))).label("completed"),
+            func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.FAILED, 1))).label("failed"),
+            func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.RUNNING, 1))).label("running"),
+            func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.QUEUED, 1))).label("queued"),
+            func.count(case((
+                col(ContactRevealJob.terminal_state).is_(False)
+                & (col(ContactRevealJob.state) == ContactFetchJobState.RUNNING)
+                & col(ContactRevealJob.lock_expires_at).is_not(None)
+                & (col(ContactRevealJob.lock_expires_at) < _utcnow()),
+                1,
+            ))).label("stuck_count"),
+        )
+        .select_from(ContactRevealJob)
+        .join(
+            ContactRevealBatch,
+            col(ContactRevealJob.contact_reveal_batch_id) == col(ContactRevealBatch.id),
+        )
+        .join(Company, col(Company.id) == col(ContactRevealJob.company_id))
+        .where(col(ContactRevealBatch.campaign_id) == campaign_id)
+    )
+    if upload_id:
+        base = base.where(col(Company.upload_id) == upload_id)
+    row = session.exec(base).one()
+    total = row.total or 0
+    completed = row.completed or 0
+    failed = row.failed or 0
+    running = row.running or 0
+    queued = row.queued or 0
+    stuck_count = row.stuck_count or 0
+    pct_done = (completed + failed) / total if total else 0.0
+    return PipelineStageStats(
+        total=total,
+        completed=completed,
+        failed=failed,
+        site_unavailable=0,
+        running=running,
+        queued=queued,
+        stuck_count=stuck_count,
+        pct_done=round(pct_done * 100, 1),
+        avg_job_sec=None,
+        eta_seconds=None,
+        eta_at=None,
+    )
+
+
 def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
     base_stmt = select(ContactVerifyJob)
     company_scope = select(Company.id).where(col(Company.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
@@ -617,6 +673,7 @@ def get_stats(
         scrape=_scrape_stats(session, campaign_id=campaign_id, upload_id=upload_id),
         analysis=_analysis_stats(session, campaign_id=campaign_id, upload_id=upload_id),
         contact_fetch=_contact_fetch_stats(session, campaign_id=campaign_id, upload_id=upload_id),
+        contact_reveal=_contact_reveal_stats(session, campaign_id=campaign_id, upload_id=upload_id),
         validation=_validation_stats(session, campaign_id=campaign_id, upload_id=upload_id),
         costs={
             "currency": "USD",

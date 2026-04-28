@@ -22,46 +22,49 @@ interface AppShellProps {
   children: ReactNode
 }
 
+function sliceQueueBusy(s: { running: number; queued: number; stuck_count?: number } | undefined): boolean {
+  if (!s) return false
+  return s.running > 0 || s.queued > 0 || (s.stuck_count ?? 0) > 0
+}
+
 function hasPipelineActivity(stats: StatsResponse): boolean {
   return (
-    stats.scrape.running > 0
-    || stats.scrape.queued > 0
-    || stats.analysis.running > 0
-    || stats.analysis.queued > 0
-    || (stats.contact_fetch?.running ?? 0) > 0
-    || (stats.contact_fetch?.queued ?? 0) > 0
-    || (stats.validation?.running ?? 0) > 0
-    || (stats.validation?.queued ?? 0) > 0
+    sliceQueueBusy(stats.scrape)
+    || sliceQueueBusy(stats.analysis)
+    || sliceQueueBusy(stats.contact_fetch)
+    || sliceQueueBusy(stats.contact_reveal)
+    || sliceQueueBusy(stats.validation)
   )
 }
 
-/** One-line summary for the desktop top bar (stays visible above scrolling content). */
+/** Per-stage queue rows for the desktop top bar (only busy stages). */
 function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
   if (!stats) {
     return <span className="truncate text-xs text-(--oc-muted)">Loading activity…</span>
   }
-  const parts: string[] = []
-  const { scrape, analysis, contact_fetch: cf, validation: v } = stats
-  if (scrape.running || scrape.queued) {
-    parts.push(`S1 ${scrape.running} running · ${scrape.queued} queued`)
-  }
-  if (analysis.running || analysis.queued) {
-    parts.push(`S2 ${analysis.running} running · ${analysis.queued} queued`)
-  }
-  if ((cf?.running ?? 0) > 0 || (cf?.queued ?? 0) > 0) {
-    parts.push(`S3 ${cf?.running ?? 0} running · ${cf?.queued ?? 0} queued`)
-  }
-  if ((v?.running ?? 0) > 0 || (v?.queued ?? 0) > 0) {
-    parts.push(`S4 ${v?.running ?? 0} running · ${v?.queued ?? 0} queued`)
-  }
-  if (parts.length === 0) {
+  const { scrape, analysis, contact_fetch: cf, contact_reveal: cr, validation: v } = stats
+  const rows: { key: string; label: string; color: string; s: typeof scrape }[] = []
+  if (sliceQueueBusy(scrape)) rows.push({ key: 's1', label: 'S1', color: 'var(--s1)', s: scrape })
+  if (sliceQueueBusy(analysis)) rows.push({ key: 's2', label: 'S2', color: 'var(--s2)', s: analysis })
+  if (sliceQueueBusy(cf)) rows.push({ key: 's3', label: 'S3', color: 'var(--s3)', s: cf! })
+  if (sliceQueueBusy(cr)) rows.push({ key: 's4', label: 'S4', color: 'var(--s4)', s: cr! })
+  if (sliceQueueBusy(v)) rows.push({ key: 's5', label: 'S5', color: 'var(--s5)', s: v! })
+  if (rows.length === 0) {
     return (
       <span className="truncate text-xs text-(--oc-muted)">
         Updated {new Date(stats.as_of).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </span>
     )
   }
-  return <span className="truncate text-xs font-medium text-(--oc-text)">{parts.join(' · ')}</span>
+  return (
+    <div className="flex max-h-16 min-w-0 flex-col gap-0.5 overflow-y-auto">
+      {rows.map((r) => (
+        <span key={r.key} className="truncate text-xs font-medium" style={{ color: r.color }}>
+          {r.label} {r.s.running} run · {r.s.queued} q{r.s.stuck_count ? ` · ${r.s.stuck_count} stuck` : ''}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {

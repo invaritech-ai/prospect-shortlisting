@@ -191,6 +191,7 @@ function App() {
     authRequestsEnabled,
     setError,
     setNotice,
+    stats,
   )
   const refreshPipelineView = pipeline.refreshPipelineView
   const cancelStaleSelectAllRequests = pipeline.cancelStaleSelectAllRequests

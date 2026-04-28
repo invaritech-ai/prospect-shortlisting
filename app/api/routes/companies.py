@@ -383,6 +383,9 @@ _COMPANY_SORT_FIELDS = frozenset(
         "scrape_status",
         "contact_count",
         "discovered_contact_count",
+        "scrape_updated_at",
+        "analysis_updated_at",
+        "contact_fetch_updated_at",
     }
 )
 
@@ -544,6 +547,9 @@ def list_companies(
         "scrape_status": latest_scrape.c.status,
         "contact_count": func.coalesce(contact_counts.c.contact_count, 0),
         "discovered_contact_count": func.coalesce(discovered_contact_counts.c.discovered_contact_count, 0),
+        "scrape_updated_at": func.coalesce(latest_scrape.c.scrape_updated_at, _ACTIVITY_EPOCH),
+        "analysis_updated_at": func.coalesce(latest_analysis.c.analysis_updated_at, _ACTIVITY_EPOCH),
+        "contact_fetch_updated_at": func.coalesce(latest_contact_fetch.c.contact_fetch_updated_at, _ACTIVITY_EPOCH),
     }
     _primary = _sort_col_map[_sort_by]
     _primary_expr = _primary.desc() if _sort_dir == "desc" else _primary.asc()

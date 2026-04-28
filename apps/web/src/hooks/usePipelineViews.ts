@@ -12,6 +12,7 @@ import type {
   S4VerifFilter,
   ScrapeFilter,
   ScrapeSubFilter,
+  StatsResponse,
 } from '../lib/types'
 import {
   consumeCompanyListLegacySortFallback,
@@ -38,6 +39,11 @@ import { getDefaultPipelineScrapeSubFilter } from '../lib/pipelineDefaults'
 import { getResumeStageForCompany, scrapeSubToFilter, verifFilterToParams } from '../lib/pipelineMappings'
 import { getPipelineCompanyQuery } from '../lib/pipelineQuery'
 import { parseApiError } from '../lib/utils'
+import {
+  defaultCompanySortForStageView,
+  defaultDiscoveredSort,
+  defaultValidationContactSort,
+} from '../lib/stageViewSort'
 
 /** New sort on these fields defaults to descending (most recent first). */
 const SORT_DESC_FIRST = new Set([
@@ -47,6 +53,9 @@ const SORT_DESC_FIRST = new Set([
   'last_seen_at',
   'title_match',
   'provider_has_email',
+  'scrape_updated_at',
+  'analysis_updated_at',
+  'contact_fetch_updated_at',
 ])
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const
@@ -183,7 +192,13 @@ export function usePipelineViews(
   requestsEnabled: boolean,
   setError: (e: string) => void,
   setNotice: (n: string) => void,
+  stats: StatsResponse | null,
 ): UsePipelineViewsResult {
+  const statsRef = useRef(stats)
+  statsRef.current = stats
+  const pipelineSortUserOverrideRef = useRef(false)
+  const s4RevealSortUserOverrideRef = useRef(false)
+  const s5ContactSortUserOverrideRef = useRef(false)
   // S1–S3 state
   const [pipelineCompanies, setPipelineCompanies] = useState<CompanyList | null>(null)
   const [pipelineLetterCounts, setPipelineLetterCounts] = useState<Record<string, number>>({})
@@ -528,11 +543,15 @@ export function usePipelineViews(
   // ── Load on view change ────────────────────────────────────────────────────
   useEffect(() => {
     cancelStaleSelectAllRequests()
+    pipelineSortUserOverrideRef.current = false
+    s4RevealSortUserOverrideRef.current = false
+    s5ContactSortUserOverrideRef.current = false
     const defaultDecisionFilter: DecisionFilter = activeView === 's3-contacts' ? 'labeled' : 'all'
     const query = getPipelineCompanyQuery(activeView, defaultDecisionFilter)
     if (query !== null) {
       const defaultScrapeSubFilter = getDefaultPipelineScrapeSubFilter(activeView)
       const defaultScrapeFilter = scrapeSubToFilter(defaultScrapeSubFilter)
+      const d = defaultCompanySortForStageView(activeView, statsRef.current)
       setPipelineSelectedIds([])
       skipNextPipelineLetterReloadRef.current = true
       setPipelineActiveLetters(new Set())
@@ -542,9 +561,19 @@ export function usePipelineViews(
       setPipelineScrapeSubFilter(defaultScrapeSubFilter)
       setPipelineOffset(0)
       setPipelinePageSize(DEFAULT_PAGE_SIZE)
-      setPipelineSortBy('last_activity')
-      setPipelineSortDir('desc')
-      void loadPipelineView(query.stageFilter, query.decisionFilter, defaultScrapeFilter, 'last_activity', 'desc', DEFAULT_PAGE_SIZE, 0, [], '')
+      setPipelineSortBy(d.sortBy)
+      setPipelineSortDir(d.sortDir)
+      void loadPipelineView(
+        query.stageFilter,
+        query.decisionFilter,
+        defaultScrapeFilter,
+        d.sortBy,
+        d.sortDir,
+        DEFAULT_PAGE_SIZE,
+        0,
+        [],
+        '',
+      )
     } else if (activeView === 'full-pipeline') {
       setFullPipelineSelectedIds([])
       setFullPipelineActiveLetter(null)
@@ -560,6 +589,9 @@ export function usePipelineViews(
       setS4DiscoveredSelectedIds([])
       setS4MatchFilter('all')
       setS4RevealOffset(0)
+      const dr = defaultDiscoveredSort(statsRef.current)
+      setS4RevealSortBy(dr.sortBy)
+      setS4RevealSortDir(dr.sortDir)
       void loadS4RevealViewRef.current()
     } else if (activeView === 's5-validation') {
       setS4SelectedContactIds([])
@@ -568,9 +600,10 @@ export function usePipelineViews(
       setS4VerifFilter('valid')
       setS4Offset(0)
       setS4PageSize(DEFAULT_PAGE_SIZE)
-      setS4SortBy('updated_at')
-      setS4SortDir('desc')
-      void loadS4View('updated_at', 'desc', 'valid', DEFAULT_PAGE_SIZE, 0, [])
+      const dv = defaultValidationContactSort(statsRef.current)
+      setS4SortBy(dv.sortBy)
+      setS4SortDir(dv.sortDir)
+      void loadS4View(dv.sortBy, dv.sortDir, 'valid', DEFAULT_PAGE_SIZE, 0, [])
     }
   }, [activeView, cancelStaleSelectAllRequests, loadPipelineView, loadFullPipelineView, loadS4View])
 
@@ -743,6 +776,7 @@ export function usePipelineViews(
 
   const onPipelineSort = useCallback(
     (field: string) => {
+      pipelineSortUserOverrideRef.current = true
       const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
       if (query === null) return
       const newDir: 'asc' | 'desc' =
@@ -761,6 +795,79 @@ export function usePipelineViews(
     },
     [activeView, pipelineDecisionFilter, pipelineScrapeSubFilter, pipelineSortBy, pipelineSortDir, pipelinePageSize, loadPipelineView, pipelineActiveLetters, pipelineSearch],
   )
+
+  /** When polling stats marks a stage "started", flip S1-S3 toward MRU sort unless user chose a header sort. */
+  useEffect(() => {
+    if (!requestsEnabled || !selectedCampaignId) return
+    if (!['s1-scraping', 's2-ai', 's3-contacts'].includes(activeView)) return
+    if (pipelineSortUserOverrideRef.current) return
+    const query = getPipelineCompanyQuery(activeView, pipelineDecisionFilter)
+    if (!query) return
+    const next = defaultCompanySortForStageView(activeView, stats)
+    if (next.sortBy === pipelineSortBy && next.sortDir === pipelineSortDir) return
+    setPipelineSortBy(next.sortBy)
+    setPipelineSortDir(next.sortDir)
+    setPipelineOffset(0)
+    const sf = scrapeSubToFilter(pipelineScrapeSubFilter)
+    void loadPipelineView(
+      query.stageFilter,
+      query.decisionFilter,
+      sf,
+      next.sortBy,
+      next.sortDir,
+      pipelinePageSize,
+      0,
+      [...pipelineActiveLetters],
+      pipelineSearch,
+    )
+  }, [
+    stats,
+    activeView,
+    requestsEnabled,
+    selectedCampaignId,
+    pipelineDecisionFilter,
+    pipelineScrapeSubFilter,
+    pipelinePageSize,
+    pipelineActiveLetters,
+    pipelineSearch,
+    loadPipelineView,
+    pipelineSortBy,
+    pipelineSortDir,
+  ])
+
+  /** Align S4 default sort when reveal queues start warming up. */
+  useEffect(() => {
+    if (!requestsEnabled || !selectedCampaignId || activeView !== 's4-reveal') return
+    if (s4RevealSortUserOverrideRef.current) return
+    const next = defaultDiscoveredSort(stats)
+    if (next.sortBy === s4RevealSortBy && next.sortDir === s4RevealSortDir) return
+    setS4RevealSortBy(next.sortBy)
+    setS4RevealSortDir(next.sortDir)
+    setS4RevealOffset(0)
+  }, [stats, activeView, requestsEnabled, selectedCampaignId, s4RevealSortBy, s4RevealSortDir])
+
+  /** Align S5 default sort when validation queues show activity. */
+  useEffect(() => {
+    if (!requestsEnabled || !selectedCampaignId || activeView !== 's5-validation') return
+    if (s5ContactSortUserOverrideRef.current) return
+    const next = defaultValidationContactSort(stats)
+    if (next.sortBy === s4SortBy && next.sortDir === s4SortDir) return
+    setS4SortBy(next.sortBy)
+    setS4SortDir(next.sortDir)
+    setS4Offset(0)
+    void loadS4View(next.sortBy, next.sortDir, s4VerifFilter, s4PageSize, 0, [...s4ActiveLetters])
+  }, [
+    stats,
+    activeView,
+    requestsEnabled,
+    selectedCampaignId,
+    s4SortBy,
+    s4SortDir,
+    s4VerifFilter,
+    s4PageSize,
+    s4ActiveLetters,
+    loadS4View,
+  ])
 
   const scrapeSelectedAsync = useCallback(async () => {
     if (!pipelineSelectedIds.length) return
@@ -1386,6 +1493,7 @@ export function usePipelineViews(
 
   const onS4Sort = useCallback(
     (field: string) => {
+      s5ContactSortUserOverrideRef.current = true
       const newDir: 'asc' | 'desc' =
         s4SortBy === field
           ? s4SortDir === 'asc'
@@ -1496,6 +1604,7 @@ export function usePipelineViews(
 
   const onS4RevealSort = useCallback((field: string) => {
     invalidateS4RevealSelectAllRequest()
+    s4RevealSortUserOverrideRef.current = true
     const newDir: 'asc' | 'desc' =
       s4RevealSortBy === field
         ? s4RevealSortDir === 'asc'
