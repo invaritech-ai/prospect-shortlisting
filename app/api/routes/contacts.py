@@ -413,7 +413,7 @@ def export_contacts_csv(
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerow(["domain", "first_name", "last_name", "title", "email",
-                     "verification_status", "fetch_provider", "email_provider"])
+                     "verification_status", "provider", "email_provider"])
     for row in rows:
         writer.writerow(list(row))
 
