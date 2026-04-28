@@ -9,8 +9,8 @@ import {
   PromptLibraryAsideEmpty,
   PromptLibraryAsideSkeleton,
   PromptLibraryFormError,
-  promptListCardClassNames,
 } from './promptLibraryShared'
+import { promptListCardClassNames } from './promptLibraryStyles'
 import { IconPlus, IconRefresh } from '../ui/icons'
 
 interface PromptLibraryPanelProps {

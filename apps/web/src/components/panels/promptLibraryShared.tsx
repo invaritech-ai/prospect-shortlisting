@@ -2,14 +2,6 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Skeleton } from '../ui/Skeleton'
 
-export function promptListCardClassNames(isEditing: boolean): string {
-  return `rounded-2xl border p-3 transition ${
-    isEditing
-      ? 'border-[var(--oc-accent)] bg-[var(--oc-accent-soft)]/40'
-      : 'border-[var(--oc-border)] bg-[var(--oc-surface)]'
-  }`
-}
-
 export function PromptEditorFieldLabel({ children }: { children: ReactNode }) {
   return (
     <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">

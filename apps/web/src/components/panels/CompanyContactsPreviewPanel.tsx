@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { CompanyListItem, ContactCompanySummary, MatchGapFilter, ProspectContactRead } from '../../lib/types'
 import { getContactsExportUrl, parseUTC } from '../../lib/api'
 import { summarizeCompanyContacts } from '../../lib/contactPreview'
@@ -29,11 +29,15 @@ export function CompanyContactsPreviewPanel({
   onMatchGapFilterChange,
   onClose,
 }: CompanyContactsPreviewPanelProps) {
-  const [matchedOnly, setMatchedOnly] = useState(true)
-
-  useEffect(() => {
-    if (company) setMatchedOnly(true)
-  }, [company?.id])
+  const currentCompanyId = company?.id ?? null
+  const [matchedOnlyState, setMatchedOnlyState] = useState<{ companyId: string | null; matchedOnly: boolean }>({
+    companyId: null,
+    matchedOnly: true,
+  })
+  const matchedOnly = matchedOnlyState.companyId === currentCompanyId ? matchedOnlyState.matchedOnly : true
+  const setMatchedOnlyForCurrentCompany = (value: boolean) => {
+    setMatchedOnlyState({ companyId: currentCompanyId, matchedOnly: value })
+  }
 
   const summaryStats = useMemo(() => summarizeCompanyContacts(contacts), [contacts])
   const fetchedCount = isLoading && contacts.length === 0 ? company?.contact_count ?? 0 : summaryStats.total
@@ -152,7 +156,7 @@ export function CompanyContactsPreviewPanel({
         <div className="flex items-center gap-2 border-b border-(--oc-border) px-4 py-2.5">
           <button
             type="button"
-            onClick={() => setMatchedOnly(true)}
+            onClick={() => setMatchedOnlyForCurrentCompany(true)}
             disabled={matchGapFilter !== 'all'}
             className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
               matchedOnly
@@ -164,7 +168,7 @@ export function CompanyContactsPreviewPanel({
           </button>
           <button
             type="button"
-            onClick={() => setMatchedOnly(false)}
+            onClick={() => setMatchedOnlyForCurrentCompany(false)}
             disabled={matchGapFilter !== 'all'}
             className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
               !matchedOnly
@@ -189,7 +193,7 @@ export function CompanyContactsPreviewPanel({
                   <p className="text-sm font-medium text-(--oc-muted)">No title-matched contacts</p>
                   <button
                     type="button"
-                    onClick={() => setMatchedOnly(false)}
+                    onClick={() => setMatchedOnlyForCurrentCompany(false)}
                     className="mt-1 text-xs text-(--oc-accent-ink) underline hover:no-underline"
                   >
                     Show all {summaryStats.total} contacts

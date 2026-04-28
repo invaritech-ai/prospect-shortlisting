@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import type {
   CompanyList,
   CompanyListItem,
@@ -21,6 +21,25 @@ import { PipelineStageCompanyTableRow } from './PipelineStageCompanyTableRow'
 type AuditMode = 'off' | 'no_matches' | 'matched'
 
 const AUDIT_PAGE_SIZE = 50
+
+type AuditState = {
+  data: ContactCompanyListResponse | null
+  isLoading: boolean
+  error: string
+}
+
+type AuditAction =
+  | { type: 'loading' }
+  | { type: 'success'; data: ContactCompanyListResponse }
+  | { type: 'error'; error: string }
+  | { type: 'settled' }
+
+function auditReducer(state: AuditState, action: AuditAction): AuditState {
+  if (action.type === 'loading') return { ...state, isLoading: true, error: '' }
+  if (action.type === 'success') return { ...state, data: action.data }
+  if (action.type === 'error') return { ...state, error: action.error }
+  return { ...state, isLoading: false }
+}
 
 /** Build the minimal `CompanyListItem` shape the contacts drawer needs. */
 function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
@@ -142,35 +161,32 @@ export function S3ContactFetchView({
   const [auditMode, setAuditMode] = useState<AuditMode>('off')
   const [auditSearch, setAuditSearch] = useState('')
   const [auditOffset, setAuditOffset] = useState(0)
-  const [auditData, setAuditData] = useState<ContactCompanyListResponse | null>(null)
-  const [isAuditLoading, setIsAuditLoading] = useState(false)
-  const [auditError, setAuditError] = useState('')
+  const [auditState, dispatchAudit] = useReducer(auditReducer, {
+    data: null,
+    isLoading: false,
+    error: '',
+  })
   const auditRequestRef = useRef(0)
-  const controlsDisabled = isLoading || isAuditLoading
 
-  useEffect(() => {
+  const setAuditSearchAndReset = (value: string) => {
+    setAuditSearch(value)
     setAuditOffset(0)
-  }, [auditMode, auditSearch])
+  }
+
+  const setAuditModeAndReset = (value: AuditMode) => {
+    if (value !== 'off') setAuditSearch(search)
+    setAuditMode(value)
+    setAuditOffset(0)
+  }
 
   useEffect(() => {
-    if (!campaignId) {
+    if (!campaignId || auditMode === 'off') {
       auditRequestRef.current += 1
-      setAuditData(null)
-      setAuditError('')
-      setIsAuditLoading(false)
-      return
-    }
-    if (auditMode === 'off') {
-      auditRequestRef.current += 1
-      setAuditData(null)
-      setAuditError('')
-      setIsAuditLoading(false)
       return
     }
     const reqId = auditRequestRef.current + 1
     auditRequestRef.current = reqId
-    setIsAuditLoading(true)
-    setAuditError('')
+    dispatchAudit({ type: 'loading' })
     const gapOptions = auditMode === 'no_matches'
       ? { matchGapFilter: 'contacts_no_match' as const }
       : { titleMatch: true }
@@ -184,21 +200,25 @@ export function S3ContactFetchView({
     })
       .then((response) => {
         if (auditRequestRef.current !== reqId) return
-        setAuditData(response)
+        dispatchAudit({ type: 'success', data: response })
       })
       .catch((err) => {
         if (auditRequestRef.current !== reqId) return
-        setAuditError(parseApiError(err))
+        dispatchAudit({ type: 'error', error: parseApiError(err) })
       })
       .finally(() => {
-        if (auditRequestRef.current === reqId) setIsAuditLoading(false)
+        if (auditRequestRef.current === reqId) dispatchAudit({ type: 'settled' })
       })
   }, [auditMode, auditOffset, campaignId, auditSearch])
 
   const isAuditActive = auditMode !== 'off'
-  const auditItems: ContactCompanySummary[] = auditData?.items ?? []
-  const auditTotal = auditData?.total ?? null
-  const auditHasMore = auditData?.has_more ?? false
+  const shouldShowAuditState = Boolean(campaignId && isAuditActive)
+  const effectiveIsAuditLoading = shouldShowAuditState && auditState.isLoading
+  const effectiveAuditError = shouldShowAuditState ? auditState.error : ''
+  const auditItems: ContactCompanySummary[] = shouldShowAuditState ? auditState.data?.items ?? [] : []
+  const auditTotal = shouldShowAuditState ? auditState.data?.total ?? null : null
+  const auditHasMore = shouldShowAuditState ? auditState.data?.has_more ?? false : false
+  const controlsDisabled = isLoading || effectiveIsAuditLoading
 
   const visibleCompanies = companies?.items ?? []
 
@@ -241,7 +261,7 @@ export function S3ContactFetchView({
             value={isAuditActive ? auditSearch : search}
             onChange={(e) => {
               const next = e.target.value
-              if (isAuditActive) setAuditSearch(next)
+              if (isAuditActive) setAuditSearchAndReset(next)
               else onSearchChange(next)
             }}
             disabled={controlsDisabled}
@@ -320,10 +340,7 @@ export function S3ContactFetchView({
           <button
             key={value}
             type="button"
-            onClick={() => {
-              if (value !== 'off') setAuditSearch(search)
-              setAuditMode(value)
-            }}
+            onClick={() => setAuditModeAndReset(value)}
             disabled={controlsDisabled}
             className="rounded-full border px-3 py-1 text-xs font-medium transition"
             style={
@@ -435,8 +452,8 @@ export function S3ContactFetchView({
 
       {isAuditActive ? (
         <div className="oc-panel overflow-hidden">
-          {auditError && (
-            <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{auditError}</div>
+          {effectiveAuditError && (
+            <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{effectiveAuditError}</div>
           )}
           <table className="w-full text-sm">
             <thead>
@@ -450,7 +467,7 @@ export function S3ContactFetchView({
               </tr>
             </thead>
             <tbody>
-              {isAuditLoading && Array.from({ length: 6 }).map((_, i) => (
+              {effectiveIsAuditLoading && Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i} className="border-b border-(--oc-border)">
                   <td className="p-3"><div className="oc-skeleton h-4 w-36 rounded" /></td>
                   <td className="p-3"><div className="oc-skeleton ml-auto h-4 w-8 rounded" /></td>
@@ -460,7 +477,7 @@ export function S3ContactFetchView({
                   <td className="p-3"><div className="oc-skeleton h-6 w-16 rounded-lg" /></td>
                 </tr>
               ))}
-              {!isAuditLoading && auditItems.length === 0 && !auditError && (
+              {!effectiveIsAuditLoading && auditItems.length === 0 && !effectiveAuditError && (
                 <tr>
                   <td colSpan={6} className="px-6 py-10 text-center">
                     <p className="text-sm font-semibold text-(--oc-text)">
@@ -476,7 +493,7 @@ export function S3ContactFetchView({
                   </td>
                 </tr>
               )}
-              {!isAuditLoading && auditItems.map((summary) => {
+              {!effectiveIsAuditLoading && auditItems.map((summary) => {
                 const matchRate = summary.total_count > 0
                   ? Math.round((summary.title_matched_count / summary.total_count) * 100)
                   : 0

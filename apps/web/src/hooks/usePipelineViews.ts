@@ -707,7 +707,6 @@ export function usePipelineViews(
       pipelineDecisionFilter,
       invalidatePipelineSelectAllRequest,
       pipelineScrapeSubFilter,
-      pipelineSearch,
       pipelineSortBy,
       pipelineSortDir,
       pipelinePageSize,
@@ -1077,6 +1076,7 @@ export function usePipelineViews(
     fullPipelineStatusFilter,
     fullPipelineSearch,
     loadS4View,
+    pipelineSearch,
     pipelineSortBy,
     pipelineSortDir,
     s4SortBy,
@@ -1121,6 +1121,8 @@ export function usePipelineViews(
     setS4SelectedContactIds([])
     setS4Offset(0)
     void loadS4View(s4SortBy, s4SortDir, s4VerifFilter, s4PageSize, 0, [...s4ActiveLetters])
+  // Only react to S4 letter changes (and view switches into S5).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, s4ActiveLetters, loadS4View])
 
   useEffect(() => {

@@ -340,7 +340,7 @@ function App() {
     } finally {
       setIsCampaignLoading(false)
     }
-  }, [authRequestsEnabled, selectedCampaignId])
+  }, [authRequestsEnabled, selectedCampaignId, setSelectedCampaignIdAndCancel])
 
   const loadCampaignCostSummary = useCallback(async (campaignId: string | null) => {
     if (!authRequestsEnabled || !campaignId) {
