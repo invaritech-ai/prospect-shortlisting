@@ -263,3 +263,33 @@ class ContactReplayDeferredRequest(BaseModel):
 class ContactReplayDeferredResult(BaseModel):
     replayed_attempt_count: int
     scheduled_job_count: int
+
+
+class ContactFetchRequest(BaseModel):
+    campaign_id: UUID
+    company_ids: list[UUID] | None = Field(default=None, min_length=1)
+
+
+class ContactFetchQueued(BaseModel):
+    queued_count: int
+    job_ids: list[UUID]
+
+
+class ContactRematchRequest(BaseModel):
+    campaign_id: UUID
+
+
+class ContactRematchResult(BaseModel):
+    campaign_id: UUID
+    matched_count: int
+    total_count: int
+
+
+class ContactRevealQueued(BaseModel):
+    queued_count: int
+    job_id: UUID
+
+
+class ContactVerifyQueued(BaseModel):
+    queued_count: int
+    job_id: UUID
