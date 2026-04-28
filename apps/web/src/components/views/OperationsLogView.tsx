@@ -160,6 +160,36 @@ function costTableHead() {
   )
 }
 
+function VirtualPaddingRow({ height, colSpan }: { height: number; colSpan: number }) {
+  if (height <= 0) return null
+  return (
+    <tr aria-hidden="true">
+      <td colSpan={colSpan} style={{ height: `${height}px` }} className="!p-0 !border-0" />
+    </tr>
+  )
+}
+
+function CostTableRow({
+  row,
+  formatUsd,
+}: {
+  row: CostLineItem
+  formatUsd: (value: number | string | null | undefined) => string
+}) {
+  return (
+    <tr>
+      <td className="font-semibold text-[var(--oc-accent-ink)]">{row.domain}</td>
+      <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.scrape)}</td>
+      <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.analysis)}</td>
+      <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.contact_fetch)}</td>
+      <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.validation)}</td>
+      <td className="text-right tabular-nums font-semibold text-[var(--oc-accent-ink)]">
+        {formatUsd(row.overall)}
+      </td>
+    </tr>
+  )
+}
+
 function DesktopCostTableBodySimple({
   items,
   formatUsd,
@@ -170,16 +200,7 @@ function DesktopCostTableBodySimple({
   return (
     <>
       {items.map((row) => (
-        <tr key={row.company_id}>
-          <td className="font-semibold text-[var(--oc-accent-ink)]">{row.domain}</td>
-          <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.scrape)}</td>
-          <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.analysis)}</td>
-          <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.contact_fetch)}</td>
-          <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.validation)}</td>
-          <td className="text-right tabular-nums font-semibold text-[var(--oc-accent-ink)]">
-            {formatUsd(row.overall)}
-          </td>
-        </tr>
+        <CostTableRow key={row.company_id} row={row} formatUsd={formatUsd} />
       ))}
     </>
   )
@@ -218,31 +239,12 @@ function DesktopCostTableBodyVirtual({
         </caption>
         {costTableHead()}
         <tbody>
-          {paddingTop > 0 ? (
-            <tr aria-hidden="true">
-              <td colSpan={6} style={{ height: `${paddingTop}px` }} className="!p-0 !border-0" />
-            </tr>
-          ) : null}
+          <VirtualPaddingRow height={paddingTop} colSpan={6} />
           {virtualRows.map((vr) => {
             const row = items[vr.index]
-            return (
-              <tr key={row.company_id}>
-                <td className="font-semibold text-[var(--oc-accent-ink)]">{row.domain}</td>
-                <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.scrape)}</td>
-                <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.analysis)}</td>
-                <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.contact_fetch)}</td>
-                <td className="text-right tabular-nums text-[var(--oc-muted)]">{formatUsd(row.validation)}</td>
-                <td className="text-right tabular-nums font-semibold text-[var(--oc-accent-ink)]">
-                  {formatUsd(row.overall)}
-                </td>
-              </tr>
-            )
+            return <CostTableRow key={row.company_id} row={row} formatUsd={formatUsd} />
           })}
-          {paddingBottom > 0 ? (
-            <tr aria-hidden="true">
-              <td colSpan={6} style={{ height: `${paddingBottom}px` }} className="!p-0 !border-0" />
-            </tr>
-          ) : null}
+          <VirtualPaddingRow height={paddingBottom} colSpan={6} />
         </tbody>
       </table>
     </div>
@@ -289,6 +291,19 @@ function DesktopEventsTableBodySimple({
         <DesktopEventRow key={event.id} event={event} onInspectEvent={onInspectEvent} />
       ))}
     </>
+  )
+}
+
+function eventTableHead() {
+  const headerClass = 'bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]'
+  return (
+    <thead className="sticky top-0 z-[2] bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)] shadow-[inset_0_-1px_0_var(--oc-border)] backdrop-blur-sm">
+      <tr>
+        {['Time', 'Pipeline', 'Status', 'Title', 'Details', 'Error', 'Inspect'].map((label) => (
+          <th key={label} scope="col" className={headerClass}>{label}</th>
+        ))}
+      </tr>
+    </thead>
   )
 }
 
@@ -350,31 +365,13 @@ function DesktopEventsTableBodyVirtual({
     >
       <table className="oc-compact-table min-w-[980px]">
         <caption className="sr-only">Campaign operations event log</caption>
-        <thead className="sticky top-0 z-[2] bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)] shadow-[inset_0_-1px_0_var(--oc-border)] backdrop-blur-sm">
-          <tr>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Time</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Pipeline</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Status</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Title</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Details</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Error</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Inspect</th>
-          </tr>
-        </thead>
+        {eventTableHead()}
         <tbody>
-          {paddingTop > 0 ? (
-            <tr aria-hidden="true">
-              <td colSpan={7} style={{ height: `${paddingTop}px` }} className="!p-0 !border-0" />
-            </tr>
-          ) : null}
+          <VirtualPaddingRow height={paddingTop} colSpan={7} />
           {virtualRows.map((vr) => (
             <DesktopEventRow key={events[vr.index].id} event={events[vr.index]} onInspectEvent={onInspectEvent} />
           ))}
-          {paddingBottom > 0 ? (
-            <tr aria-hidden="true">
-              <td colSpan={7} style={{ height: `${paddingBottom}px` }} className="!p-0 !border-0" />
-            </tr>
-          ) : null}
+          <VirtualPaddingRow height={paddingBottom} colSpan={7} />
         </tbody>
       </table>
     </div>
@@ -395,17 +392,7 @@ function DesktopEventsTable({
     <div className="max-h-[min(60vh,800px)] overflow-auto rounded-2xl border border-[var(--oc-border)] bg-white">
       <table className="oc-compact-table min-w-[980px]">
         <caption className="sr-only">Campaign operations event log</caption>
-        <thead className="sticky top-0 z-[2] bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)] shadow-[inset_0_-1px_0_var(--oc-border)] backdrop-blur-sm">
-          <tr>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Time</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Pipeline</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Status</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Title</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Details</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Error</th>
-            <th scope="col" className="bg-[color-mix(in_srgb,var(--oc-surface-strong)_96%,white)]">Inspect</th>
-          </tr>
-        </thead>
+        {eventTableHead()}
         <tbody>
           <DesktopEventsTableBodySimple events={events} onInspectEvent={onInspectEvent} />
         </tbody>
