@@ -9,38 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.schemas.base import UTCReadModel
 
 
-class ProspectContactRead(UTCReadModel):
-    id: UUID
-    company_id: UUID
-    contact_fetch_job_id: UUID
-    domain: str
-    source: str
-    first_name: str
-    last_name: str
-    title: str | None
-    title_match: bool
-    linkedin_url: str | None
-    email: str | None
-    emails: list[str] | None = None
-    pipeline_stage: str
-    provider_email_status: str | None
-    verification_status: str
-    snov_confidence: float | None
-    provider_has_email: bool | None = None
-    last_seen_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class ContactListResponse(BaseModel):
-    total: int
-    has_more: bool
-    limit: int
-    offset: int
-    items: list[ProspectContactRead]
-    letter_counts: dict[str, int] | None = None
-
-
 class ContactFetchResult(BaseModel):
     requested_count: int
     queued_count: int
@@ -136,14 +104,6 @@ class ContactCompanyListResponse(BaseModel):
     items: list[ContactCompanySummary]
 
 
-class ContactCountsResponse(BaseModel):
-    total: int
-    fetched: int
-    verified: int
-    campaign_ready: int
-    eligible_verify: int
-
-
 class ContactVerifyRequest(BaseModel):
     campaign_id: UUID
     contact_ids: list[UUID] | None = None
@@ -162,7 +122,7 @@ class ContactVerifyResult(BaseModel):
     idempotency_replayed: bool = False
 
 
-class DiscoveredContactRead(UTCReadModel):
+class ContactRead(UTCReadModel):
     id: UUID
     company_id: UUID
     contact_fetch_job_id: UUID | None = None
@@ -186,16 +146,16 @@ class DiscoveredContactRead(UTCReadModel):
     updated_at: datetime
 
 
-class DiscoveredContactListResponse(BaseModel):
+class ContactListResponse(BaseModel):
     total: int
     has_more: bool
     limit: int
     offset: int
-    items: list[DiscoveredContactRead]
+    items: list[ContactRead]
     letter_counts: dict[str, int] | None = None
 
 
-class DiscoveredContactCountsResponse(BaseModel):
+class ContactCountsResponse(BaseModel):
     total: int
     matched: int
     stale: int
@@ -203,7 +163,7 @@ class DiscoveredContactCountsResponse(BaseModel):
     already_revealed: int
 
 
-class DiscoveredContactIdsResult(BaseModel):
+class ContactIdsResult(BaseModel):
     ids: list[UUID]
     total: int
 

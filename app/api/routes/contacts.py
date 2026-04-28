@@ -9,7 +9,7 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
     ContactListResponse,
-    ProspectContactRead,
+    ContactRead,
     RematchResult,
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
@@ -165,7 +165,7 @@ def list_all_contacts(
     email_map = _contact_emails_map(session, contacts_only)
     for contact, domain in rows:
         items.append(
-            ProspectContactRead.model_validate(
+            ContactRead.model_validate(
                 {
                     **contact.__dict__,
                     "domain": domain,

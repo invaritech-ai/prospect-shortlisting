@@ -1,7 +1,6 @@
 """Context assembly: fetch scrape data and build LLM prompt context for analysis jobs."""
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID

@@ -13,7 +13,6 @@ from app.db.session import get_session
 from app.models.pipeline import (
     AnalysisJob,
     Company,
-    ContactFetchBatch,
     ContactRevealBatch,
     ContactRevealJob,
     ContactFetchJob,
