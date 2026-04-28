@@ -14,12 +14,11 @@ from app.models import (
     ClassificationResult,
     Company,
     CompanyFeedback,
+    Contact,
     ContactFetchJob,
     CrawlArtifact,
     CrawlJob,
-    DiscoveredContact,
     JobEvent,
-    ProspectContact,
     ScrapeJob,
     Upload,
 )
@@ -92,7 +91,6 @@ class CompanyQueryContext:
     latest_scrape: Any
     latest_analysis: Any
     contact_counts: Any
-    discovered_contact_counts: Any
     latest_contact_fetch: Any
     latest_decision_text: Any
     latest_confidence: Any
@@ -230,26 +228,15 @@ def _latest_analysis_subquery() -> Any:
 def _contact_count_subquery() -> Any:
     return (
         select(
-            col(ProspectContact.company_id).label("company_id"),
+            col(Contact.company_id).label("company_id"),
             func.count().label("contact_count"),
-        )
-        .group_by(col(ProspectContact.company_id))
-        .subquery()
-    )
-
-
-def _discovered_contact_count_subquery() -> Any:
-    return (
-        select(
-            col(DiscoveredContact.company_id).label("company_id"),
-            func.count().label("discovered_contact_count"),
             func.coalesce(
-                func.sum(case((col(DiscoveredContact.title_match).is_(True), 1), else_=0)),
+                func.sum(case((col(Contact.title_match).is_(True), 1), else_=0)),
                 0,
-            ).label("discovered_title_matched_count"),
+            ).label("title_matched_count"),
         )
-        .where(col(DiscoveredContact.is_active).is_(True))
-        .group_by(col(DiscoveredContact.company_id))
+        .where(col(Contact.is_active).is_(True))
+        .group_by(col(Contact.company_id))
         .subquery()
     )
 
@@ -376,7 +363,6 @@ def build_company_query_context() -> CompanyQueryContext:
     latest_scrape = latest_scrape_subquery()
     latest_analysis = _latest_analysis_subquery()
     contact_counts = _contact_count_subquery()
-    discovered_contact_counts = _discovered_contact_count_subquery()
     latest_contact_fetch = _latest_contact_fetch_subquery()
 
     latest_decision_text = latest_classification.c.predicted_label
@@ -402,7 +388,6 @@ def build_company_query_context() -> CompanyQueryContext:
         latest_scrape=latest_scrape,
         latest_analysis=latest_analysis,
         contact_counts=contact_counts,
-        discovered_contact_counts=discovered_contact_counts,
         latest_contact_fetch=latest_contact_fetch,
         latest_decision_text=latest_decision_text,
         latest_confidence=latest_confidence,
@@ -426,8 +411,7 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             col(CompanyFeedback.thumbs), col(CompanyFeedback.comment), col(CompanyFeedback.manual_label),
             ctx.latest_scrape.c.last_error_code,
             func.coalesce(ctx.contact_counts.c.contact_count, 0),
-            func.coalesce(ctx.discovered_contact_counts.c.discovered_contact_count, 0),
-            func.coalesce(ctx.discovered_contact_counts.c.discovered_title_matched_count, 0),
+            func.coalesce(ctx.contact_counts.c.title_matched_count, 0),
             ctx.latest_contact_fetch.c.state,
             ctx.last_activity.label("last_activity"),
         )
@@ -437,7 +421,6 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
         .outerjoin(ctx.latest_analysis, ctx.latest_analysis.c.company_id == col(Company.id))
         .outerjoin(CompanyFeedback, col(CompanyFeedback.company_id) == col(Company.id))
         .outerjoin(ctx.contact_counts, ctx.contact_counts.c.company_id == col(Company.id))
-        .outerjoin(ctx.discovered_contact_counts, ctx.discovered_contact_counts.c.company_id == col(Company.id))
         .outerjoin(ctx.latest_contact_fetch, ctx.latest_contact_fetch.c.company_id == col(Company.id))
         .where(col(Upload.campaign_id) == campaign_id)
     )
@@ -492,7 +475,7 @@ def apply_company_sort(stmt: Any, filters: CompanyFilters, ctx: CompanyQueryCont
         "confidence": ctx.latest_confidence,
         "scrape_status": ctx.latest_scrape.c.status,
         "contact_count": func.coalesce(ctx.contact_counts.c.contact_count, 0),
-        "discovered_contact_count": func.coalesce(ctx.discovered_contact_counts.c.discovered_contact_count, 0),
+        "discovered_contact_count": func.coalesce(ctx.contact_counts.c.contact_count, 0),
         "scrape_updated_at": func.coalesce(ctx.latest_scrape.c.scrape_updated_at, _ACTIVITY_EPOCH),
         "analysis_updated_at": func.coalesce(ctx.latest_analysis.c.analysis_updated_at, _ACTIVITY_EPOCH),
         "contact_fetch_updated_at": func.coalesce(ctx.latest_contact_fetch.c.contact_fetch_updated_at, _ACTIVITY_EPOCH),
@@ -562,8 +545,7 @@ def cascade_delete_companies(
         session.exec(delete(CrawlArtifact).where(col(CrawlArtifact.crawl_job_id).in_(crawl_job_ids)))
         session.exec(delete(CrawlJob).where(col(CrawlJob.id).in_(crawl_job_ids)))
 
-    session.exec(delete(DiscoveredContact).where(col(DiscoveredContact.company_id).in_(confirmed_ids)))
-    session.exec(delete(ProspectContact).where(col(ProspectContact.company_id).in_(confirmed_ids)))
+    session.exec(delete(Contact).where(col(Contact.company_id).in_(confirmed_ids)))
     session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id).in_(confirmed_ids)))
     session.exec(delete(CompanyFeedback).where(col(CompanyFeedback.company_id).in_(confirmed_ids)))
     session.exec(delete(Company).where(col(Company.id).in_(confirmed_ids)))

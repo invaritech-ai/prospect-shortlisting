@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.core.config import settings
-from app.models import Company, ContactFetchBatch, ContactFetchJob, ContactProviderAttempt, DiscoveredContact
+from app.models import Company, Contact, ContactFetchBatch, ContactFetchJob, ContactProviderAttempt
 from app.models.pipeline import ContactFetchBatchState, ContactFetchJobState, coerce_utc_datetime, utcnow
 from app.services.contact_runtime_service import ContactRuntimeService
 
@@ -305,9 +305,9 @@ class ContactQueueService:
         reused_stale = False
         for provider in requested_providers:
             last_seen = session.exec(
-                select(func.max(DiscoveredContact.last_seen_at)).where(
-                    col(DiscoveredContact.company_id) == company_id,
-                    col(DiscoveredContact.provider) == provider,
+                select(func.max(Contact.last_seen_at)).where(
+                    col(Contact.company_id) == company_id,
+                    col(Contact.provider) == provider,
                 )
             ).one()
             if last_seen is None:

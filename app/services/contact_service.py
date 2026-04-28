@@ -15,7 +15,7 @@ from app.models import (
     Company,
     ContactFetchJob,
     ContactProviderAttempt,
-    DiscoveredContact,
+    Contact,
     Upload,
 )
 from app.models.pipeline import (
@@ -39,7 +39,7 @@ from app.services.title_match_service import (
     compute_title_rule_stats,
     load_title_rules,
     match_title,
-    rematch_discovered_contacts,
+    rematch_contacts,
     seed_title_rules,
     test_title_match_detailed,
 )
@@ -51,7 +51,7 @@ __all__ = [
     "compute_title_rule_stats",
     "load_title_rules",
     "match_title",
-    "rematch_discovered_contacts",
+    "rematch_contacts",
     "seed_title_rules",
     "test_title_match_detailed",
 ]
@@ -447,9 +447,9 @@ class ContactService:
             existing_by_id = {
                 contact.provider_person_id: contact
                 for contact in session.exec(
-                    select(DiscoveredContact).where(
-                        col(DiscoveredContact.company_id) == company_id,
-                        col(DiscoveredContact.provider) == provider,
+                    select(Contact).where(
+                        col(Contact.company_id) == company_id,
+                        col(Contact.provider) == provider,
                     )
                 )
             }
@@ -466,7 +466,7 @@ class ContactService:
                 existing = existing_by_id.get(provider_person_id)
                 if existing is None:
                     session.add(
-                        DiscoveredContact(
+                        Contact(
                             company_id=company_id,
                             contact_fetch_job_id=job_id,
                             provider=provider,

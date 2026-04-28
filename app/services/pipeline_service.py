@@ -5,8 +5,8 @@ from uuid import UUID
 
 from sqlmodel import Session, col, select
 
-from app.models import AnalysisJob, ClassificationResult, Company, CompanyFeedback, ProspectContact, ScrapeJob
-from app.models.pipeline import CompanyPipelineStage, ContactPipelineStage
+from app.models import AnalysisJob, ClassificationResult, Company, CompanyFeedback, Contact, ScrapeJob
+from app.models.pipeline import CompanyPipelineStage
 
 
 def normalize_label(raw: str | None) -> str | None:
@@ -97,17 +97,17 @@ def recompute_company_stages(
     return changed
 
 
-def contact_stage_for_contact(contact: ProspectContact) -> ContactPipelineStage:
+def contact_stage_for_contact(contact: Contact) -> str:
     verification_status = normalize_verification_status(contact.verification_status)
     if (
         contact.title_match
         and bool((contact.email or "").strip())
         and verification_status == "valid"
     ):
-        return ContactPipelineStage.CAMPAIGN_READY
+        return "campaign_ready"
     if verification_status != "unverified":
-        return ContactPipelineStage.VERIFIED
-    return ContactPipelineStage.FETCHED
+        return "verified"
+    return "fetched"
 
 
 def recompute_contact_stages(
@@ -116,13 +116,13 @@ def recompute_contact_stages(
     contact_ids: Iterable[UUID] | None = None,
     company_ids: Iterable[UUID] | None = None,
 ) -> int:
-    statement = select(ProspectContact)
+    statement = select(Contact)
     ids = _coerce_ids(contact_ids)
     owner_ids = _coerce_ids(company_ids)
     if ids:
-        statement = statement.where(col(ProspectContact.id).in_(ids))
+        statement = statement.where(col(Contact.id).in_(ids))
     elif owner_ids:
-        statement = statement.where(col(ProspectContact.company_id).in_(owner_ids))
+        statement = statement.where(col(Contact.company_id).in_(owner_ids))
 
     contacts = list(session.exec(statement))
     changed = 0

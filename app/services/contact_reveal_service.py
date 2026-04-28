@@ -13,13 +13,11 @@ from sqlmodel import Session, col, select
 from app.core.logging import log_event
 from app.models import (
     Company,
+    Contact,
     ContactFetchJob,
     ContactRevealAttempt,
     ContactRevealBatch,
     ContactRevealJob,
-    DiscoveredContact,
-    ProspectContact,
-    ProspectContactEmail,
 )
 from app.models.pipeline import (
     ContactFetchBatchState,
@@ -72,7 +70,7 @@ def _normalize_name(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
-def _first_member_job_id(members: list[DiscoveredContact], *, session: Session, company_id: UUID) -> UUID | None:
+def _first_member_job_id(members: list[Contact], *, session: Session, company_id: UUID) -> UUID | None:
     for member in members:
         if member.contact_fetch_job_id is not None:
             return member.contact_fetch_job_id
@@ -88,34 +86,24 @@ def _find_existing_contact(
     session: Session,
     company_id: UUID,
     contact_entry: dict[str, Any],
-) -> ProspectContact | None:
+) -> Contact | None:
     email_normalized = _normalize_email(contact_entry.get("email"))
     if email_normalized:
         by_email = session.exec(
-            select(ProspectContact)
-            .join(ProspectContactEmail, col(ProspectContactEmail.contact_id) == col(ProspectContact.id))
-            .where(
-                col(ProspectContact.company_id) == company_id,
-                col(ProspectContactEmail.email_normalized) == email_normalized,
+            select(Contact).where(
+                col(Contact.company_id) == company_id,
+                func.lower(func.trim(col(Contact.email))) == email_normalized,
             )
         ).first()
         if by_email:
             return by_email
-        primary = session.exec(
-            select(ProspectContact).where(
-                col(ProspectContact.company_id) == company_id,
-                func.lower(func.trim(col(ProspectContact.email))) == email_normalized,
-            )
-        ).first()
-        if primary:
-            return primary
 
     linkedin_url = (contact_entry.get("linkedin_url") or "").strip()
     if linkedin_url:
         by_linkedin = session.exec(
-            select(ProspectContact).where(
-                col(ProspectContact.company_id) == company_id,
-                col(ProspectContact.linkedin_url) == linkedin_url,
+            select(Contact).where(
+                col(Contact.company_id) == company_id,
+                col(Contact.linkedin_url) == linkedin_url,
             )
         ).first()
         if by_linkedin:
@@ -127,7 +115,7 @@ def _find_existing_contact(
     if not (first_name and last_name and title):
         return None
     for candidate in session.exec(
-        select(ProspectContact).where(col(ProspectContact.company_id) == company_id)
+        select(Contact).where(col(Contact.company_id) == company_id)
     ):
         if _normalize_name(candidate.first_name) != first_name:
             continue
@@ -142,7 +130,7 @@ def _find_existing_contact(
 def _upsert_contact_email(
     *,
     session: Session,
-    contact: ProspectContact,
+    contact: Contact,
     email: str | None,
     source: str,
     provider_email_status: str | None,
@@ -151,31 +139,9 @@ def _upsert_contact_email(
     normalized = _normalize_email(email)
     if not normalized:
         return
-    existing = session.exec(
-        select(ProspectContactEmail).where(
-            col(ProspectContactEmail.contact_id) == contact.id,
-            col(ProspectContactEmail.email_normalized) == normalized,
-        )
-    ).first()
-    if existing:
-        existing.source = source
-        if provider_email_status:
-            existing.provider_email_status = provider_email_status
-        existing.updated_at = utcnow()
-        session.add(existing)
-    else:
-        session.add(
-            ProspectContactEmail(
-                contact_id=contact.id,
-                source=source,
-                email=normalized,
-                email_normalized=normalized,
-                provider_email_status=provider_email_status,
-                is_primary=bool(set_primary_if_missing and not (contact.email or "").strip()),
-            )
-        )
     if set_primary_if_missing and not (contact.email or "").strip():
         contact.email = normalized
+        contact.email_provider = source
         contact.provider_email_status = provider_email_status
         session.add(contact)
 
@@ -397,7 +363,7 @@ class ContactRevealService:
     # Reveal provider calls and revealed-contact persistence
     # ------------------------------------------------------------------
 
-    def _reveal_with_apollo(self, *, company: Company, members: list[DiscoveredContact]) -> RevealProviderResult:
+    def _reveal_with_apollo(self, *, company: Company, members: list[Contact]) -> RevealProviderResult:
         member = next((item for item in members if item.provider_person_id), None)
         if member is None:
             return RevealProviderResult(revealed_count=0)
@@ -430,7 +396,7 @@ class ContactRevealService:
             revealed_count=1,
         )
 
-    def _reveal_with_snov(self, *, company: Company, members: list[DiscoveredContact]) -> RevealProviderResult:
+    def _reveal_with_snov(self, *, company: Company, members: list[Contact]) -> RevealProviderResult:
         member = next((item for item in members if item.provider_person_id), None)
         if member is None:
             return RevealProviderResult(revealed_count=0)
@@ -481,10 +447,20 @@ class ContactRevealService:
         *,
         engine: Any,
         company_id: UUID,
-        members: list[DiscoveredContact],
+        members: list[Contact],
         provider: str,
         contact_entry: dict[str, Any],
     ) -> int:
+        # Build a reveal_raw_json blob from the various raw payloads in contact_entry
+        reveal_raw: dict[str, Any] = {}
+        if contact_entry.get("snov_prospect_raw") is not None:
+            reveal_raw["snov_prospect_raw"] = contact_entry["snov_prospect_raw"]
+        if contact_entry.get("apollo_prospect_raw") is not None:
+            reveal_raw["apollo_prospect_raw"] = contact_entry["apollo_prospect_raw"]
+        if contact_entry.get("snov_email_raw") is not None:
+            reveal_raw["snov_email_raw"] = contact_entry["snov_email_raw"]
+        reveal_raw_json = reveal_raw or None
+
         with Session(engine) as session:
             contact_fetch_job_id = _first_member_job_id(members, session=session, company_id=company_id)
             if contact_fetch_job_id is None:
@@ -505,14 +481,8 @@ class ContactRevealService:
                 existing.provider_email_status = (
                     contact_entry["provider_email_status"] or existing.provider_email_status
                 )
-                if contact_entry["snov_confidence"] is not None:
-                    existing.snov_confidence = contact_entry["snov_confidence"]
-                if contact_entry["snov_prospect_raw"] is not None:
-                    existing.snov_prospect_raw = contact_entry["snov_prospect_raw"]
-                if contact_entry["apollo_prospect_raw"] is not None:
-                    existing.apollo_prospect_raw = contact_entry["apollo_prospect_raw"]
-                if contact_entry["snov_email_raw"] is not None:
-                    existing.snov_email_raw = contact_entry["snov_email_raw"]
+                if reveal_raw_json is not None:
+                    existing.reveal_raw_json = reveal_raw_json
                 _upsert_contact_email(
                     session=session,
                     contact=existing,
@@ -520,37 +490,31 @@ class ContactRevealService:
                     source=provider,
                     provider_email_status=contact_entry.get("provider_email_status"),
                 )
-                existing.source = provider
+                existing.email_provider = provider
                 existing.updated_at = utcnow()
                 session.add(existing)
                 touched_contact_id = existing.id
             else:
-                new_contact = ProspectContact(
+                # Find the member contact record to get provider_person_id etc.
+                member = members[0] if members else None
+                new_contact = Contact(
                     company_id=company_id,
                     contact_fetch_job_id=contact_fetch_job_id,
-                    source=provider,
+                    provider=provider,
+                    provider_person_id=member.provider_person_id if member else "",
                     first_name=contact_entry["first_name"],
                     last_name=contact_entry["last_name"],
                     title=contact_entry["title"],
                     title_match=bool(contact_entry["title_match"]),
                     linkedin_url=contact_entry["linkedin_url"],
                     email=contact_entry["email"],
+                    email_provider=provider,
                     provider_email_status=contact_entry["provider_email_status"],
                     verification_status=contact_entry["verification_status"],
-                    snov_confidence=contact_entry["snov_confidence"],
-                    snov_prospect_raw=contact_entry["snov_prospect_raw"],
-                    apollo_prospect_raw=contact_entry["apollo_prospect_raw"],
-                    snov_email_raw=contact_entry["snov_email_raw"],
+                    reveal_raw_json=reveal_raw_json,
                 )
                 session.add(new_contact)
                 session.flush()
-                _upsert_contact_email(
-                    session=session,
-                    contact=new_contact,
-                    email=contact_entry.get("email"),
-                    source=provider,
-                    provider_email_status=contact_entry.get("provider_email_status"),
-                )
                 touched_contact_id = new_contact.id
             if touched_contact_id is not None:
                 recompute_contact_stages(session, contact_ids=[touched_contact_id])
@@ -679,7 +643,7 @@ class ContactRevealService:
             session.refresh(attempt)
         return attempt
 
-    def _load_reveal_members(self, *, session: Session, job: ContactRevealJob) -> list[DiscoveredContact]:
+    def _load_reveal_members(self, *, session: Session, job: ContactRevealJob) -> list[Contact]:
         member_ids: list[UUID] = []
         for raw in job.discovered_contact_ids_json or []:
             try:
@@ -690,7 +654,7 @@ class ContactRevealService:
             return []
         return list(
             session.exec(
-                select(DiscoveredContact).where(col(DiscoveredContact.id).in_(member_ids))
+                select(Contact).where(col(Contact.id).in_(member_ids))
             )
         )
 

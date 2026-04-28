@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
-from app.models import ContactVerifyJob, ProspectContact
+from app.models import ContactVerifyJob, Contact
 from app.models.pipeline import ContactVerifyJobState
 from app.services.pipeline_service import recompute_contact_stages
 from app.services.zerobounce_client import (
@@ -37,7 +37,7 @@ def normalize_zerobounce_status(raw: str | None) -> str:
     return value or "unknown"
 
 
-def is_contact_verification_eligible(contact: ProspectContact) -> bool:
+def is_contact_verification_eligible(contact: Contact) -> bool:
     return (
         contact.title_match
         and bool((contact.email or "").strip())
@@ -97,7 +97,7 @@ class ContactVerifyService:
         with Session(engine) as session:
             contacts = list(
                 session.exec(
-                    select(ProspectContact).where(col(ProspectContact.id).in_(requested_ids))
+                    select(Contact).where(col(Contact.id).in_(requested_ids))
                 )
             ) if requested_ids else []
 
@@ -155,7 +155,7 @@ class ContactVerifyService:
 
             db_contacts = list(
                 session.exec(
-                    select(ProspectContact).where(col(ProspectContact.id).in_([c.id for c in eligible]))
+                    select(Contact).where(col(Contact.id).in_([c.id for c in eligible]))
                 )
             )
             for contact in db_contacts:

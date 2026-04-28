@@ -10,7 +10,7 @@ from sqlalchemy import case, literal_column
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
-from app.models import AiUsageEvent, AnalysisJob, Company, CompanyFeedback, ContactFetchJob, ContactVerifyJob, PipelineRun, ProspectContact, ScrapeJob, Upload
+from app.models import AiUsageEvent, AnalysisJob, Company, CompanyFeedback, Contact, ContactFetchJob, ContactVerifyJob, PipelineRun, ScrapeJob, Upload
 from app.models.pipeline import (
     AnalysisJobState,
     CompanyPipelineStage,
@@ -502,8 +502,8 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
     company_contact_ids = set(
         str(contact_id)
         for contact_id in session.exec(
-            select(ProspectContact.id)
-            .join(Company, col(Company.id) == col(ProspectContact.company_id))
+            select(Contact.id)
+            .join(Company, col(Company.id) == col(Contact.company_id))
             .where(col(Company.id).in_(company_scope))
         ).all()
     )
@@ -525,8 +525,8 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
         company_contact_ids = set(
             str(contact_id)
             for contact_id in session.exec(
-                select(ProspectContact.id)
-                .join(Company, col(Company.id) == col(ProspectContact.company_id))
+                select(Contact.id)
+                .join(Company, col(Company.id) == col(Contact.company_id))
                 .where(col(Company.upload_id) == upload_id)
             ).all()
         )

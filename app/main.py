@@ -9,7 +9,6 @@ from app.api.routes.analysis import router as analysis_router
 from app.api.routes.campaigns import router as campaigns_router
 from app.api.routes.contacts import router as contacts_router
 from app.api.routes.companies import router as companies_router
-from app.api.routes.discovered_contacts import router as discovered_contacts_router
 from app.api.routes.pipeline_runs import router as pipeline_runs_router
 from app.api.routes.prompts import router as prompts_router
 from app.api.routes.queue_admin import router as queue_admin_router
@@ -62,7 +61,6 @@ def create_app() -> FastAPI:
     app.include_router(campaigns_router)
     app.include_router(contacts_router)
     app.include_router(companies_router)
-    app.include_router(discovered_contacts_router)
     app.include_router(pipeline_runs_router)
     app.include_router(prompts_router)
     app.include_router(queue_admin_router)

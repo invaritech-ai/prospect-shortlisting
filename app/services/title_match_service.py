@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlmodel import Session, col, select
 
-from app.models import Company, DiscoveredContact, TitleMatchRule, Upload
+from app.models import Company, Contact, TitleMatchRule, Upload
 from app.models.pipeline import utcnow
 
 _TITLE_SYNONYMS: dict[str, str] = {
@@ -132,12 +132,12 @@ def load_title_rules(
     return include_rules, exclude_words
 
 
-def rematch_discovered_contacts(session: Session, *, campaign_id: UUID) -> int:
+def rematch_contacts(session: Session, *, campaign_id: UUID) -> int:
     include_rules, exclude_words = load_title_rules(session, campaign_id=campaign_id)
     contacts = list(
         session.exec(
-            select(DiscoveredContact)
-            .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
+            select(Contact)
+            .join(Company, col(Company.id) == col(Contact.company_id))
             .join(Upload, col(Upload.id) == col(Company.upload_id))
             .where(col(Upload.campaign_id) == campaign_id)
         )
@@ -206,13 +206,13 @@ def compute_title_rule_stats(session: Session, *, campaign_id: UUID) -> dict[str
     titles = [
         title
         for title in session.exec(
-            select(DiscoveredContact.title)
-            .join(Company, col(Company.id) == col(DiscoveredContact.company_id))
+            select(Contact.title)
+            .join(Company, col(Company.id) == col(Contact.company_id))
             .join(Upload, col(Upload.id) == col(Company.upload_id))
             .where(
                 col(Upload.campaign_id) == campaign_id,
-                col(DiscoveredContact.is_active).is_(True),
-                col(DiscoveredContact.title).is_not(None),
+                col(Contact.is_active).is_(True),
+                col(Contact.title).is_not(None),
             )
         ).all()
         if title

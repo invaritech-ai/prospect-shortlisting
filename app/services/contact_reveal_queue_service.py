@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlmodel import Session, col, select
 
-from app.models import ContactRevealBatch, ContactRevealJob, DiscoveredContact, ProspectContact
+from app.models import Contact, ContactRevealBatch, ContactRevealJob
 from app.models.pipeline import ContactFetchBatchState, ContactFetchJobState, utcnow
 from app.services.contact_runtime_service import ContactRuntimeService
 
@@ -21,7 +21,7 @@ class ContactRevealEnqueueResult:
     batch_id: UUID | None = None
 
 
-def discovered_group_key(contact: DiscoveredContact) -> str:
+def discovered_group_key(contact: Contact) -> str:
     linkedin = (contact.linkedin_url or "").strip().lower()
     if linkedin:
         return f"linkedin:{linkedin}"
@@ -42,7 +42,7 @@ class ContactRevealQueueService:
         *,
         session: Session,
         campaign_id: UUID,
-        discovered_contacts: list[DiscoveredContact],
+        discovered_contacts: list[Contact],
         reveal_scope: str,
         trigger_source: str = "manual",
     ) -> ContactRevealEnqueueResult:
@@ -53,7 +53,7 @@ class ContactRevealQueueService:
         if not control.reveal_enabled or control.reveal_paused:
             return ContactRevealEnqueueResult(len(discovered_contacts), 0, 0, 0, [], None)
 
-        grouped: dict[tuple[UUID, str], list[DiscoveredContact]] = {}
+        grouped: dict[tuple[UUID, str], list[Contact]] = {}
         for contact in discovered_contacts:
             grouped.setdefault((contact.company_id, discovered_group_key(contact)), []).append(contact)
 
@@ -120,7 +120,7 @@ class ContactRevealQueueService:
         )
 
     @staticmethod
-    def _requested_providers(contacts: Iterable[DiscoveredContact]) -> list[str]:
+    def _requested_providers(contacts: Iterable[Contact]) -> list[str]:
         providers = {contact.provider for contact in contacts}
         requested: list[str] = []
         if "apollo" in providers:
@@ -144,7 +144,7 @@ class ContactRevealQueueService:
         *,
         session: Session,
         company_id: UUID,
-        members: list[DiscoveredContact],
+        members: list[Contact],
     ) -> bool:
         linkedin_candidates = [
             (member.linkedin_url or "").strip()
@@ -153,19 +153,19 @@ class ContactRevealQueueService:
         ]
         if linkedin_candidates:
             existing = session.exec(
-                select(ProspectContact.id).where(
-                    col(ProspectContact.company_id) == company_id,
-                    col(ProspectContact.linkedin_url).in_(linkedin_candidates),
-                    col(ProspectContact.email).is_not(None),
+                select(Contact.id).where(
+                    col(Contact.company_id) == company_id,
+                    col(Contact.linkedin_url).in_(linkedin_candidates),
+                    col(Contact.email).is_not(None),
                 )
             ).first()
             if existing is not None:
                 return True
         candidates = list(
             session.exec(
-                select(ProspectContact).where(
-                    col(ProspectContact.company_id) == company_id,
-                    col(ProspectContact.email).is_not(None),
+                select(Contact).where(
+                    col(Contact.company_id) == company_id,
+                    col(Contact.email).is_not(None),
                 )
             )
         )
