@@ -9,10 +9,10 @@ Operators ingest batches of company websites (from spreadsheet uploads), **crawl
 ```mermaid
 flowchart LR
   subgraph ui [apps/web React SPA]
-    Companies[CompaniesView]
-    Scrape[ScrapeJobsView]
-    Analysis[AnalysisRunsView]
-    Contacts[ContactsView]
+    Pipeline[pipeline stage views S1–S4]
+    Campaigns[CampaignsView]
+    Ops[OperationsLogView / QueueHistoryView]
+    Dash[DashboardView]
   end
   subgraph api [FastAPI app/main.py]
     Routes[v1 routes]
@@ -32,7 +32,7 @@ flowchart LR
 
 - **Backend**: [app/main.py](../app/main.py) — FastAPI app, CORS, `/v1/health/live` and `/v1/health/ready`, routers for uploads, companies, scrape jobs/actions, runs, analysis, prompts, contacts, stats, queue admin.
 - **Workers**: [app/celery_app.py](../app/celery_app.py) — Redis broker, separate queues (`scrape`, `analysis`, `contacts`, `beat`), late ack, visibility timeout tuned for long scrapes, Beat every 10m for stuck-job reconciliation.
-- **Frontend**: [apps/web](../apps/web) — Vite + React; [apps/web/src/App.tsx](../apps/web/src/App.tsx) orchestrates views (companies, scrape jobs, analysis runs, operations log, analytics snapshot, contacts) and panels (markdown preview, prompts, analysis detail, company review, scrape diagnostics).
+- **Frontend**: [apps/web](../apps/web) — Vite + React; [apps/web/src/App.tsx](../apps/web/src/App.tsx) orchestrates pipeline stage views, full pipeline, dashboard, campaigns, operations log, queue history, settings, and panels (markdown preview, prompts, analysis detail, company review, scrape diagnostics).
 - **Config**: [app/core/config.py](../app/core/config.py) — `PS_*` env vars: DB, Redis, OpenRouter keys, Browserless CDP URL, Snov, ZeroBounce, timeouts/models.
 
 ## Core data pipeline (domain model)
