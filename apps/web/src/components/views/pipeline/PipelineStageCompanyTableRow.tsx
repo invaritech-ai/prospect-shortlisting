@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { RelativeTimeLabel } from '../../ui/RelativeTimeLabel'
 
-export type PipelineStageCompanyLinkRow = {
+type PipelineStageCompanyLinkRow = {
   id: string
   domain: string
   normalized_url: string | null

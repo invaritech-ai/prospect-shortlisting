@@ -1,6 +1,6 @@
 import type { ProspectContactRead } from './types'
 
-export type CompanyContactsSummary = {
+type CompanyContactsSummary = {
   total: number
   matched: number
   withEmail: number

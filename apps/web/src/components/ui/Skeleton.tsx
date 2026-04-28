@@ -1,26 +1,5 @@
-interface SkeletonProps {
-  className?: string
-  rows?: number
-}
-
 export function Skeleton({ className = 'h-4 w-full' }: { className?: string }) {
   return <div className={`oc-skeleton ${className}`} aria-hidden="true" />
-}
-
-export function SkeletonRows({ rows = 5 }: SkeletonProps) {
-  return (
-    <div className="space-y-2 py-2">
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3 rounded-xl border border-[var(--oc-border)] p-3">
-          <Skeleton className="h-4 w-4 rounded flex-shrink-0" />
-          <Skeleton className="h-4 flex-1" />
-          <Skeleton className="h-5 w-16 rounded-full" />
-          <Skeleton className="h-5 w-14 rounded-full" />
-          <Skeleton className="h-7 w-16 rounded-lg" />
-        </div>
-      ))}
-    </div>
-  )
 }
 
 export function SkeletonTable({ rows = 6 }: { rows?: number }) {

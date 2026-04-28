@@ -4,9 +4,7 @@ import type {
   CampaignCreate,
   CampaignList,
   CampaignRead,
-  CampaignUpdate,
   CompanyCounts,
-  CompanyDeleteResult,
   CompanyIdsResult,
   CompanyList,
   CompanyScrapeResult,
@@ -62,9 +60,7 @@ import type {
   TitleRuleSeedResult,
   TitleTestResult,
   TitleRuleStatsResponse,
-  UploadCompanyList,
   UploadCreateResult,
-  UploadDetail,
   UploadList,
   MatchGapFilter,
 } from './types'
@@ -76,19 +72,18 @@ const API_BASE_URL = (
   (globalThis as { __API_BASE_URL__?: string }).__API_BASE_URL__ ??
   'http://localhost:8000'
 ).replace(/\/+$/, '')
-type ScrapeJobFilter = 'all' | 'active' | 'completed' | 'failed'
 
 interface ApiSessionConfig {
   getAccessToken?: () => string | null
   onUnauthorized?: () => void
 }
 
-export interface AuthUserRead {
+interface AuthUserRead {
   email: string
   display_name?: string | null
 }
 
-export interface AuthLoginResponse {
+interface AuthLoginResponse {
   user: AuthUserRead
   access_token?: string | null
   token_type?: string | null
@@ -187,10 +182,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-export async function uploadFile(file: File): Promise<UploadCreateResult> {
-  return uploadFileToCampaign(file)
-}
-
 export async function uploadFileToCampaign(file: File, campaignId?: string): Promise<UploadCreateResult> {
   const form = new FormData()
   form.append('file', file)
@@ -199,10 +190,6 @@ export async function uploadFileToCampaign(file: File, campaignId?: string): Pro
     method: 'POST',
     body: form,
   })
-}
-
-export async function getUpload(uploadId: string): Promise<UploadDetail> {
-  return request<UploadDetail>(`/v1/uploads/${uploadId}`)
 }
 
 export async function listUploads(limit = 20, offset = 0): Promise<UploadList> {
@@ -216,14 +203,6 @@ export async function listCampaigns(limit = 50, offset = 0): Promise<CampaignLis
 export async function createCampaign(payload: CampaignCreate): Promise<CampaignRead> {
   return request<CampaignRead>('/v1/campaigns', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function updateCampaign(campaignId: string, payload: CampaignUpdate): Promise<CampaignRead> {
-  return request<CampaignRead>(`/v1/campaigns/${campaignId}`, {
-    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
@@ -293,14 +272,6 @@ export async function listCompanies(
   }
 }
 
-export async function deleteCompanies(campaignId: string, companyIds: string[]): Promise<CompanyDeleteResult> {
-  return request<CompanyDeleteResult>('/v1/companies/delete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds }),
-  })
-}
-
 export async function scrapeSelectedCompanies(
   campaignId: string,
   companyIds: string[],
@@ -337,10 +308,6 @@ export async function scrapeAllCompanies(
   })
 }
 
-export async function getUploadCompanies(uploadId: string, limit = 25, offset = 0): Promise<UploadCompanyList> {
-  return request<UploadCompanyList>(`/v1/uploads/${uploadId}/companies?limit=${limit}&offset=${offset}`)
-}
-
 export async function createScrapeJob(payload: ScrapeJobCreate): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>('/v1/scrape-jobs', {
     method: 'POST',
@@ -352,12 +319,6 @@ export async function createScrapeJob(payload: ScrapeJobCreate): Promise<ScrapeJ
 
 export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
-}
-
-export async function listScrapeJobs(limit = 50, offset = 0, statusFilter: ScrapeJobFilter = 'all', search = ''): Promise<ScrapeJobRead[]> {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset), status_filter: statusFilter })
-  if (search.trim()) params.set('search', search.trim())
-  return request<ScrapeJobRead[]>(`/v1/scrape-jobs?${params}`)
 }
 
 export async function listScrapeJobPageContents(jobId: string, limit = 200, offset = 0): Promise<ScrapePageContentRead[]> {
@@ -492,10 +453,6 @@ export async function resetStuckContactFetchJobs(): Promise<ResetStuckResult> {
   return request<ResetStuckResult>('/v1/contact-fetch-jobs/reset-stuck', { method: 'POST' })
 }
 
-export async function resetStuckAnalysisJobs(): Promise<ResetStuckResult> {
-  return request<ResetStuckResult>('/v1/analysis-jobs/reset-stuck', { method: 'POST' })
-}
-
 export async function getCompanyCounts(campaignId: string, uploadId?: string): Promise<CompanyCounts> {
   const params = new URLSearchParams()
   params.set('campaign_id', campaignId)
@@ -575,16 +532,6 @@ export async function fetchContactsForCompany(
   return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
 }
 
-export async function fetchContactsForRun(
-  campaignId: string,
-  runId: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (options.forceRefresh) params.set('force_refresh', 'true')
-  return request<ContactFetchResult>(`/v1/runs/${runId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
-}
-
 export async function fetchContactsSelected(
   campaignId: string,
   companyIds: string[],
@@ -654,21 +601,6 @@ export async function listDiscoveredContactIds(
   if (options.staleEmailOnly) params.set('stale_email_only', 'true')
   if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
   return request<DiscoveredContactIdsResult>(`/v1/discovered-contacts/ids?${params.toString()}`)
-}
-
-export async function listCompanyDiscoveredContacts(
-  campaignId: string,
-  companyId: string,
-  options: { titleMatch?: boolean; provider?: string; search?: string; limit?: number; offset?: number } = {},
-): Promise<DiscoveredContactListResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.provider) params.set('provider', options.provider)
-  if (options.search) params.set('search', options.search)
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  return request<DiscoveredContactListResponse>(`/v1/companies/${companyId}/discovered-contacts?${params.toString()}`)
 }
 
 export async function listDiscoveredCompanies(

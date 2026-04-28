@@ -34,7 +34,7 @@ function buildCompatDefaultScrapePrompt(): ScrapePromptRead {
   }
 }
 
-export interface UseScrapePromptManagementResult {
+interface UseScrapePromptManagementResult {
   scrapePrompts: ScrapePromptRead[]
   selectedScrapePromptId: string
   activeScrapePromptId: string

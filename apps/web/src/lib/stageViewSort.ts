@@ -14,7 +14,7 @@ function stageHasWork(stats: PipelineStageStats | undefined): boolean {
 }
 
 /** True once that stage has seen any queue or terminal job volume (not "never touched"). */
-export function isStageStartedForDefaultSort(view: ActiveView, stats: StatsResponse | null): boolean {
+function isStageStartedForDefaultSort(view: ActiveView, stats: StatsResponse | null): boolean {
   if (!stats) return false
   switch (view) {
     case 's1-scraping':

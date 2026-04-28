@@ -123,14 +123,6 @@ export function IconRefresh({ className = '', size = 20 }: IconProps) {
   )
 }
 
-export function IconTrash({ className = '', size = 20 }: IconProps) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M3 5h14M8 5V3h4v2M6 5l1 12h6l1-12" />
-    </svg>
-  )
-}
-
 export function IconCheck({ className = '', size = 20 }: IconProps) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -144,14 +136,6 @@ export function IconDownload({ className = '', size = 20 }: IconProps) {
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
       <path d="M10 4v9M6 10l4 4 4-4" />
       <path d="M3 14v2a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2" />
-    </svg>
-  )
-}
-
-export function IconFilter({ className = '', size = 20 }: IconProps) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M2 4h16M5 9h10M8 14h4" />
     </svg>
   )
 }

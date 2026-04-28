@@ -2,7 +2,7 @@ import type { CompanyListItem } from './types'
 
 type DecisionSource = Pick<CompanyListItem, 'feedback_manual_label' | 'latest_decision' | 'latest_confidence'>
 
-export type DecisionDisplay = {
+type DecisionDisplay = {
   badgeLabel: string | null
   badgeValue: string | null
   confidenceLabel: string

@@ -23,7 +23,7 @@ import {
 import { canRenderScrapeJobPanel, resolveScrapeJobRead } from '../lib/scrapeJobResolution'
 import { parseApiError } from '../lib/utils'
 
-export interface UsePanelsResult {
+interface UsePanelsResult {
   // Markdown preview
   markdownJob: ScrapeJobRead | null
   markdownPages: ScrapePageContentRead[]

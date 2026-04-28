@@ -11,12 +11,12 @@ export type ActiveView =
   | 's5-validation'
   | 'queue-history'
 
-export interface AppRouteState {
+interface AppRouteState {
   view: ActiveView
   campaignId: string | null
 }
 
-export const DEFAULT_ACTIVE_VIEW: ActiveView = 'dashboard'
+const DEFAULT_ACTIVE_VIEW: ActiveView = 'dashboard'
 
 const ACTIVE_VIEW_VALUES: ActiveView[] = [
   'dashboard',
@@ -32,7 +32,7 @@ const ACTIVE_VIEW_VALUES: ActiveView[] = [
   'queue-history',
 ]
 
-export function isActiveView(value: string | null): value is ActiveView {
+function isActiveView(value: string | null): value is ActiveView {
   return value !== null && ACTIVE_VIEW_VALUES.includes(value as ActiveView)
 }
 

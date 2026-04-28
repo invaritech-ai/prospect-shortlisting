@@ -1,13 +1,3 @@
-import type { BadgeVariant } from './Badge'
-
-export function decisionVariant(decision: string | null): BadgeVariant {
-  if (!decision) return 'neutral'
-  const value = decision.trim().toLowerCase()
-  if (value === 'possible') return 'success'
-  if (value === 'unknown') return 'neutral'
-  return 'fail'
-}
-
 export function decisionBgClass(decision: string | null): string {
   if (!decision) return 'bg-slate-100 text-slate-600'
   const value = decision.trim().toLowerCase()

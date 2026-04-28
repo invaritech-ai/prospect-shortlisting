@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { Button } from './Button'
 
-export interface ConfirmDialogProps {
+interface ConfirmDialogProps {
   open: boolean
   title: string
   children: ReactNode

@@ -5,7 +5,7 @@ import { parseApiError } from '../lib/utils'
 
 const PROMPT_SELECTION_KEY = 'ps:selected-prompt-id'
 
-export interface UsePromptManagementResult {
+interface UsePromptManagementResult {
   prompts: PromptRead[]
   selectedPromptId: string
   selectedPrompt: PromptRead | null

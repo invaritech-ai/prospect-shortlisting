@@ -1,4 +1,4 @@
-export type UploadValidationError = {
+type UploadValidationError = {
   row_number: number
   raw_value: string
   error_code: string
@@ -21,8 +21,6 @@ export type UploadCreateResult = {
   validation_errors: UploadValidationError[]
   already_in_campaign_count: number
 }
-
-export type UploadDetail = UploadCreateResult
 
 export type UploadList = {
   total: number
@@ -54,22 +52,7 @@ export type CampaignCreate = {
   description?: string | null
 }
 
-export type CampaignUpdate = {
-  name?: string
-  description?: string | null
-}
-
-export type CompanyRead = {
-  id: string
-  upload_id: string
-  raw_url: string
-  normalized_url: string
-  domain: string
-  pipeline_stage: CompanyStage
-  created_at: string
-}
-
-export type CompanyStage = 'uploaded' | 'scraped' | 'classified' | 'contact_ready'
+type CompanyStage = 'uploaded' | 'scraped' | 'classified' | 'contact_ready'
 export type CompanyStageFilter = 'all' | CompanyStage | 'has_scrape'
 
 export type CompanyListItem = {
@@ -154,13 +137,6 @@ export type CompanyIdsResult = {
   total: number
 }
 
-export type CompanyDeleteResult = {
-  requested_count: number
-  deleted_count: number
-  deleted_ids: string[]
-  missing_ids: string[]
-}
-
 export type CompanyScrapeResult = {
   requested_count: number
   queued_count: number
@@ -168,14 +144,6 @@ export type CompanyScrapeResult = {
   failed_company_ids: string[]
   idempotency_key?: string | null
   idempotency_replayed?: boolean
-}
-
-export type UploadCompanyList = {
-  upload_id: string
-  total: number
-  limit: number
-  offset: number
-  items: CompanyRead[]
 }
 
 export type ScrapeJobRead = {
@@ -245,14 +213,6 @@ export type ScrapePageContentRead = {
   fetch_error_code: string | null
   fetch_error_message: string | null
   updated_at: string
-}
-
-export type JobEnqueueResult = {
-  job_id: string
-  celery_task_id: string
-  message: string
-  idempotency_key?: string | null
-  idempotency_replayed?: boolean
 }
 
 export type PromptRead = {
@@ -353,7 +313,7 @@ export type PipelineRunStartResponse = {
   failed_count: number
 }
 
-export type PipelineStageProgressRead = {
+type PipelineStageProgressRead = {
   queued: number
   running: number
   completed: number
@@ -376,7 +336,7 @@ export type PipelineRunProgressRead = {
   stages: Record<string, PipelineStageProgressRead>
 }
 
-export type PipelineStageCostRead = {
+type PipelineStageCostRead = {
   cost_usd: number | string
   event_count: number
   input_tokens: number
@@ -438,7 +398,7 @@ export type StatsResponse = {
   as_of: string
 }
 
-export type StageCostTotals = {
+type StageCostTotals = {
   scrape: number | null
   analysis: number | null
   contact_fetch: number | null
@@ -720,7 +680,7 @@ export type TitleTestResult = {
   normalized_title: string
 }
 
-export type TitleRuleStatItem = {
+type TitleRuleStatItem = {
   rule_id: string
   rule_type: string
   keywords: string
@@ -738,22 +698,8 @@ export type TitleRuleSeedResult = {
   message: string
 }
 
-export type AnalyticsSnapshot = {
-  scrape_sample_total: number
-  scrape_sample_completed: number
-  scrape_sample_failed: number
-  scrape_sample_active: number
-  run_sample_total: number
-  run_sample_completed: number
-  run_sample_failed: number
-  run_sample_active: number
-  possible_ratio_pct: number | null
-  scrape_failure_pct: number | null
-  analysis_failure_pct: number | null
-}
-
 export type IntegrationProviderId = 'openrouter' | 'snov' | 'apollo' | 'zerobounce'
-export type CredentialSource = 'db' | 'env' | ''
+type CredentialSource = 'db' | 'env' | ''
 
 export type IntegrationFieldStatus = {
   field: string
@@ -775,7 +721,7 @@ export type IntegrationsStatusResponse = {
   providers: IntegrationProviderStatus[]
 }
 
-export type IntegrationFieldUpdate = {
+type IntegrationFieldUpdate = {
   field: string
   value: string
 }
