@@ -1,12 +1,31 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prospect}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prospect}
+      POSTGRES_DB: ${POSTGRES_DB:-prospect}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prospect} -d ${POSTGRES_DB:-prospect}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
     command: >
       sh -c "uv run alembic upgrade head &&
+             uv run procrastinate schema --apply &&
              uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
     restart: unless-stopped
     healthcheck:
@@ -16,167 +35,22 @@ services:
       retries: 5
       start_period: 20s
 
-  # Scrape workers: both local-only until Browserless paid plan.
-  # Keeping original service names so Coolify doesn't break on rename.
-  # To re-enable Browserless: remove PS_BROWSERLESS_URL override from worker-scrape-browserless.
-  worker-scrape-browserless:
-    build:
-      context: .
-      dockerfile: Dockerfile.scrape
-    env_file:
-      - .env
-    environment:
-      PS_BROWSERLESS_URL: ""
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "browserless@%h", "-c", "6", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-scrape-local:
-    build:
-      context: .
-      dockerfile: Dockerfile.scrape
-    env_file:
-      - .env
-    environment:
-      PS_BROWSERLESS_URL: ""
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "scrape", "-n", "local@%h", "-c", "6", "--without-mingle", "--without-gossip", "--max-tasks-per-child=20", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-analysis:
+  worker:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "analysis,beat", "-c", "8", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
-
-  worker-contact-orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_orchestrator", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
+    command: ["uv", "run", "procrastinate", "--app=app.queue.app", "worker"]
     restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-contact-snov:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_snov", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-contact-apollo:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_apollo", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-contact-verify:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_verify", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-contact-reveal-orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_reveal_orchestrator", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-contact-reveal-apollo:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_reveal_apollo", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  worker-contact-reveal-snov:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "worker", "-Q", "contacts_reveal_snov", "-c", "4", "--without-mingle", "--without-gossip", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    command: ["uv", "run", "celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
 
   # Operator UI (Vite). Pair with docker-compose.local.yml so the browser can
   # reach the API via the loopback-only host mapping on :8001.
   # Start with: docker compose -f docker-compose.yml -f docker-compose.local.yml --profile ui up -d
-  # Or on the host: cd apps/web && npm run dev → http://127.0.0.1:5173
+  # Or on the host: cd apps/web && npm run dev -> http://127.0.0.1:5173
   web:
     profiles: ["ui"]
     image: node:22-bookworm-slim
@@ -185,7 +59,6 @@ services:
       - "5173:5173"
     environment:
       USE_POLLING: "1"
-      # Browser on the host calls the API through the local override's loopback mapping.
       VITE_API_BASE_URL: http://127.0.0.1:8001
     volumes:
       - ./apps/web:/app
@@ -196,4 +69,5 @@ services:
         condition: service_healthy
 
 volumes:
+  postgres_data:
   web_node_modules:

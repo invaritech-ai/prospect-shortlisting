@@ -51,6 +51,15 @@ def create_app() -> FastAPI:
     def ready() -> dict[str, str]:
         return {"status": "ready"}
 
+    @app.post("/v1/health/ping-job", status_code=202)
+    async def queue_ping_job() -> dict[str, str]:
+        from app.jobs.health import ping
+        from app.queue import app as queue_app
+
+        async with queue_app.open_async():
+            await ping.defer_async()
+        return {"status": "queued"}
+
     app.include_router(analysis_router)
     app.include_router(campaigns_router)
     app.include_router(contacts_router)
