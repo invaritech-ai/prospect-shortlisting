@@ -6,33 +6,53 @@
 
 ## 📋 Outstanding Items (post Phase 1)
 
-### 1. Broken tests — pre-existing from `DiscoveredContact → Contact` rename
+### 1. Test suite has 23 failures + 4 errors (148 pass)
 **Severity:** High (blocks CI green)
 **Owner:** Open
-**Detail:** Full test suite is red. 13 test files still import `ProspectContact` which was deleted in the model consolidation refactor (commit `e0c6fbe`). State vocab work surfaced this; it's not caused by the state vocab work itself.
+**Detail:** Pytest collection is now fixed (commit `e920427` updated the imports in 18 test files), but 23 tests still fail when actually run. These are real bugs/contract mismatches surfaced by the recent refactors, not pre-existing.
 
-**Files needing updates:**
-- `tests/test_campaign_scoping.py`
-- `tests/test_companies_list.py`
-- `tests/test_contact_admin.py`
-- `tests/test_contact_apollo.py`
-- `tests/test_contact_identity.py`
-- `tests/test_contact_reveal.py`
-- `tests/test_contact_rules.py`
-- `tests/test_contact_stage_contracts.py`
-- `tests/test_contact_verify.py`
-- `tests/test_contacts.py`
-- `tests/test_pipeline_runs.py`
-- `tests/test_title_match_test_ui.py`
-- `scripts/test_scrape.py`
+**Failure clusters:**
+- `test_contact_stage_contracts.py` (6 fails) — S4 reveal/list/ids contract mismatches. Check the new `/contacts/*` endpoint shapes against test expectations.
+- `test_title_match_test_ui.py` (4 fails) — pydantic validation errors. Schema field changes from earlier work.
+- `test_richer_title_rules.py` (4 fails) — regex/seniority match logic broke. Check `title_match_service`.
+- `test_companies_list.py` (3 fails) — `discovered/revealed contact counts` and pipeline status filter. Side effect of merging `_discovered_contact_count_subquery` into `_contact_count_subquery` in `company_service.py`.
+- `test_scrape_create.py` (2 fails) — likely `status` → `state` rename not propagated everywhere in scrape service.
+- 4 misc: `test_beat_reconciler.py`, `test_celery_tasks.py`, `test_analysis_usage_events.py`, `test_campaign_scoping.py`.
 
-**Fix:** Replace `ProspectContact` with `Contact` (the new unified model). Most usages are `from app.models import ProspectContact` → `from app.models import Contact` plus call site updates. Some assertions about `ProspectContactEmail` need to be removed (table dropped).
+**Fix approach:** Run failures one cluster at a time — many will share root causes. Suggested order:
+1. `test_scrape_create.py` + `test_beat_reconciler.py` + `test_celery_tasks.py` (likely all `state` rename bleed)
+2. `test_companies_list.py` (subquery field name mismatch)
+3. `test_contact_stage_contracts.py` (contract drift on new endpoints)
+4. `test_title_match_test_ui.py` + `test_richer_title_rules.py` (title match service)
+5. Remaining misc
 
-**Estimate:** ~1 day mechanical. Not blocking Phase 2 design work but suite must be green before any further DB or model changes.
+**Estimate:** ~1 day. Suite must be green before Phase 2.
 
 ---
 
-### 2. Frontend integration verification
+### 2. New `/contacts/ids`, `/contacts/counts`, `/contacts/companies` endpoints — architectural question
+**Severity:** Medium (consistency, not correctness)
+**Owner:** @avi to decide
+**Detail:** Commit `e920427` added three new endpoints to satisfy the frontend contracts UI:
+- `GET /v1/contacts/ids` — returns all contact IDs matching filters (bulk-select helper)
+- `GET /v1/contacts/counts` — `{total, matched, stale, fresh, already_revealed}`
+- `GET /v1/contacts/companies` — per-company contact summary (counts + last_attempted)
+
+**The question:** In the previous companies refactor we deliberately killed:
+- `GET /companies/ids` (judged unnecessary — frontend should derive from list)
+- `GET /companies/counts` (moved to `stats.py`)
+- `GET /companies/letter-counts` (judged unnecessary)
+
+**Are the contact equivalents legitimate or violations of that earlier judgment?**
+- `/contacts/companies` — genuinely new, no company equivalent. Probably OK to keep.
+- `/contacts/ids` — mirrors the killed `/companies/ids`. Same critique applies.
+- `/contacts/counts` — mirrors company counts that were moved to `stats.py`. Should this also move to stats?
+
+**Decision needed:** Keep all three? Move counts to stats? Kill `/contacts/ids` in favor of frontend deriving from list?
+
+---
+
+### 3. Frontend integration verification
 **Severity:** Medium (deploys will break frontend until verified)
 **Owner:** Open
 **Detail:** Backend contracts changed in Phase 1:
@@ -59,6 +79,23 @@
 ---
 
 ## ✅ Decisions Made
+
+### 2026-04-29 — Cleaned backend contacts contracts (commit `e920427`)
+**Decided by:** Implementer
+**What:**
+- Replaced stale `ProspectContact` / `DiscoveredContact` test usage with `Contact` across 18 test files
+- Removed deleted `Run` / `RunStatus` fixture usage from tests
+- Added 3 new contact endpoints: `/v1/contacts/ids`, `/v1/contacts/counts`, `/v1/contacts/companies` (architectural review pending — see Outstanding #2)
+- Updated frontend API/types to use canonical fields: `state`, `succeeded`, `source_provider`, `email_revealed`, `pipeline_run_id`
+- Expanded `ContactRead` schema for fields the frontend still consumes
+
+**Verified:**
+- ruff clean on touched files
+- compileall passes
+- pytest collection: 185 tests collected (was failing before)
+- npm run build passes
+
+**Caveat:** Pytest collection works but the suite is not fully green — 23 fails + 4 errors when run. See Outstanding #1.
 
 ### 2026-04-29 — Hard-deleted legacy `runs` lifecycle (commit `0eac22b`)
 **Decided by:** Implementer
