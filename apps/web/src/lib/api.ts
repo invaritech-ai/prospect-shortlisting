@@ -380,11 +380,17 @@ export async function activateScrapePrompt(promptId: string): Promise<ScrapeProm
 }
 
 export async function createRuns(payload: RunCreateRequest): Promise<RunCreateResult> {
-  return request<RunCreateResult>('/v1/runs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+  const response = await startPipelineRun({
+    campaign_id: payload.campaign_id,
+    company_ids: payload.company_ids,
+    analysis_prompt_snapshot: { prompt_id: payload.prompt_id },
   })
+  return {
+    requested_count: response.requested_count,
+    queued_count: response.queued_count,
+    skipped_company_ids: [],
+    runs: [],
+  }
 }
 
 export async function startPipelineRun(payload: PipelineRunStartRequest): Promise<PipelineRunStartResponse> {
@@ -408,13 +414,14 @@ export async function getCampaignCosts(campaignId: string): Promise<PipelineCost
 }
 
 export async function listRuns(campaignId?: string, limit = 25, offset = 0): Promise<RunRead[]> {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  if (campaignId) params.set('campaign_id', campaignId)
-  return request<RunRead[]>(`/v1/runs?${params.toString()}`)
+  void campaignId
+  void limit
+  void offset
+  return []
 }
 
 export async function listRunJobs(runId: string, limit = 500, offset = 0): Promise<AnalysisRunJobRead[]> {
-  return request<AnalysisRunJobRead[]>(`/v1/runs/${runId}/jobs?limit=${limit}&offset=${offset}`)
+  return request<AnalysisRunJobRead[]>(`/v1/pipeline-runs/${runId}/analysis-jobs?limit=${limit}&offset=${offset}`)
 }
 
 export async function getAnalysisJobDetail(analysisJobId: string): Promise<AnalysisJobDetailRead> {
@@ -566,18 +573,18 @@ export async function listDiscoveredContacts(
   const params = new URLSearchParams()
   params.set('campaign_id', options.campaignId)
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.provider) params.set('provider', options.provider)
-  if (options.companyId) params.set('company_id', options.companyId)
+  void options.provider
+  void options.companyId
   const q = options.search?.trim()
   if (q) params.set('search', q)
-  if (options.staleEmailOnly) params.set('stale_email_only', 'true')
+  if (options.staleEmailOnly) params.set('stale_days', '30')
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
   if (options.sortBy) params.set('sort_by', options.sortBy)
   if (options.sortDir) params.set('sort_dir', options.sortDir)
   if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
   if (options.countByLetters) params.set('count_by_letters', 'true')
-  return request<DiscoveredContactListResponse>(`/v1/discovered-contacts?${params.toString()}`)
+  return request<DiscoveredContactListResponse>(`/v1/contacts?${params.toString()}`)
 }
 
 export async function listDiscoveredContactIds(
@@ -594,13 +601,13 @@ export async function listDiscoveredContactIds(
   const params = new URLSearchParams()
   params.set('campaign_id', options.campaignId)
   if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.provider) params.set('provider', options.provider)
-  if (options.companyId) params.set('company_id', options.companyId)
+  void options.provider
+  void options.companyId
   const q = options.search?.trim()
   if (q) params.set('search', q)
-  if (options.staleEmailOnly) params.set('stale_email_only', 'true')
+  if (options.staleEmailOnly) params.set('stale_days', '30')
   if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
-  return request<DiscoveredContactIdsResult>(`/v1/discovered-contacts/ids?${params.toString()}`)
+  return request<DiscoveredContactIdsResult>(`/v1/contacts/ids?${params.toString()}`)
 }
 
 export async function listDiscoveredCompanies(
@@ -620,18 +627,18 @@ export async function listDiscoveredCompanies(
   if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
   if (options.limit) params.set('limit', String(options.limit))
   if (options.offset) params.set('offset', String(options.offset))
-  return request<ContactCompanyListResponse>(`/v1/discovered-contacts/companies?${params.toString()}`)
+  return request<ContactCompanyListResponse>(`/v1/contacts/companies?${params.toString()}`)
 }
 
 export async function getDiscoveredContactCounts(campaignId: string): Promise<DiscoveredContactCountsResponse> {
-  return request<DiscoveredContactCountsResponse>(`/v1/discovered-contacts/counts?campaign_id=${encodeURIComponent(campaignId)}`)
+  return request<DiscoveredContactCountsResponse>(`/v1/contacts/counts?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
 export async function revealDiscoveredContactEmails(
   payload: ContactRevealRequest,
   idempotencyKey?: string,
 ): Promise<ContactRevealResult> {
-  return request<ContactRevealResult>('/v1/discovered-contacts/reveal-emails', {
+  return request<ContactRevealResult>('/v1/contacts/reveal', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

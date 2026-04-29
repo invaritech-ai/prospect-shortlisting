@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from sqlmodel import Session, col, select
 
-from app.models import Company, ContactFetchJob, DiscoveredContact, Upload
+from app.models import Company, ContactFetchJob, Contact, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 from app.services.contact_service import ContactService, _provider_native_person_id
 
@@ -43,10 +43,10 @@ def test_provider_native_person_id_requires_native_identifiers() -> None:
 def test_discovered_persistence_skips_synthetic_ids_and_reactivates_native_matches(sqlite_engine, sqlite_session: Session) -> None:
     company, job = _company_and_job(sqlite_session, domain="native-identity.example")
     sqlite_session.add(
-        DiscoveredContact(
+        Contact(
             company_id=company.id,
             contact_fetch_job_id=job.id,
-            provider="apollo",
+            source_provider="apollo",
             provider_person_id="apollo-123",
             first_name="Old",
             last_name="Person",
@@ -95,10 +95,10 @@ def test_discovered_persistence_skips_synthetic_ids_and_reactivates_native_match
     assert written == 1
 
     row = sqlite_session.exec(
-        select(DiscoveredContact).where(
-            col(DiscoveredContact.company_id) == company.id,
-            col(DiscoveredContact.provider) == "apollo",
-            col(DiscoveredContact.provider_person_id) == "apollo-123",
+        select(Contact).where(
+            col(Contact.company_id) == company.id,
+            col(Contact.source_provider) == "apollo",
+            col(Contact.provider_person_id) == "apollo-123",
         )
     ).one()
     assert row.created_at.tzinfo is not None
@@ -119,9 +119,9 @@ def test_discovered_persistence_skips_synthetic_ids_and_reactivates_native_match
 
     rows = list(
         sqlite_session.exec(
-            select(DiscoveredContact).where(
-                col(DiscoveredContact.company_id) == company.id,
-                col(DiscoveredContact.provider) == "apollo",
+            select(Contact).where(
+                col(Contact.company_id) == company.id,
+                col(Contact.source_provider) == "apollo",
             )
         )
     )

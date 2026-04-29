@@ -17,8 +17,8 @@ interface ScrapeDiagnosticsPanelProps {
 
 function badgeForJob(job: ScrapeJobRead): { variant: 'info' | 'success' | 'fail' | 'neutral'; label: string } {
   if (!job.terminal_state) return { variant: 'info', label: 'Running' }
-  if (job.status === 'site_unavailable') return { variant: 'neutral', label: 'Site Down' }
-  if (job.status.includes('failed') || !!job.last_error_code) return { variant: 'fail', label: 'Failed' }
+  if (job.state === 'site_unavailable') return { variant: 'neutral', label: 'Site Down' }
+  if (job.state.includes('failed') || !!job.last_error_code) return { variant: 'fail', label: 'Failed' }
   return { variant: 'success', label: 'Done' }
 }
 
@@ -68,7 +68,7 @@ export function ScrapeDiagnosticsPanel({
         <section className="grid gap-3 rounded-2xl border border-[var(--oc-border)] bg-[var(--oc-surface)] p-4 sm:grid-cols-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Status</p>
-            <p className="mt-1.5 text-sm font-semibold text-[var(--oc-accent-ink)]">{job.status}</p>
+            <p className="mt-1.5 text-sm font-semibold text-[var(--oc-accent-ink)]">{job.state}</p>
           </div>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--oc-muted)]">Job ID</p>

@@ -504,7 +504,7 @@ function App() {
         setLatestPipelineRunProgress(progress)
         void loadCampaignCostSummary(progress.campaign_id)
         void loadCampaignCostBreakdown(progress.campaign_id)
-        if (progress.status === 'completed' || progress.status === 'failed') {
+        if (progress.state === 'completed' || progress.state === 'failed') {
           setLatestPipelineRunId(null)
           stopPolling()
         }

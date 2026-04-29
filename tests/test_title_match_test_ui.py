@@ -3,12 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-import pytest
 from sqlmodel import Session
 
 from app.api.routes.contacts import get_title_rule_stats, run_title_test
 from app.api.schemas.contacts import TitleTestRequest
-from app.models import Company, ContactFetchJob, ProspectContact, TitleMatchRule, Upload
+from app.models import Company, ContactFetchJob, Contact, TitleMatchRule, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 
 
@@ -22,7 +21,7 @@ def _add_rules(session: Session) -> None:
     session.commit()
 
 
-def _make_contact(session: Session, *, title: str, title_match: bool = False) -> ProspectContact:
+def _make_contact(session: Session, *, title: str, title_match: bool = False) -> Contact:
     upload = Upload(filename="t.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0)
     session.add(upload)
     session.flush()
@@ -44,10 +43,11 @@ def _make_contact(session: Session, *, title: str, title_match: bool = False) ->
     )
     session.add(job)
     session.flush()
-    contact = ProspectContact(
+    contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        source="snov",
+        source_provider="snov",
+        provider_person_id=f"snov-{uuid4()}",
         first_name="Jane",
         last_name="Smith",
         title=title,

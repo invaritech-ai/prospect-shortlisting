@@ -135,6 +135,12 @@ class ContactRead(UTCReadModel):
     title_match: bool
     linkedin_url: str | None
     source_url: str | None
+    email: str | None = None
+    emails: list[str] | None = None
+    pipeline_stage: str
+    provider_email_status: str | None = None
+    verification_status: str
+    snov_confidence: float | None = None
     provider_has_email: bool | None
     is_active: bool
     backfilled: bool

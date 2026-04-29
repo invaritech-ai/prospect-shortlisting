@@ -7,8 +7,8 @@ from sqlmodel import Session
 
 from app.api.routes.prompts import create_prompt, delete_prompt, list_prompts, update_prompt
 from app.api.schemas.prompt import PromptCreate, PromptUpdate
-from app.models import Prompt, Run, Upload
-from app.models.pipeline import RunStatus
+from app.models import AnalysisJob, Prompt
+from app.models.pipeline import AnalysisJobState
 
 
 def _prompt(session: Session, *, name: str = "Test") -> Prompt:
@@ -38,17 +38,17 @@ def test_delete_prompt_with_runs_raises_409(sqlite_session: Session) -> None:
     from fastapi import HTTPException
 
     p = _prompt(sqlite_session)
-    upload = Upload(filename="t.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0)
-    sqlite_session.add(upload)
-    sqlite_session.flush()
-    run = Run(
-        upload_id=upload.id,
+    job = AnalysisJob(
+        upload_id=uuid4(),
+        company_id=uuid4(),
+        crawl_artifact_id=uuid4(),
         prompt_id=p.id,
         general_model="gpt-4o",
         classify_model="gpt-4o",
-        status=RunStatus.SUCCEEDED,
+        state=AnalysisJobState.SUCCEEDED,
+        prompt_hash="hash",
     )
-    sqlite_session.add(run)
+    sqlite_session.add(job)
     sqlite_session.commit()
     with pytest.raises(HTTPException) as exc:
         delete_prompt(p.id, session=sqlite_session)
@@ -57,17 +57,17 @@ def test_delete_prompt_with_runs_raises_409(sqlite_session: Session) -> None:
 
 def test_run_count_reflects_actual_runs(sqlite_session: Session) -> None:
     p = _prompt(sqlite_session, name="WithRuns")
-    upload = Upload(filename="t2.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0)
-    sqlite_session.add(upload)
-    sqlite_session.flush()
-    run = Run(
-        upload_id=upload.id,
+    job = AnalysisJob(
+        upload_id=uuid4(),
+        company_id=uuid4(),
+        crawl_artifact_id=uuid4(),
         prompt_id=p.id,
         general_model="gpt-4o",
         classify_model="gpt-4o",
-        status=RunStatus.SUCCEEDED,
+        state=AnalysisJobState.SUCCEEDED,
+        prompt_hash="hash",
     )
-    sqlite_session.add(run)
+    sqlite_session.add(job)
     sqlite_session.commit()
     results = list_prompts(session=sqlite_session)
     found = next(r for r in results if r.id == p.id)

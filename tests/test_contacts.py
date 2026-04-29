@@ -11,7 +11,7 @@ from app.api.routes.campaigns import create_campaign
 from app.api.routes.contacts import list_all_contacts
 from app.api.routes.stats import get_stats
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, ContactFetchJob, ContactVerifyJob, ProspectContact, Upload
+from app.models import Company, ContactFetchJob, ContactVerifyJob, Contact, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactVerifyJobState, utcnow
 
 
@@ -35,11 +35,11 @@ def _seed_company(session: Session, *, upload_id, domain: str) -> Company:
     return company
 
 
-def _seed_contact(session: Session, *, company: Company, email: str, days_old: int = 0) -> ProspectContact:
+def _seed_contact(session: Session, *, company: Company, email: str, days_old: int = 0) -> Contact:
     fetch_job = ContactFetchJob(company_id=company.id, provider="snov")
     session.add(fetch_job)
     session.flush()
-    contact = ProspectContact(
+    contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=fetch_job.id,
         first_name="Jane",
@@ -47,7 +47,8 @@ def _seed_contact(session: Session, *, company: Company, email: str, days_old: i
         title="Director",
         title_match=True,
         email=email,
-        source="snov",
+        source_provider="snov",
+        provider_person_id=f"snov-{uuid4()}",
         verification_status="valid",
     )
     if days_old > 0:
@@ -73,7 +74,7 @@ def test_list_contacts_supports_letters_filter(sqlite_session: Session) -> None:
         assert len(response.items) == 1
         assert response.items[0].domain == "wolf.example"
     finally:
-        sqlite_session.exec(delete(ProspectContact).where(col(ProspectContact.company_id).in_(
+        sqlite_session.exec(delete(Contact).where(col(Contact.company_id).in_(
             select(Company.id).where(col(Company.upload_id) == upload.id)
         )))
         sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id).in_(
@@ -99,7 +100,7 @@ def test_list_contacts_invalid_sort_by_raises_422(sqlite_session: Session) -> No
             list_all_contacts(session=sqlite_session, campaign_id=campaign.id, sort_dir="sideways")
         assert excinfo_dir.value.status_code == 422
     finally:
-        sqlite_session.exec(delete(ProspectContact).where(col(ProspectContact.company_id).in_(
+        sqlite_session.exec(delete(Contact).where(col(Contact.company_id).in_(
             select(Company.id).where(col(Company.upload_id) == upload.id)
         )))
         sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id).in_(
@@ -149,7 +150,7 @@ def test_stats_validation_scope_honors_upload(sqlite_session: Session) -> None:
         assert unscoped.validation.total >= 2
     finally:
         sqlite_session.exec(delete(ContactVerifyJob))
-        sqlite_session.exec(delete(ProspectContact).where(col(ProspectContact.company_id).in_(
+        sqlite_session.exec(delete(Contact).where(col(Contact.company_id).in_(
             select(Company.id).where(col(Company.upload_id).in_([upload_a.id, upload_b.id]))
         )))
         sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id).in_(

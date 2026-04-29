@@ -70,7 +70,7 @@ export type CompanyListItem = {
   latest_scrape_job_id: string | null
   latest_scrape_status: string | null
   latest_scrape_terminal: boolean | null
-  latest_analysis_run_id: string | null
+  latest_analysis_pipeline_run_id: string | null
   latest_analysis_job_id: string | null
   latest_analysis_status: string | null
   latest_analysis_terminal: boolean | null
@@ -151,7 +151,8 @@ export type ScrapeJobRead = {
   website_url: string
   normalized_url: string
   domain: string
-  status: string
+  state: string
+  status?: string
   terminal_state: boolean
   js_fallback: boolean
   include_sitemap: boolean
@@ -316,7 +317,7 @@ export type PipelineRunStartResponse = {
 type PipelineStageProgressRead = {
   queued: number
   running: number
-  completed: number
+  succeeded: number
   failed: number
   total: number
 }
@@ -324,7 +325,7 @@ type PipelineStageProgressRead = {
 export type PipelineRunProgressRead = {
   pipeline_run_id: string
   campaign_id: string
-  status: string
+  state: string
   requested_count: number
   reused_count: number
   queued_count: number
@@ -354,9 +355,9 @@ export type PipelineCostSummaryRead = {
   by_stage: Record<string, PipelineStageCostRead>
 }
 
-export type AnalysisRunJobRead = {
+export type AnalysisPipelineJobRead = {
   analysis_job_id: string
-  run_id: string
+  pipeline_run_id: string | null
   company_id: string
   domain: string
   state: string
@@ -370,9 +371,11 @@ export type AnalysisRunJobRead = {
   finished_at: string | null
 }
 
+export type AnalysisRunJobRead = AnalysisPipelineJobRead
+
 export type PipelineStageStats = {
   total: number
-  completed: number
+  succeeded: number
   failed: number
   site_unavailable: number
   running: number
@@ -462,7 +465,7 @@ export type LetterCounts = {
 
 export type AnalysisJobDetailRead = {
   analysis_job_id: string
-  run_id: string
+  pipeline_run_id: string | null
   company_id: string
   domain: string
   state: string
@@ -473,7 +476,7 @@ export type AnalysisJobDetailRead = {
   started_at: string | null
   finished_at: string | null
   prompt_name: string
-  run_status: string
+  pipeline_run_state: string | null
   predicted_label: string | null
   confidence: number | null
   reasoning_json: Record<string, unknown> | null
@@ -501,7 +504,7 @@ export type ProspectContactRead = {
   company_id: string
   contact_fetch_job_id: string
   domain: string
-  source: string
+  source_provider: string
   first_name: string
   last_name: string
   title: string | null
@@ -519,7 +522,7 @@ export type ProspectContactRead = {
   updated_at: string
 }
 
-export type ContactStage = 'fetched' | 'verified' | 'campaign_ready'
+export type ContactStage = 'fetched' | 'email_revealed' | 'campaign_ready'
 export type ContactStageFilter = 'all' | ContactStage
 
 export type ContactListResponse = {
@@ -597,7 +600,7 @@ export type DiscoveredContactRead = {
   company_id: string
   contact_fetch_job_id?: string | null
   domain: string
-  provider: string
+  source_provider: string
   provider_person_id: string
   first_name: string
   last_name: string

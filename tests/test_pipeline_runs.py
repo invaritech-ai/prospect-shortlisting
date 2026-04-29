@@ -22,10 +22,9 @@ from app.models import (
     Campaign,
     Company,
     Prompt,
-    Run,
     PipelineRun,
     PipelineRunEvent,
-    ProspectContact,
+    Contact,
     ScrapePage,
     Upload,
 )
@@ -40,7 +39,6 @@ from app.models.pipeline import (
     CrawlJobState,
     PipelineRunStatus,
     PredictedLabel,
-    RunStatus,
 )
 from app.models.scrape import ScrapeJob
 from app.services.analysis_service import AnalysisService
@@ -63,7 +61,7 @@ def _stub_scrape_task(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _clear_pipeline_test_rows(session: Session) -> None:
     session.exec(delete(AiUsageEvent))
-    session.exec(delete(ProspectContact))
+    session.exec(delete(Contact))
     session.exec(delete(ScrapePage))
     session.exec(delete(ContactVerifyJob))
     session.exec(delete(ContactFetchJob))
@@ -167,7 +165,7 @@ def test_start_pipeline_run_creates_run_and_queues_scrapes(sqlite_session: Sessi
     run = sqlite_session.get(PipelineRun, response.pipeline_run_id)
     assert run is not None
     assert run.campaign_id == campaign.id
-    assert run.status == PipelineRunStatus.RUNNING
+    assert run.state == PipelineRunStatus.RUNNING
     assert response.requested_count == 1
     assert response.queued_count == 1
     assert response.reused_count == 0
@@ -295,6 +293,7 @@ def test_orchestrator_s1_to_s2_creates_analysis_jobs_and_enqueues(monkeypatch: p
 
 def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.MonkeyPatch, sqlite_session: Session) -> None:
     campaign, company = _seed_campaign_with_company(sqlite_session)
+    prompt = _seed_analysis_prompt(sqlite_session)
     run = PipelineRun(
         campaign_id=campaign.id,
         state=PipelineRunStatus.RUNNING,
@@ -305,10 +304,12 @@ def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.Mon
     sqlite_session.refresh(run)
 
     analysis_job = AnalysisJob(
-        run_id=uuid4(),
         upload_id=company.upload_id,
         company_id=company.id,
         crawl_artifact_id=uuid4(),
+        prompt_id=prompt.id,
+        general_model="m",
+        classify_model="m",
         state=AnalysisJobState.SUCCEEDED,
         terminal_state=True,
         prompt_hash="h",
@@ -359,6 +360,7 @@ def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.Mon
 
 def test_pipeline_run_progress_returns_stage_counters(sqlite_session: Session) -> None:
     campaign, company = _seed_campaign_with_company(sqlite_session)
+    prompt = _seed_analysis_prompt(sqlite_session)
     run = PipelineRun(
         campaign_id=campaign.id,
         state=PipelineRunStatus.RUNNING,
@@ -379,10 +381,12 @@ def test_pipeline_run_progress_returns_stage_counters(sqlite_session: Session) -
     )
     sqlite_session.add(
         AnalysisJob(
-            run_id=uuid4(),
             upload_id=uuid4(),
             company_id=company.id,
             crawl_artifact_id=uuid4(),
+            prompt_id=prompt.id,
+            general_model="m",
+            classify_model="m",
             state=AnalysisJobState.FAILED,
             terminal_state=True,
             prompt_hash="h1",
@@ -519,17 +523,6 @@ def test_analysis_service_records_ai_usage_event(sqlite_engine, sqlite_session: 
     sqlite_session.add(prompt)
     sqlite_session.flush()
 
-    run = Run(
-        upload_id=company.upload_id,
-        prompt_id=prompt.id,
-        general_model="openai/gpt-4o-mini",
-        classify_model="openai/gpt-4o-mini",
-        status=RunStatus.RUNNING,
-        total_jobs=1,
-        completed_jobs=0,
-        failed_jobs=0,
-    )
-    sqlite_session.add(run)
     pipeline_run = PipelineRun(
         campaign_id=campaign.id,
         state=PipelineRunStatus.RUNNING,
@@ -551,10 +544,12 @@ def test_analysis_service_records_ai_usage_event(sqlite_engine, sqlite_session: 
     sqlite_session.flush()
 
     analysis_job = AnalysisJob(
-        run_id=run.id,
         upload_id=company.upload_id,
         company_id=company.id,
         crawl_artifact_id=artifact.id,
+        prompt_id=prompt.id,
+        general_model="openai/gpt-4o-mini",
+        classify_model="openai/gpt-4o-mini",
         state=AnalysisJobState.QUEUED,
         terminal_state=False,
         prompt_hash="usage-hash",

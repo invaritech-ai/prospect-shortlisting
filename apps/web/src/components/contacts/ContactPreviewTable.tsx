@@ -4,8 +4,8 @@ function contactStageMeta(stage: ContactStage): { label: string; cls: string } {
   switch (stage) {
     case 'fetched':
       return { label: 'Fetched', cls: 'bg-slate-100 text-slate-700' }
-    case 'verified':
-      return { label: 'Verified', cls: 'bg-amber-100 text-amber-700' }
+    case 'email_revealed':
+      return { label: 'Email revealed', cls: 'bg-amber-100 text-amber-700' }
     case 'campaign_ready':
       return { label: 'Campaign Ready', cls: 'bg-emerald-100 text-emerald-700' }
     default:
@@ -35,7 +35,7 @@ function verificationMeta(status: string): { label: string; cls: string } {
 function providerStatusMeta(status: string | null): { label: string; cls: string } | null {
   if (!status) return null
   switch (status.toLowerCase()) {
-    case 'verified':
+    case 'email_revealed':
       return { label: 'Provider ok', cls: 'bg-sky-100 text-sky-700' }
     case 'unknown':
       return { label: 'Provider unknown', cls: 'bg-slate-100 text-slate-500' }

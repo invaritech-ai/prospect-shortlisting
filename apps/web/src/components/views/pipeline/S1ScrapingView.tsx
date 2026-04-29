@@ -131,14 +131,14 @@ export function S1ScrapingView({
     scrape_not_started: Math.max(
       0,
       total
-        - (scrape.completed ?? 0)
+        - (scrape.succeeded ?? 0)
         - (scrape.running ?? 0)
         - (scrape.queued ?? 0)
         - (scrape.site_unavailable ?? 0)
         - (scrape.failed ?? 0),
     ),
     scrape_in_progress: (scrape.running ?? 0) + (scrape.queued ?? 0),
-    scrape_done: scrape.completed ?? 0,
+    scrape_done: scrape.succeeded ?? 0,
     scrape_cancelled: 0,
     scrape_permanent_fail: scrape.site_unavailable ?? 0,
     scrape_soft_fail: scrape.failed ?? 0,
@@ -205,7 +205,7 @@ export function S1ScrapingView({
                 <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(pctDone, 100)}%`, backgroundColor: 'var(--s1)' }} />
               </div>
               <span className="tabular-nums shrink-0">
-                {counts ? `${counts.scrape_done.toLocaleString()} / ${counts.total.toLocaleString()}` : `${scrape.completed ?? 0} / ${total.toLocaleString()}`}
+                {counts ? `${counts.scrape_done.toLocaleString()} / ${counts.total.toLocaleString()}` : `${scrape.succeeded ?? 0} / ${total.toLocaleString()}`}
               </span>
             </div>
           )}

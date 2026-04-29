@@ -4,6 +4,7 @@ type CompanyContactsSummary = {
   total: number
   matched: number
   withEmail: number
+  email_revealed: number
   verified: number
   campaignReady: number
   eligibleToVerify: number
@@ -19,14 +20,14 @@ export function isContactVerificationEligible(
 export function summarizeCompanyContacts(contacts: ProspectContactRead[]): CompanyContactsSummary {
   let matched = 0
   let withEmail = 0
-  let verified = 0
+  let email_revealed = 0
   let campaignReady = 0
   let eligibleToVerify = 0
 
   for (const contact of contacts) {
     if (contact.title_match) matched += 1
     if ((contact.email?.trim() ?? '').length > 0) withEmail += 1
-    if (contact.pipeline_stage === 'verified') verified += 1
+    if (contact.pipeline_stage === 'email_revealed') email_revealed += 1
     if (contact.pipeline_stage === 'campaign_ready') campaignReady += 1
     if (isContactVerificationEligible(contact)) eligibleToVerify += 1
   }
@@ -35,7 +36,8 @@ export function summarizeCompanyContacts(contacts: ProspectContactRead[]): Compa
     total: contacts.length,
     matched,
     withEmail,
-    verified,
+    email_revealed,
+    verified: email_revealed,
     campaignReady,
     eligibleToVerify,
   }

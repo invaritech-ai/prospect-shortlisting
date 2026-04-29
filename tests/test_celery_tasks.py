@@ -12,10 +12,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 import pytest
-from sqlmodel import Session, col
+from sqlmodel import Session
 
 from app.models import ScrapeJob
 from app.models.pipeline import AnalysisJob, AnalysisJobState, utcnow
@@ -116,7 +115,7 @@ class TestScrapeWebsiteTask:
 
 class TestRunAnalysisJobTask:
     def _make_minimal_analysis_job(self, session: Session) -> AnalysisJob:
-        from app.models.pipeline import Upload, Prompt, Company, Run, RunStatus, CrawlJob, CrawlJobState, CrawlArtifact
+        from app.models.pipeline import Upload, Prompt, Company, CrawlJob, CrawlJobState, CrawlArtifact
 
         upload = Upload(filename="t.csv", checksum="ck-celery", valid_count=1, invalid_count=0)
         session.add(upload)
@@ -143,25 +142,13 @@ class TestRunAnalysisJobTask:
         session.add(artifact)
         session.flush()
 
-        run = Run(
-            upload_id=upload.id,
-            prompt_id=prompt.id,
-            general_model="m",
-            classify_model="m",
-            status=RunStatus.RUNNING,
-            total_jobs=1,
-            completed_jobs=0,
-            failed_jobs=0,
-            started_at=utcnow(),
-        )
-        session.add(run)
-        session.flush()
-
         job = AnalysisJob(
-            run_id=run.id,
             upload_id=upload.id,
             company_id=company.id,
             crawl_artifact_id=artifact.id,
+            prompt_id=prompt.id,
+            general_model="m",
+            classify_model="m",
             state=AnalysisJobState.QUEUED,
             terminal_state=False,
             attempt_count=0,

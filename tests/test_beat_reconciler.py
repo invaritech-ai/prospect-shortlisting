@@ -10,9 +10,6 @@ Tests:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
-
-import pytest
 from sqlmodel import Session, select
 
 from app.models import AnalysisJob, ScrapeJob, Upload
@@ -23,8 +20,6 @@ from app.models.pipeline import (
     CrawlJob,
     CrawlJobState,
     Prompt,
-    Run,
-    RunStatus,
 )
 
 
@@ -99,25 +94,13 @@ def _make_analysis_job(
     session.add(artifact)
     session.flush()
 
-    run = Run(
-        upload_id=upload.id,
-        prompt_id=prompt.id,
-        general_model="m",
-        classify_model="m",
-        status=RunStatus.RUNNING,
-        total_jobs=1,
-        completed_jobs=0,
-        failed_jobs=0,
-        started_at=now,
-    )
-    session.add(run)
-    session.flush()
-
     job = AnalysisJob(
-        run_id=run.id,
         upload_id=upload.id,
         company_id=company.id,
         crawl_artifact_id=artifact.id,
+        prompt_id=prompt.id,
+        general_model="m",
+        classify_model="m",
         state=state,
         terminal_state=terminal,
         attempt_count=0,
@@ -202,7 +185,7 @@ class TestReconcileStuckAnalysisJobs:
         stuck = _make_analysis_job(
             sqlite_session, suffix="stuck-a", state=AnalysisJobState.RUNNING, updated_minutes_ago=25
         )
-        fresh = _make_analysis_job(
+        _make_analysis_job(
             sqlite_session, suffix="fresh-a", state=AnalysisJobState.RUNNING, updated_minutes_ago=5
         )
 

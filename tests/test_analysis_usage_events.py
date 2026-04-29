@@ -16,19 +16,17 @@ from app.models import (
     CrawlJob,
     PipelineRun,
     Prompt,
-    Run,
     ScrapeJob,
     ScrapePage,
     Upload,
 )
-from app.models.pipeline import AnalysisJobState, CrawlJobState, PipelineRunStatus, RunStatus
+from app.models.pipeline import AnalysisJobState, CrawlJobState, PipelineRunStatus
 from app.services.analysis_service import AnalysisService
 
 
 def _clear_analysis_usage_rows(session: Session) -> None:
     session.exec(delete(AiUsageEvent))
     session.exec(delete(AnalysisJob))
-    session.exec(delete(Run))
     session.exec(delete(CrawlArtifact))
     session.exec(delete(CrawlJob))
     session.exec(delete(ScrapePage))
@@ -81,22 +79,9 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
     sqlite_session.add(prompt)
     sqlite_session.flush()
 
-    run = Run(
-        upload_id=upload.id,
-        prompt_id=prompt.id,
-        general_model="openai/gpt-4o-mini",
-        classify_model="openai/gpt-4o-mini",
-        status=RunStatus.RUNNING,
-        total_jobs=1,
-        completed_jobs=0,
-        failed_jobs=0,
-    )
-    sqlite_session.add(run)
-    sqlite_session.flush()
-
     pipeline_run = PipelineRun(
         campaign_id=campaign.id,
-        status=PipelineRunStatus.RUNNING,
+        state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
     )
     sqlite_session.add(pipeline_run)
@@ -116,10 +101,12 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
     sqlite_session.flush()
 
     analysis_job = AnalysisJob(
-        run_id=run.id,
         upload_id=upload.id,
         company_id=company.id,
         crawl_artifact_id=artifact.id,
+        prompt_id=prompt.id,
+        general_model="openai/gpt-4o-mini",
+        classify_model="openai/gpt-4o-mini",
         state=AnalysisJobState.QUEUED,
         terminal_state=False,
         prompt_hash="hash-1",

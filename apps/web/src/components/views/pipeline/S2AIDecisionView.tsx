@@ -117,7 +117,7 @@ export function S2AIDecisionView({
   const analysis = stats?.analysis
   const aRunning = analysis?.running ?? 0
   const aQueued = analysis?.queued ?? 0
-  const aCompleted = analysis?.completed ?? 0
+  const aCompleted = analysis?.succeeded ?? 0
   const aFailed = analysis?.failed ?? 0
   const aTotal = analysis?.total ?? 0
   const aPct = analysis?.pct_done ?? 0

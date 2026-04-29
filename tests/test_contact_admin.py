@@ -20,7 +20,7 @@ from app.api.schemas.contacts import (
     ContactRetryFailedRequest,
     ContactRuntimeControlUpdate,
 )
-from app.models import Company, ContactFetchJob, ContactProviderAttempt, ContactRevealBatch, DiscoveredContact, Upload
+from app.models import Company, ContactFetchJob, ContactProviderAttempt, ContactRevealBatch, Contact, Upload
 from app.models.pipeline import (
     CompanyPipelineStage,
     ContactFetchJobState,
@@ -76,9 +76,9 @@ def test_contact_runtime_control_can_be_read_and_updated(sqlite_session: Session
 
 def test_contact_reveal_batch_tracks_selected_and_grouped_counts(sqlite_session: Session) -> None:
     campaign_id, company = _campaign_company(sqlite_session, domain="reveal-metrics.example")
-    contact_a = DiscoveredContact(
+    contact_a = Contact(
         company_id=company.id,
-        provider="snov",
+        source_provider="snov",
         provider_person_id=f"pid-{uuid4()}-a",
         first_name="Test",
         last_name="Person",
@@ -86,9 +86,9 @@ def test_contact_reveal_batch_tracks_selected_and_grouped_counts(sqlite_session:
         title_match=True,
         linkedin_url="https://linkedin.example/shared",
     )
-    contact_b = DiscoveredContact(
+    contact_b = Contact(
         company_id=company.id,
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id=f"pid-{uuid4()}-b",
         first_name="Test",
         last_name="Person",

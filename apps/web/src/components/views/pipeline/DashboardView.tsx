@@ -374,7 +374,7 @@ export function DashboardView({
               <div key={job.id} className="flex items-center gap-2 rounded-xl bg-(--oc-surface) px-3 py-2 text-xs">
                 <span className="w-16 truncate font-bold" style={{ color: 'var(--s1)' }}>S1</span>
                 <span className="flex-1 truncate text-(--oc-text)">{job.domain}</span>
-                <span className="text-(--oc-muted)">{job.status}</span>
+                <span className="text-(--oc-muted)">{job.state}</span>
               </div>
             ))}
             {recentRuns.slice(0, 3).map((run) => (

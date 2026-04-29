@@ -1,7 +1,7 @@
 import type { ScrapeJobRead } from './types'
 
 export function canRenderScrapeJobPanel(job: ScrapeJobRead): boolean {
-  return Boolean(job.domain && job.status && job.updated_at)
+  return Boolean(job.domain && job.state && job.updated_at)
 }
 
 export async function resolveScrapeJobRead(

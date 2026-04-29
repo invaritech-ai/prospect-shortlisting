@@ -11,7 +11,7 @@ from app.api.routes.campaigns import create_campaign
 from app.api.routes.companies import list_companies
 from app.api.routes.stats import get_company_counts
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, CompanyFeedback, ContactFetchJob, DiscoveredContact, ProspectContact, ScrapeJob, Upload
+from app.models import Company, CompanyFeedback, ContactFetchJob, Contact, ScrapeJob, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState, utcnow
 
 
@@ -139,40 +139,41 @@ def test_list_companies_exposes_discovered_and_revealed_contact_counts(sqlite_se
         sqlite_session.flush()
         sqlite_session.add_all(
             [
-                DiscoveredContact(
+                Contact(
                     company_id=discovered_only.id,
                     contact_fetch_job_id=discovered_job.id,
-                    provider="snov",
+                    source_provider="snov",
                     provider_person_id="disc-1",
                     first_name="Dana",
                     last_name="Discovery",
                     title="Marketing Director",
                     title_match=True,
                 ),
-                DiscoveredContact(
+                Contact(
                     company_id=discovered_only.id,
                     contact_fetch_job_id=discovered_job.id,
-                    provider="snov",
+                    source_provider="snov",
                     provider_person_id="disc-2",
                     first_name="Uma",
                     last_name="Unmatched",
                     title="Assistant",
                     title_match=False,
                 ),
-                DiscoveredContact(
+                Contact(
                     company_id=revealed.id,
                     contact_fetch_job_id=revealed_job.id,
-                    provider="snov",
+                    source_provider="snov",
                     provider_person_id="rev-1",
                     first_name="Rae",
                     last_name="Reveal",
                     title="Marketing Director",
                     title_match=True,
                 ),
-                ProspectContact(
+                Contact(
                     company_id=revealed.id,
                     contact_fetch_job_id=revealed_job.id,
-                    source="snov",
+                    source_provider="snov",
+                    provider_person_id="rev-2",
                     first_name="Rae",
                     last_name="Reveal",
                     title="Marketing Director",

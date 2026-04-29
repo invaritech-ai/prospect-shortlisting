@@ -6,7 +6,7 @@ function stageHasWork(stats: PipelineStageStats | undefined): boolean {
   return (
     stats.running > 0
     || stats.queued > 0
-    || stats.completed > 0
+    || stats.succeeded > 0
     || stats.failed > 0
     || (stats.site_unavailable ?? 0) > 0
     || (stats.stuck_count ?? 0) > 0

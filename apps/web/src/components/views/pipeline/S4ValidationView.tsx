@@ -60,7 +60,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 
 function getLastValidatedAt(contact: ProspectContactRead): Date | null {
   if (!contact.verification_status || contact.verification_status.toLowerCase() === 'unverified') return null
-  if (contact.pipeline_stage !== 'verified' && contact.pipeline_stage !== 'campaign_ready') return null
+  if (contact.pipeline_stage !== 'email_revealed' && contact.pipeline_stage !== 'campaign_ready') return null
   return parseUTC(contact.updated_at)
 }
 
@@ -81,7 +81,7 @@ function verifBadge(contact: ProspectContactRead) {
 
 function stageBadge(contact: ProspectContactRead) {
   if (contact.pipeline_stage === 'campaign_ready') return { label: 'Campaign ready', bg: '#f3e8ff', text: '#581c87' }
-  if (contact.pipeline_stage === 'verified') return { label: 'Verified', bg: '#f1f5f9', text: '#334155' }
+  if (contact.pipeline_stage === 'email_revealed') return { label: 'Email revealed', bg: '#f1f5f9', text: '#334155' }
   if (contact.verification_status && contact.verification_status !== 'unverified') {
     return { label: 'Fetched', bg: '#fef3c7', text: '#92400e' }
   }
@@ -134,7 +134,7 @@ export function S4ValidationView({
   const validation = stats?.validation
   const vRunning = validation?.running ?? 0
   const vQueued = validation?.queued ?? 0
-  const vCompleted = validation?.completed ?? 0
+  const vCompleted = validation?.succeeded ?? 0
   const vFailed = validation?.failed ?? 0
   const vTotal = validation?.total ?? 0
   const vPct = validation?.pct_done ?? 0
@@ -304,7 +304,7 @@ export function S4ValidationView({
         <div className="rounded-2xl border border-(--oc-border) bg-white px-6 py-10 text-center">
           {verifFilter === 'unverified' && contacts != null && (contacts.total ?? 0) > 0 ? (
             <div className="space-y-1">
-              <p className="text-sm font-semibold text-emerald-700">All contacts have been verified ✓</p>
+              <p className="text-sm font-semibold text-emerald-700">All contacts have been email_revealed ✓</p>
               <p className="text-xs text-(--oc-muted)">Switch to "Valid" or "Campaign ready" to review results.</p>
             </div>
           ) : contacts != null && contacts.total === 0 ? (

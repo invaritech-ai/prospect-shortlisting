@@ -14,7 +14,7 @@ from app.api.routes.contacts import (
 )
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import TitleMatchRuleCreate
-from app.models import Campaign, Company, DiscoveredContact, TitleMatchRule, Upload
+from app.models import Campaign, Company, Contact, TitleMatchRule, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJob
 from app.services.contact_service import match_title
 
@@ -36,10 +36,10 @@ def _seed(session: Session, *, domain: str = "example.com") -> tuple[Campaign, C
     return campaign, company
 
 
-def _add_discovered(session: Session, *, company: Company, title: str) -> DiscoveredContact:
-    dc = DiscoveredContact(
+def _add_discovered(session: Session, *, company: Company, title: str) -> Contact:
+    dc = Contact(
         company_id=company.id,
-        provider="snov",
+        source_provider="snov",
         provider_person_id=f"pid-{uuid4()}",
         first_name="Test",
         last_name="Person",

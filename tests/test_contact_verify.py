@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from sqlmodel import Session
 
-from app.models import ContactFetchJob, ContactVerifyJob, ProspectContact, Upload, Company
+from app.models import ContactFetchJob, ContactVerifyJob, Contact, Upload, Company
 from app.models.pipeline import ContactFetchJobState, ContactVerifyJobState
 from app.services.contact_verify_service import (
     ContactVerifyService,
@@ -37,10 +37,11 @@ def test_normalize_zerobounce_status_passthrough():
 
 
 def test_is_contact_verification_eligible_true():
-    contact = ProspectContact(
+    contact = Contact(
         company_id=uuid4(),
         contact_fetch_job_id=uuid4(),
-        source="apollo",
+        source_provider="apollo",
+        provider_person_id="apollo-alice",
         first_name="Alice",
         last_name="Smith",
         title_match=True,
@@ -51,10 +52,11 @@ def test_is_contact_verification_eligible_true():
 
 
 def test_is_contact_verification_eligible_requires_title_match():
-    contact = ProspectContact(
+    contact = Contact(
         company_id=uuid4(),
         contact_fetch_job_id=uuid4(),
-        source="apollo",
+        source_provider="apollo",
+        provider_person_id="apollo-bob",
         first_name="Bob",
         last_name="Jones",
         title_match=False,
@@ -65,10 +67,11 @@ def test_is_contact_verification_eligible_requires_title_match():
 
 
 def test_is_contact_verification_eligible_requires_email():
-    contact = ProspectContact(
+    contact = Contact(
         company_id=uuid4(),
         contact_fetch_job_id=uuid4(),
-        source="apollo",
+        source_provider="apollo",
+        provider_person_id="apollo-carol",
         first_name="Carol",
         last_name="White",
         title_match=True,
@@ -79,10 +82,11 @@ def test_is_contact_verification_eligible_requires_email():
 
 
 def test_is_contact_verification_eligible_skips_already_verified():
-    contact = ProspectContact(
+    contact = Contact(
         company_id=uuid4(),
         contact_fetch_job_id=uuid4(),
-        source="apollo",
+        source_provider="apollo",
+        provider_person_id="apollo-dave",
         first_name="Dave",
         last_name="Green",
         title_match=True,
@@ -127,11 +131,12 @@ def _make_contact(
     email: str = "alice@verify-test.com",
     title_match: bool = True,
     verification_status: str = "unverified",
-) -> ProspectContact:
-    contact = ProspectContact(
+) -> Contact:
+    contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=fetch_job.id,
-        source="apollo",
+        source_provider="apollo",
+        provider_person_id=f"apollo-{uuid4()}",
         first_name="Alice",
         last_name="Smith",
         title_match=title_match,
@@ -143,7 +148,7 @@ def _make_contact(
     return contact
 
 
-def _make_verify_job(session: Session, contact: ProspectContact) -> ContactVerifyJob:
+def _make_verify_job(session: Session, contact: Contact) -> ContactVerifyJob:
     job = ContactVerifyJob(
         state=ContactVerifyJobState.QUEUED,
         terminal_state=False,

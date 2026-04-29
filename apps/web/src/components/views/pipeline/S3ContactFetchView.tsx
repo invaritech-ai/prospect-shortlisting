@@ -58,7 +58,7 @@ function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
     latest_scrape_job_id: null,
     latest_scrape_status: null,
     latest_scrape_terminal: null,
-    latest_analysis_run_id: null,
+    latest_analysis_pipeline_run_id: null,
     latest_analysis_job_id: null,
     latest_analysis_status: null,
     latest_analysis_terminal: null,
@@ -232,7 +232,7 @@ export function S3ContactFetchView({
   const contactFetch = stats?.contact_fetch
   const cfRunning = contactFetch?.running ?? 0
   const cfQueued = contactFetch?.queued ?? 0
-  const cfCompleted = contactFetch?.completed ?? 0
+  const cfCompleted = contactFetch?.succeeded ?? 0
   const cfFailed = contactFetch?.failed ?? 0
   const cfTotal = contactFetch?.total ?? 0
   const cfPct = contactFetch?.pct_done ?? 0

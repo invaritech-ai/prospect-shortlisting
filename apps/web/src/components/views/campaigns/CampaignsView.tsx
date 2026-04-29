@@ -104,17 +104,17 @@ export function CampaignsView({
             {latestRunProgress && (
               <div className="space-y-2 rounded-xl border border-(--oc-border) bg-white p-3">
                 <p className="text-xs font-semibold text-(--oc-text)">
-                  Latest run status: {latestRunProgress.status}
+                  Latest run status: {latestRunProgress.state}
                 </p>
                 {Object.entries(latestRunProgress.stages).map(([stage, counts]) => {
                   const total = Math.max(1, counts.total)
-                  const done = counts.completed + counts.failed
+                  const done = counts.succeeded + counts.failed
                   const pct = Math.min(100, Math.round((done / total) * 100))
                   return (
                     <div key={stage} className="space-y-1">
                       <div className="flex items-center justify-between text-[11px] text-(--oc-muted)">
                         <span>{stage}</span>
-                        <span>{counts.running} running · {counts.completed} done · {counts.failed} failed</span>
+                        <span>{counts.running} running · {counts.succeeded} done · {counts.failed} failed</span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-surface)">
                         <div className="h-full rounded-full bg-(--oc-accent)" style={{ width: `${pct}%` }} />

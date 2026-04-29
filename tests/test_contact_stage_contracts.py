@@ -10,16 +10,16 @@ from sqlmodel import Session
 
 from app.api.routes.campaigns import create_campaign
 from app.api.routes.contacts import list_all_contacts
-from app.api.routes.discovered_contacts import (
-    list_discovered_contact_ids,
-    list_discovered_contacts,
-    reveal_discovered_contact_emails,
+from app.api.routes.contacts import (
+    list_all_contacts as list_discovered_contacts,
+    list_contact_ids as list_discovered_contact_ids,
+    reveal_contacts_endpoint as reveal_discovered_contact_emails,
 )
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import (
     ContactRevealRequest,
 )
-from app.models import Campaign, Company, ContactFetchJob, DiscoveredContact, ProspectContact, Upload
+from app.models import Campaign, Company, ContactFetchJob, Contact, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 
 
@@ -53,10 +53,10 @@ def _seed_discovered_contact(
     title: str = "Director",
     first_name: str = "Test",
     last_name: str = "Person",
-) -> DiscoveredContact:
-    contact = DiscoveredContact(
+) -> Contact:
+    contact = Contact(
         company_id=company.id,
-        provider="snov",
+        source_provider="snov",
         provider_person_id=f"pid-{uuid4()}",
         first_name=first_name,
         last_name=last_name,
@@ -78,14 +78,15 @@ def _seed_prospect_contact(
     title: str = "Director",
     first_name: str = "Test",
     last_name: str = "Person",
-) -> ProspectContact:
+) -> Contact:
     fetch_job = ContactFetchJob(company_id=company.id, provider="snov", state=ContactFetchJobState.SUCCEEDED, terminal_state=True)
     session.add(fetch_job)
     session.flush()
-    contact = ProspectContact(
+    contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=fetch_job.id,
-        source="snov",
+        source_provider="snov",
+        provider_person_id=f"snov-{uuid4()}",
         first_name=first_name,
         last_name=last_name,
         title=title,
@@ -294,4 +295,3 @@ def test_s4_reveal_route_rejects_ineligible_contacts(sqlite_session: Session) ->
     mock_enqueue.assert_not_called()
     mock_dispatch.assert_not_called()
     mock_verify.assert_not_called()
-

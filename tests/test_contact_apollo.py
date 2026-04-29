@@ -11,7 +11,7 @@ from app.models import (
     Company,
     ContactFetchJob,
     ContactProviderAttempt,
-    DiscoveredContact,
+    Contact,
     TitleMatchRule,
     Upload,
 )
@@ -120,10 +120,10 @@ def test_apollo_provider_attempt_writes_native_discovered_contacts(sqlite_engine
     job = _create_apollo_job(sqlite_session, company)
     _seed_apollo_rule(sqlite_session)
 
-    existing_contact = DiscoveredContact(
+    existing_contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id="apollo-person-1",
         first_name="Old",
         last_name="Person",
@@ -181,7 +181,7 @@ def test_apollo_provider_attempt_writes_native_discovered_contacts(sqlite_engine
     assert finalized.title_matched_count == 2
     rows = list(
         sqlite_session.exec(
-            select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company.id)
+            select(Contact).where(col(Contact.company_id) == company.id)
         ).all()
     )
     assert len(rows) == 2
@@ -203,10 +203,10 @@ def test_apollo_provider_attempt_updates_existing_discovered_contact_in_place(
     _seed_apollo_rule(sqlite_session)
     job = _create_apollo_job(sqlite_session, company)
 
-    seeded_contact = DiscoveredContact(
+    seeded_contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id="apollo-jane",
         first_name="Jane",
         last_name="Doe",
@@ -266,7 +266,7 @@ def test_apollo_provider_attempt_updates_existing_discovered_contact_in_place(
 
     rows = list(
         sqlite_session.exec(
-            select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company.id)
+            select(Contact).where(col(Contact.company_id) == company.id)
         ).all()
     )
     assert len(rows) == 1
@@ -287,10 +287,10 @@ def test_apollo_provider_attempt_scopes_dedup_by_company(sqlite_engine, sqlite_s
 
     for company, seed in ((company_b, "b"), (company_a, "a")):
         seeded_job = _create_apollo_job(sqlite_session, company)
-        contact = DiscoveredContact(
+        contact = Contact(
             company_id=company.id,
             contact_fetch_job_id=seeded_job.id,
-            provider="apollo",
+            source_provider="apollo",
             provider_person_id="apollo-scope",
             first_name="Alex",
             last_name="Smith",
@@ -349,8 +349,8 @@ def test_apollo_provider_attempt_scopes_dedup_by_company(sqlite_engine, sqlite_s
         reveal_email=fake_reveal_email,
     )
 
-    rows_a = list(sqlite_session.exec(select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company_a.id)).all())
-    rows_b = list(sqlite_session.exec(select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company_b.id)).all())
+    rows_a = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company_a.id)).all())
+    rows_b = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company_b.id)).all())
     assert len(rows_a) == 1
     assert len(rows_b) == 1
 
@@ -360,10 +360,10 @@ def test_apollo_provider_attempt_skips_rows_without_native_ids(sqlite_engine, sq
     _seed_apollo_rule(sqlite_session)
     job = _create_apollo_job(sqlite_session, company)
 
-    seeded = DiscoveredContact(
+    seeded = Contact(
         company_id=company.id,
         contact_fetch_job_id=job.id,
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id="apollo-jordan",
         first_name="Jordan",
         last_name="Lee",
@@ -427,7 +427,7 @@ def test_apollo_provider_attempt_skips_rows_without_native_ids(sqlite_engine, sq
         reveal_email=fake_reveal_email,
     )
 
-    rows = list(sqlite_session.exec(select(DiscoveredContact).where(col(DiscoveredContact.company_id) == company.id)).all())
+    rows = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)).all())
     assert len(rows) == 1
     row = rows[0]
     sqlite_session.refresh(row)

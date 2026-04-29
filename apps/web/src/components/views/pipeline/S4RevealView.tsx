@@ -414,7 +414,7 @@ export function S4RevealView({
                     </td>
                     <td className="p-3 text-(--oc-muted)">{contact.title ?? '—'}</td>
                     <td className="p-3">
-                      <ProviderBadge provider={contact.provider} />
+                      <ProviderBadge provider={contact.source_provider} />
                     </td>
                     <td className="p-3">
                       <TitleMatchBadge matched={contact.title_match} />

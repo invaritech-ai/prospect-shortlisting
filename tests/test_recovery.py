@@ -43,7 +43,7 @@ class TestFailJobClearsLockOnQueued:
 
     def test_lock_cleared_on_queued(self, db_engine):
         from app.services.analysis_service import AnalysisService
-        from app.models.pipeline import Prompt, Upload, Company, Run, CrawlArtifact, CrawlJob, CrawlJobState
+        from app.models.pipeline import Prompt, Upload, Company, CrawlArtifact, CrawlJob, CrawlJobState
 
         svc = AnalysisService()
 
@@ -81,25 +81,13 @@ class TestFailJobClearsLockOnQueued:
             session.add(artifact)
             session.flush()
 
-            run = Run(
-                upload_id=upload.id,
-                prompt_id=prompt.id,
-                general_model="test",
-                classify_model="test",
-                status="running",
-                total_jobs=1,
-                completed_jobs=0,
-                failed_jobs=0,
-                started_at=utcnow(),
-            )
-            session.add(run)
-            session.flush()
-
             analysis_job = AnalysisJob(
-                run_id=run.id,
                 upload_id=upload.id,
                 company_id=company.id,
                 crawl_artifact_id=artifact.id,
+                prompt_id=prompt.id,
+                general_model="test",
+                classify_model="test",
                 state=AnalysisJobState.RUNNING,
                 terminal_state=False,
                 attempt_count=1,
@@ -113,7 +101,6 @@ class TestFailJobClearsLockOnQueued:
             session.refresh(analysis_job)
 
             analysis_job_id = analysis_job.id
-            run_id = run.id
             attempt_count = analysis_job.attempt_count
             max_attempts = analysis_job.max_attempts
 
@@ -123,7 +110,6 @@ class TestFailJobClearsLockOnQueued:
             error_code="transient_error",
             error_message="Simulated transient failure",
             lock_token="original-token",
-            run_id=run_id,
             attempt_count=attempt_count,
             max_attempts=max_attempts,
         )

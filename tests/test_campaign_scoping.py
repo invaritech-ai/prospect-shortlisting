@@ -11,14 +11,14 @@ from sqlmodel import Session
 from app.api.routes.campaigns import create_campaign
 from app.api.routes.companies import delete_companies, list_companies
 from app.api.routes.contacts import list_all_contacts
-from app.api.routes.runs import create_runs
+from app.api.routes.pipeline_runs import start_pipeline_run
 from app.api.routes.scrape_actions import scrape_selected_companies
-from app.api.schemas.run import RunCreateRequest
+from app.api.schemas.pipeline_run import PipelineRunStartRequest
 from app.api.schemas.upload import CompanyDeleteRequest, CompanyScrapeRequest
 from app.api.routes.stats import get_company_counts, get_cost_stats, get_stats
 from app.tasks import company as company_tasks
 from app.api.schemas.campaign import CampaignCreate
-from app.models import AiUsageEvent, Company, ContactFetchJob, Prompt, ProspectContact, Upload
+from app.models import AiUsageEvent, Company, ContactFetchJob, Prompt, Contact, Upload
 from app.models.pipeline import CompanyPipelineStage
 
 
@@ -79,7 +79,7 @@ def _seed_contact(session: Session, *, company: Company, email: str) -> None:
     fetch_job = ContactFetchJob(company_id=company.id, provider="snov")
     session.add(fetch_job)
     session.flush()
-    contact = ProspectContact(
+    contact = Contact(
         company_id=company.id,
         contact_fetch_job_id=fetch_job.id,
         first_name="Sam",
@@ -87,7 +87,8 @@ def _seed_contact(session: Session, *, company: Company, email: str) -> None:
         title="Director",
         title_match=True,
         email=email,
-        source="snov",
+        source_provider="snov",
+        provider_person_id=f"snov-{uuid4()}",
         verification_status="unverified",
     )
     contact.updated_at = contact.updated_at - timedelta(days=2)
@@ -251,7 +252,7 @@ def test_scrape_selected_rejects_company_ids_outside_campaign(sqlite_session: Se
     assert exc.value.status_code == 422
 
 
-def test_create_runs_rejects_company_ids_outside_campaign(sqlite_session: Session) -> None:
+def test_start_pipeline_run_rejects_company_ids_outside_campaign(sqlite_session: Session) -> None:
     campaign_a = create_campaign(payload=CampaignCreate(name="Runs A"), session=sqlite_session)
     campaign_b = create_campaign(payload=CampaignCreate(name="Runs B"), session=sqlite_session)
     upload_a = _seed_upload(sqlite_session, "runs-a.csv", campaign_id=campaign_a.id)
@@ -267,13 +268,13 @@ def test_create_runs_rejects_company_ids_outside_campaign(sqlite_session: Sessio
     sqlite_session.commit()
 
     with pytest.raises(HTTPException) as exc:
-        create_runs(
-            payload=RunCreateRequest(
+        start_pipeline_run(
+            payload=PipelineRunStartRequest(
                 campaign_id=campaign_a.id,
-                prompt_id=prompt.id,
-                scope="selected",
+                analysis_prompt_snapshot={"prompt_id": str(prompt.id)},
                 company_ids=[company_a.id, company_b.id],
             ),
             session=sqlite_session,
+            x_idempotency_key=None,
         )
     assert exc.value.status_code == 422

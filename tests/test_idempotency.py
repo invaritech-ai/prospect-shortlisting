@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
 from sqlmodel import Session, col, select
 
 from app.models.pipeline import (
@@ -20,7 +19,6 @@ from app.models.pipeline import (
     CrawlJobState,
     PredictedLabel,
     Prompt,
-    Run,
     Upload,
     utcnow,
 )
@@ -61,25 +59,13 @@ def _build_analysis_job(session: Session) -> AnalysisJob:
     session.add(artifact)
     session.flush()
 
-    run = Run(
-        upload_id=upload.id,
-        prompt_id=prompt.id,
-        general_model="test",
-        classify_model="test",
-        status="running",
-        total_jobs=1,
-        completed_jobs=0,
-        failed_jobs=0,
-        started_at=utcnow(),
-    )
-    session.add(run)
-    session.flush()
-
     analysis_job = AnalysisJob(
-        run_id=run.id,
         upload_id=upload.id,
         company_id=company.id,
         crawl_artifact_id=artifact.id,
+        prompt_id=prompt.id,
+        general_model="test",
+        classify_model="test",
         state=AnalysisJobState.QUEUED,
         terminal_state=False,
         attempt_count=0,

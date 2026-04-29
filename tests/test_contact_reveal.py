@@ -12,8 +12,7 @@ from app.models import (
     ContactRevealAttempt,
     ContactRevealBatch,
     ContactRevealJob,
-    DiscoveredContact,
-    ProspectContact,
+    Contact,
     Upload,
 )
 from app.models.pipeline import ContactFetchBatchState, ContactFetchJobState, ContactProviderAttemptState
@@ -53,10 +52,10 @@ def _make_discovered(
     title: str = "VP Engineering",
     linkedin_url: str | None = None,
     title_match: bool = True,
-) -> DiscoveredContact:
-    contact = DiscoveredContact(
+) -> Contact:
+    contact = Contact(
         company_id=company.id,
-        provider=provider,
+        source_provider=provider,
         provider_person_id=str(uuid4()),
         first_name=first_name,
         last_name=last_name,
@@ -85,9 +84,9 @@ def _enable_reveal(session: Session) -> None:
 
 
 def test_group_key_prefers_linkedin():
-    contact = DiscoveredContact(
+    contact = Contact(
         company_id=uuid4(),
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id="p1",
         first_name="Alice",
         last_name="Smith",
@@ -99,9 +98,9 @@ def test_group_key_prefers_linkedin():
 
 
 def test_group_key_falls_back_to_name_title():
-    contact = DiscoveredContact(
+    contact = Contact(
         company_id=uuid4(),
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id="p1",
         first_name="Alice",
         last_name="Smith",
@@ -113,9 +112,9 @@ def test_group_key_falls_back_to_name_title():
 
 
 def test_group_key_falls_back_to_provider_id():
-    contact = DiscoveredContact(
+    contact = Contact(
         company_id=uuid4(),
-        provider="apollo",
+        source_provider="apollo",
         provider_person_id="person-abc",
         first_name="Alice",
         last_name="",
@@ -261,10 +260,11 @@ def test_reveal_batch_skips_already_revealed_contacts(sqlite_engine, sqlite_sess
     fetch_job = ContactFetchJob(company_id=company.id, provider="apollo", state=ContactFetchJobState.SUCCEEDED, terminal_state=True)
     sqlite_session.add(fetch_job)
     sqlite_session.flush()
-    existing_prospect = ProspectContact(
+    existing_prospect = Contact(
         company_id=company.id,
         contact_fetch_job_id=fetch_job.id,
-        source="apollo",
+        source_provider="apollo",
+        provider_person_id=f"apollo-{uuid4()}",
         first_name="Dana",
         last_name="Lee",
         title="CEO",

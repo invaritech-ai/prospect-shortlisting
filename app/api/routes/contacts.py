@@ -14,6 +14,10 @@ from sqlmodel import Session, col, select
 from app.api.schemas.contacts import (
     ContactFetchQueued,
     ContactFetchRequest,
+    ContactCompanyListResponse,
+    ContactCompanySummary,
+    ContactCountsResponse,
+    ContactIdsResult,
     ContactListResponse,
     ContactRead,
     ContactRematchRequest,
@@ -49,6 +53,7 @@ from app.services.contact_query_service import (
 )
 from app.services.contact_queue_service import ContactQueueService
 from app.services.contact_reveal_queue_service import ContactRevealQueueService
+from app.services.contact_reveal_queue_service import discovered_group_key
 from app.services.contact_verify_service import is_contact_verification_eligible
 from app.services.title_match_service import (
     compute_title_rule_stats,
@@ -78,6 +83,7 @@ _CONTACT_SORT_FIELDS = frozenset(
         "title",
         "title_match",
         "provider",
+        "source_provider",
         "last_seen_at",
         "provider_has_email",
         "verification_status",
@@ -161,6 +167,7 @@ def list_all_contacts(
         "last_name": col(Contact.last_name),
         "title": col(Contact.title),
         "title_match": col(Contact.title_match),
+        "provider": col(Contact.source_provider),
         "source_provider": col(Contact.source_provider),
         "last_seen_at": col(Contact.last_seen_at),
         "provider_has_email": col(Contact.provider_has_email),
@@ -188,6 +195,8 @@ def list_all_contacts(
                     **contact.__dict__,
                     "domain": domain,
                     "emails": email_map.get(contact.id, []),
+                    "freshness_status": "fresh",
+                    "group_key": discovered_group_key(contact),
                     "last_seen_at": contact.last_seen_at,
                     "provider_has_email": contact.provider_has_email,
                     "source_provider": contact.source_provider,
@@ -228,6 +237,126 @@ def list_all_contacts(
         offset=offset,
         items=items,
         letter_counts=letter_counts,
+    )
+
+
+@router.get("/contacts/ids", response_model=ContactIdsResult)
+def list_contact_ids(
+    campaign_id: UUID = Query(...),
+    title_match: bool | None = Query(default=None),
+    verification_status: str | None = Query(default=None),
+    stage_filter: str = Query(default="all"),
+    stale_days: int | None = Query(default=None, ge=1, le=365),
+    search: str | None = Query(default=None),
+    letters: str | None = Query(default=None),
+    upload_id: UUID | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> ContactIdsResult:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
+    letter_values = _parse_letters(letters)
+    q = select(Contact.id).join(Company, col(Company.id) == col(Contact.company_id))
+    q = q.where(_campaign_upload_scope(campaign_id))
+    q = _apply_contact_filters(
+        q,
+        title_match=title_match,
+        verification_status=verification_status,
+        search=search,
+        stage_filter=stage_filter,
+        stale_days=stale_days,
+        letters=letter_values or None,
+    )
+    if upload_id is not None:
+        q = q.where(col(Company.upload_id) == upload_id)
+    ids = list(session.exec(q.order_by(col(Contact.last_seen_at).desc(), col(Contact.created_at).desc())).all())
+    return ContactIdsResult(ids=ids, total=len(ids))
+
+
+@router.get("/contacts/counts", response_model=ContactCountsResponse)
+def get_contact_counts(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> ContactCountsResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    base = (
+        select(Contact)
+        .join(Company, col(Company.id) == col(Contact.company_id))
+        .where(_campaign_upload_scope(campaign_id))
+        .subquery()
+    )
+    row = session.exec(
+        select(
+            func.count().label("total"),
+            func.count().filter(base.c.title_match.is_(True)).label("matched"),
+            func.count().filter(base.c.email.is_not(None)).label("already_revealed"),
+        ).select_from(base)
+    ).one()
+    total = int(row.total or 0)
+    matched = int(row.matched or 0)
+    already_revealed = int(row.already_revealed or 0)
+    return ContactCountsResponse(
+        total=total,
+        matched=matched,
+        stale=0,
+        fresh=total,
+        already_revealed=already_revealed,
+    )
+
+
+@router.get("/contacts/companies", response_model=ContactCompanyListResponse)
+def list_contact_companies(
+    campaign_id: UUID = Query(...),
+    search: str | None = Query(default=None),
+    title_match: bool | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> ContactCompanyListResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    q = (
+        select(
+            Company.id,
+            Company.domain,
+            func.count(Contact.id).label("total_count"),
+            func.count().filter(col(Contact.title_match).is_(True)).label("title_matched_count"),
+            func.count().filter(col(Contact.email).is_not(None)).label("email_count"),
+            func.count().filter(col(Contact.pipeline_stage) == "fetched").label("fetched_count"),
+            func.count().filter(col(Contact.pipeline_stage) == "campaign_ready").label("campaign_ready_count"),
+            func.max(Contact.updated_at).label("last_contact_attempted_at"),
+        )
+        .join(Contact, col(Contact.company_id) == col(Company.id))
+        .where(_campaign_upload_scope(campaign_id))
+        .group_by(Company.id, Company.domain)
+    )
+    if title_match is not None:
+        q = q.where(col(Contact.title_match).is_(title_match))
+    if search:
+        q = q.where(col(Company.domain).ilike(f"%{search.strip()}%"))
+    rows = list(session.exec(q.order_by(col(Company.domain).asc()).offset(offset).limit(limit)).all())
+    total = session.exec(select(func.count()).select_from(q.subquery())).one()
+    items = [
+        ContactCompanySummary(
+            company_id=row[0],
+            domain=row[1],
+            total_count=int(row[2] or 0),
+            title_matched_count=int(row[3] or 0),
+            unmatched_count=max(0, int(row[2] or 0) - int(row[3] or 0)),
+            matched_no_email_count=max(0, int(row[3] or 0) - int(row[4] or 0)),
+            email_count=int(row[4] or 0),
+            fetched_count=int(row[5] or 0),
+            verified_count=0,
+            campaign_ready_count=int(row[6] or 0),
+            eligible_verify_count=0,
+            last_contact_attempted_at=row[7],
+        )
+        for row in rows
+    ]
+    return ContactCompanyListResponse(
+        total=int(total or 0),
+        has_more=(offset + len(items)) < int(total or 0),
+        limit=limit,
+        offset=offset,
+        items=items,
     )
 
 

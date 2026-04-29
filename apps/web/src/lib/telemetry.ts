@@ -11,7 +11,7 @@ function toTimeValue(iso: string): number {
 }
 
 function scrapeStatus(job: ScrapeJobRead): OperationsEventStatus {
-  const status = job.status.toLowerCase()
+  const status = job.state.toLowerCase()
   if (!job.terminal_state || status === 'running' || status === 'created') return 'active'
   if (status === 'completed') return 'completed'
   return 'failed'
@@ -34,9 +34,9 @@ export function buildOperationsEvents(scrapeJobs: ScrapeJobRead[], runs: RunRead
       status,
       occurred_at: job.updated_at || job.created_at,
       title: job.domain,
-      subtitle: `${job.id.slice(0, 8)}… · ${job.status}`,
+      subtitle: `${job.id.slice(0, 8)}… · ${job.state}`,
       error_code: errorCode,
-      search_blob: `${job.domain} ${job.id} ${job.status} ${errorCode ?? ''}`.toLowerCase(),
+      search_blob: `${job.domain} ${job.id} ${job.state} ${errorCode ?? ''}`.toLowerCase(),
       scrape_job: job,
       run: null,
     }

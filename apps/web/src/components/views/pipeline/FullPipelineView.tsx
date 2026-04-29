@@ -290,7 +290,7 @@ export function FullPipelineView({
         <div className="space-y-2 rounded-lg border border-(--oc-border) bg-white px-3 py-2">
           <div className="flex items-center justify-between gap-2 text-[11px]">
             <span className="font-semibold text-(--oc-text)">
-              Live run status: {latestRunProgress.status}
+              Live run status: {latestRunProgress.state}
             </span>
             <span className="text-(--oc-muted)">
               queued {latestRunProgress.queued_count} · reused {latestRunProgress.reused_count} · failed {latestRunProgress.failed_count}
@@ -298,14 +298,14 @@ export function FullPipelineView({
           </div>
           {Object.entries(latestRunProgress.stages).map(([stage, counts]) => {
             const total = Math.max(1, counts.total)
-            const done = counts.completed + counts.failed
+            const done = counts.succeeded + counts.failed
             const pct = Math.min(100, Math.round((done / total) * 100))
             return (
               <div key={stage} className="space-y-1">
                 <div className="flex items-center justify-between text-[10px] text-(--oc-muted)">
                   <span>{stage}</span>
                   <span>
-                    {counts.running} running · {counts.completed} done · {counts.failed} failed
+                    {counts.running} running · {counts.succeeded} done · {counts.failed} failed
                   </span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--oc-surface)">
