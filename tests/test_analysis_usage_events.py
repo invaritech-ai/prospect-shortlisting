@@ -161,10 +161,6 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
 
     monkeypatch.setattr("app.services.analysis_service._analysis_llm", _DummyLlm())
     monkeypatch.setattr(
-        "app.services.analysis_service.enqueue_s3_for_analysis_success",
-        lambda **kwargs: None,
-    )
-    monkeypatch.setattr(
         "app.services.analysis_service.recompute_company_stages",
         lambda *args, **kwargs: None,
     )
