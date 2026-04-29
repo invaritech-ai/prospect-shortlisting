@@ -32,7 +32,7 @@ class PipelineRunStartResponse(BaseModel):
 class PipelineStageProgressRead(BaseModel):
     queued: int = 0
     running: int = 0
-    completed: int = 0
+    succeeded: int = 0
     failed: int = 0
     total: int = 0
 

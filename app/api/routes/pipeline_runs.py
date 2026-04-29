@@ -53,7 +53,7 @@ run_service = RunService()
 
 
 def _zero_progress() -> PipelineStageProgressRead:
-    return PipelineStageProgressRead(queued=0, running=0, completed=0, failed=0, total=0)
+    return PipelineStageProgressRead(queued=0, running=0, succeeded=0, failed=0, total=0)
 
 
 def _increment_progress(counter: PipelineStageProgressRead, status: str) -> None:
@@ -63,7 +63,7 @@ def _increment_progress(counter: PipelineStageProgressRead, status: str) -> None
     elif normalized == "running":
         counter.running += 1
     elif normalized == "succeeded":
-        counter.completed += 1
+        counter.succeeded += 1
     elif normalized in {"failed", "dead", "cancelled"}:
         counter.failed += 1
     counter.total += 1
@@ -378,7 +378,7 @@ def get_pipeline_run_progress(run_id: UUID, session: Session = Depends(get_sessi
         _increment_progress(stages[PipelineStage.VALIDATION.value], str(state))
 
     total_stage_rows = sum(stage.total for stage in stages.values())
-    terminal_stage_rows = sum(stage.completed + stage.failed for stage in stages.values())
+    terminal_stage_rows = sum(stage.succeeded + stage.failed for stage in stages.values())
     computed_status = run.state
     if total_stage_rows > 0 and terminal_stage_rows >= total_stage_rows:
         computed_status = PipelineRunStatus.SUCCEEDED if run.failed_count == 0 else PipelineRunStatus.FAILED

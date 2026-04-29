@@ -15,6 +15,10 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
+    return [member.value for member in enum_cls]
+
+
 class CrawlJobState(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -156,7 +160,20 @@ class CrawlJob(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     upload_id: UUID = Field(foreign_key="uploads.id", index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
-    state: CrawlJobState = Field(default=CrawlJobState.QUEUED, index=True)
+    state: CrawlJobState = Field(
+        default=CrawlJobState.QUEUED,
+        sa_column=Column(
+            SAEnum(
+                CrawlJobState,
+                values_callable=_enum_values,
+                name="crawljobstate",
+                create_type=False,
+            ),
+            default=CrawlJobState.QUEUED,
+            nullable=False,
+            index=True,
+        ),
+    )
     attempt_count: int = Field(default=0, ge=0)
     max_attempts: int = Field(default=3, ge=1)
     last_error_code: str | None = Field(default=None, max_length=128)
@@ -234,7 +251,20 @@ class Run(SQLModel, table=True):
     prompt_id: UUID = Field(foreign_key="prompts.id", index=True)
     general_model: str = Field(max_length=128)
     classify_model: str = Field(max_length=128)
-    status: RunStatus = Field(default=RunStatus.CREATED, index=True)
+    status: RunStatus = Field(
+        default=RunStatus.CREATED,
+        sa_column=Column(
+            SAEnum(
+                RunStatus,
+                values_callable=_enum_values,
+                name="runstatus",
+                create_type=False,
+            ),
+            default=RunStatus.CREATED,
+            nullable=False,
+            index=True,
+        ),
+    )
     total_jobs: int = Field(default=0, ge=0)
     completed_jobs: int = Field(default=0, ge=0)
     failed_jobs: int = Field(default=0, ge=0)
@@ -254,7 +284,20 @@ class AnalysisJob(SQLModel, table=True):
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     crawl_artifact_id: UUID = Field(foreign_key="crawl_artifacts.id", index=True)
 
-    state: AnalysisJobState = Field(default=AnalysisJobState.QUEUED, index=True)
+    state: AnalysisJobState = Field(
+        default=AnalysisJobState.QUEUED,
+        sa_column=Column(
+            SAEnum(
+                AnalysisJobState,
+                values_callable=_enum_values,
+                name="analysisjobstate",
+                create_type=False,
+            ),
+            default=AnalysisJobState.QUEUED,
+            nullable=False,
+            index=True,
+        ),
+    )
     terminal_state: bool = Field(default=False)
     attempt_count: int = Field(default=0, ge=0)
     max_attempts: int = Field(default=3, ge=1)
@@ -280,7 +323,18 @@ class ClassificationResult(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     analysis_job_id: UUID = Field(foreign_key="analysis_jobs.id", index=True)
-    predicted_label: PredictedLabel = Field(index=True)
+    predicted_label: PredictedLabel = Field(
+        sa_column=Column(
+            SAEnum(
+                PredictedLabel,
+                values_callable=_enum_values,
+                name="predictedlabel",
+                create_type=False,
+            ),
+            nullable=False,
+            index=True,
+        ),
+    )
     confidence: Decimal | None = Field(default=None, sa_column=Column(Numeric(5, 4), nullable=True))
     reasoning_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     evidence_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -308,7 +362,18 @@ class JobEvent(SQLModel, table=True):
     __tablename__ = "job_events"
 
     id: int | None = Field(default=None, primary_key=True)
-    job_type: JobType = Field(index=True)
+    job_type: JobType = Field(
+        sa_column=Column(
+            SAEnum(
+                JobType,
+                values_callable=_enum_values,
+                name="jobtype",
+                create_type=False,
+            ),
+            nullable=False,
+            index=True,
+        ),
+    )
     job_id: UUID = Field(index=True)
     from_state: str | None = Field(default=None, max_length=64)
     to_state: str = Field(max_length=64)
@@ -444,7 +509,7 @@ class ContactFetchJob(SQLModel, table=True):
         sa_column=Column(
             SAEnum(
                 ContactFetchJobState,
-                values_callable=lambda x: [e.value for e in x],
+                values_callable=_enum_values,
                 name="contactfetchjobstate",
                 create_type=False,
             ),
@@ -550,7 +615,7 @@ class ContactRevealJob(SQLModel, table=True):
         sa_column=Column(
             SAEnum(
                 ContactFetchJobState,
-                values_callable=lambda x: [e.value for e in x],
+                values_callable=_enum_values,
                 name="contactrevealjobstate",
                 create_type=False,
             ),

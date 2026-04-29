@@ -29,13 +29,13 @@ SCRAPE_RUNNING_STUCK_MINUTES = 35
 
 router = APIRouter(prefix="/v1", tags=["stats"])
 
-_SAMPLE_SIZE = 100  # recent completed jobs used to estimate average duration
+_SAMPLE_SIZE = 100  # recent succeeded jobs used to estimate average duration
 _THROUGHPUT_WINDOW_MINUTES = 60  # look back this far to measure jobs/sec throughput
 
 
 class PipelineStageStats(BaseModel):
     total: int
-    completed: int
+    succeeded: int
     failed: int
     site_unavailable: int
     running: int
@@ -185,7 +185,7 @@ def _scrape_stats(
     row = session.exec(
         select(
             func.count().label("total"),
-            func.count(case((literal_column("lo.state") == "succeeded", 1))).label("completed"),
+            func.count(case((literal_column("lo.state") == "succeeded", 1))).label("succeeded"),
             func.count(case((literal_column("lo.failure_reason") == "site_unavailable", 1))).label("site_unavailable"),
             func.count(case((
                 literal_column("lo.terminal_state").is_(True)
@@ -208,7 +208,7 @@ def _scrape_stats(
     ).one()
 
     # job-based counts from the dedup window query
-    completed = row.completed or 0
+    succeeded = row.succeeded or 0
     site_unavailable = row.site_unavailable or 0
     failed = row.failed or 0
     running = row.running or 0
@@ -218,7 +218,7 @@ def _scrape_stats(
     total = total_companies
 
     # Prefer started_at/finished_at; fall back to created_at/updated_at for
-    # jobs completed before the Celery migration added those timestamps.
+    # jobs succeeded before the Celery migration added those timestamps.
     recent_stmt = (
         select(
             ScrapeJob.started_at,
@@ -258,7 +258,7 @@ def _scrape_stats(
             avg_job_sec = sum(durations) / len(durations)
 
     remaining = queued + running
-    pct_done = (completed + failed + site_unavailable) / total if total else 0.0
+    pct_done = (succeeded + failed + site_unavailable) / total if total else 0.0
 
     # Throughput-based ETA: count jobs finished in the last N minutes,
     # compute jobs/sec, divide remaining by that rate.
@@ -298,7 +298,7 @@ def _scrape_stats(
 
     return PipelineStageStats(
         total=total,
-        completed=completed,
+        succeeded=succeeded,
         failed=failed,
         site_unavailable=site_unavailable,
         running=running,
@@ -317,7 +317,7 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
 
     base = select(
         func.count().label("total"),
-        func.count(case((col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED, 1))).label("completed"),
+        func.count(case((col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED, 1))).label("succeeded"),
         func.count(case((
             col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD]),
             1,
@@ -338,7 +338,7 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
         base = base.where(col(AnalysisJob.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
     row = session.exec(base).one()
 
-    completed = row.completed or 0
+    succeeded = row.succeeded or 0
     failed = row.failed or 0
     running = row.running or 0
     queued = row.queued or 0
@@ -364,7 +364,7 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
             avg_job_sec = sum(durations) / len(durations)
 
     remaining = queued + running
-    pct_done = (completed + failed) / total if total else 0.0
+    pct_done = (succeeded + failed) / total if total else 0.0
 
     throughput_window = now - timedelta(minutes=_THROUGHPUT_WINDOW_MINUTES)
     finished_stmt = select(func.count(AnalysisJob.id)).where(
@@ -389,7 +389,7 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
 
     return PipelineStageStats(
         total=total,
-        completed=completed,
+        succeeded=succeeded,
         failed=failed,
         site_unavailable=0,
         running=running,
@@ -405,7 +405,7 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
 def _contact_fetch_stats(session: Session, campaign_id: UUID, upload_id: UUID | None = None) -> PipelineStageStats:
     base = select(
         func.count().label("total"),
-        func.count(case((col(ContactFetchJob.state) == ContactFetchJobState.SUCCEEDED, 1))).label("completed"),
+        func.count(case((col(ContactFetchJob.state) == ContactFetchJobState.SUCCEEDED, 1))).label("succeeded"),
         func.count(case((col(ContactFetchJob.state) == ContactFetchJobState.FAILED, 1))).label("failed"),
         func.count(case((col(ContactFetchJob.state) == ContactFetchJobState.RUNNING, 1))).label("running"),
         func.count(case((col(ContactFetchJob.state) == ContactFetchJobState.QUEUED, 1))).label("queued"),
@@ -424,15 +424,15 @@ def _contact_fetch_stats(session: Session, campaign_id: UUID, upload_id: UUID | 
         base = base.where(col(Company.upload_id) == upload_id)
     row = session.exec(base).one()
     total = row.total or 0
-    completed = row.completed or 0
+    succeeded = row.succeeded or 0
     failed = row.failed or 0
     running = row.running or 0
     queued = row.queued or 0
     stuck_count = row.stuck_count or 0
-    pct_done = (completed + failed) / total if total else 0.0
+    pct_done = (succeeded + failed) / total if total else 0.0
     return PipelineStageStats(
         total=total,
-        completed=completed,
+        succeeded=succeeded,
         failed=failed,
         site_unavailable=0,
         running=running,
@@ -449,7 +449,7 @@ def _contact_reveal_stats(session: Session, campaign_id: UUID, upload_id: UUID |
     base = (
         select(
             func.count().label("total"),
-            func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.SUCCEEDED, 1))).label("completed"),
+            func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.SUCCEEDED, 1))).label("succeeded"),
             func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.FAILED, 1))).label("failed"),
             func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.RUNNING, 1))).label("running"),
             func.count(case((col(ContactRevealJob.state) == ContactFetchJobState.QUEUED, 1))).label("queued"),
@@ -473,15 +473,15 @@ def _contact_reveal_stats(session: Session, campaign_id: UUID, upload_id: UUID |
         base = base.where(col(Company.upload_id) == upload_id)
     row = session.exec(base).one()
     total = row.total or 0
-    completed = row.completed or 0
+    succeeded = row.succeeded or 0
     failed = row.failed or 0
     running = row.running or 0
     queued = row.queued or 0
     stuck_count = row.stuck_count or 0
-    pct_done = (completed + failed) / total if total else 0.0
+    pct_done = (succeeded + failed) / total if total else 0.0
     return PipelineStageStats(
         total=total,
-        completed=completed,
+        succeeded=succeeded,
         failed=failed,
         site_unavailable=0,
         running=running,
@@ -510,7 +510,7 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
     if not company_contact_ids:
         return PipelineStageStats(
             total=0,
-            completed=0,
+            succeeded=0,
             failed=0,
             site_unavailable=0,
             running=0,
@@ -539,7 +539,7 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
         if not matching_job_ids:
             return PipelineStageStats(
                 total=0,
-                completed=0,
+                succeeded=0,
                 failed=0,
                 site_unavailable=0,
                 running=0,
@@ -552,7 +552,7 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
             )
         stats_stmt = select(
             func.count().label("total"),
-            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("completed"),
+            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("succeeded"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.FAILED, 1))).label("failed"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.RUNNING, 1))).label("running"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.QUEUED, 1))).label("queued"),
@@ -573,7 +573,7 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
         if not matching_job_ids:
             return PipelineStageStats(
                 total=0,
-                completed=0,
+                succeeded=0,
                 failed=0,
                 site_unavailable=0,
                 running=0,
@@ -586,7 +586,7 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
             )
         stats_stmt = select(
             func.count().label("total"),
-            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("completed"),
+            func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.SUCCEEDED, 1))).label("succeeded"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.FAILED, 1))).label("failed"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.RUNNING, 1))).label("running"),
             func.count(case((col(ContactVerifyJob.state) == ContactVerifyJobState.QUEUED, 1))).label("queued"),
@@ -600,15 +600,15 @@ def _validation_stats(session: Session, campaign_id: UUID, upload_id: UUID | Non
         ).select_from(ContactVerifyJob).where(col(ContactVerifyJob.id).in_(matching_job_ids))
     row = session.exec(stats_stmt).one()
     total = row.total or 0
-    completed = row.completed or 0
+    succeeded = row.succeeded or 0
     failed = row.failed or 0
     running = row.running or 0
     queued = row.queued or 0
     stuck_count = row.stuck_count or 0
-    pct_done = (completed + failed) / total if total else 0.0
+    pct_done = (succeeded + failed) / total if total else 0.0
     return PipelineStageStats(
         total=total,
-        completed=completed,
+        succeeded=succeeded,
         failed=failed,
         site_unavailable=0,
         running=running,

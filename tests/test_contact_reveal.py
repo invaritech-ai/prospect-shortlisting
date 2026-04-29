@@ -4,7 +4,6 @@ from __future__ import annotations
 from unittest.mock import patch
 from uuid import uuid4
 
-import pytest
 from sqlmodel import Session, col, select
 
 from app.models import (
@@ -342,7 +341,7 @@ def test_reveal_batch_completes_when_all_jobs_succeed(sqlite_engine, sqlite_sess
     assert finalized.revealed_count == 1
 
     sqlite_session.refresh(batch)
-    assert batch.state == ContactFetchBatchState.COMPLETED
+    assert batch.state == ContactFetchBatchState.SUCCEEDED
 
 
 def test_reveal_batch_fails_when_all_jobs_dead(sqlite_engine, sqlite_session: Session):

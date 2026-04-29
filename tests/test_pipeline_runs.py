@@ -186,7 +186,7 @@ def test_start_pipeline_run_reuses_completed_scrape_jobs(sqlite_session: Session
             website_url=reused_company.normalized_url,
             normalized_url=reused_company.normalized_url,
             domain=reused_company.domain,
-            status="completed",
+            state="succeeded",
             terminal_state=True,
             pages_fetched_count=1,
         )
@@ -241,7 +241,7 @@ def test_orchestrator_s1_to_s2_creates_analysis_jobs_and_enqueues(monkeypatch: p
     sqlite_session.add(prompt)
     run = PipelineRun(
         campaign_id=campaign.id,
-        status=PipelineRunStatus.RUNNING,
+        state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
         analysis_prompt_snapshot={"prompt_id": str(prompt.id)},
     )
@@ -254,7 +254,7 @@ def test_orchestrator_s1_to_s2_creates_analysis_jobs_and_enqueues(monkeypatch: p
         website_url=company.normalized_url,
         normalized_url=company.normalized_url,
         domain=company.domain,
-        status="completed",
+        state="succeeded",
         terminal_state=True,
         pages_fetched_count=1,
         pipeline_run_id=run.id,
@@ -297,7 +297,7 @@ def test_orchestrator_s2_to_s3_creates_contact_fetch_job(monkeypatch: pytest.Mon
     campaign, company = _seed_campaign_with_company(sqlite_session)
     run = PipelineRun(
         campaign_id=campaign.id,
-        status=PipelineRunStatus.RUNNING,
+        state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
     )
     sqlite_session.add(run)
@@ -361,7 +361,7 @@ def test_pipeline_run_progress_returns_stage_counters(sqlite_session: Session) -
     campaign, company = _seed_campaign_with_company(sqlite_session)
     run = PipelineRun(
         campaign_id=campaign.id,
-        status=PipelineRunStatus.RUNNING,
+        state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
     )
     sqlite_session.add(run)
@@ -372,7 +372,7 @@ def test_pipeline_run_progress_returns_stage_counters(sqlite_session: Session) -
             website_url="https://example.com",
             normalized_url="https://example.com",
             domain="example.com",
-            status="completed",
+            state="succeeded",
             terminal_state=True,
             pipeline_run_id=run.id,
         )
@@ -407,16 +407,16 @@ def test_pipeline_run_progress_returns_stage_counters(sqlite_session: Session) -
     progress = get_pipeline_run_progress(run_id=run.id, session=sqlite_session)
 
     assert progress.pipeline_run_id == run.id
-    assert progress.status == PipelineRunStatus.RUNNING
-    assert progress.stages["s1_scrape"].completed == 1
-    assert progress.stages["s2_analysis"].failed == 1
-    assert progress.stages["s3_contacts"].running == 1
-    assert progress.stages["s4_validation"].queued == 1
+    assert progress.state == PipelineRunStatus.RUNNING
+    assert progress.stages["scrape"].succeeded == 1
+    assert progress.stages["analysis"].failed == 1
+    assert progress.stages["contacts"].running == 1
+    assert progress.stages["validation"].queued == 1
 
 
 def test_pipeline_run_costs_aggregate_by_stage(sqlite_session: Session) -> None:
     campaign, company = _seed_campaign_with_company(sqlite_session)
-    run = PipelineRun(campaign_id=campaign.id, status=PipelineRunStatus.QUEUED, company_ids_snapshot=[str(company.id)])
+    run = PipelineRun(campaign_id=campaign.id, state=PipelineRunStatus.QUEUED, company_ids_snapshot=[str(company.id)])
     sqlite_session.add(run)
     sqlite_session.flush()
     sqlite_session.add_all(
@@ -425,21 +425,21 @@ def test_pipeline_run_costs_aggregate_by_stage(sqlite_session: Session) -> None:
                 pipeline_run_id=run.id,
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s2_analysis",
+                stage="analysis",
                 billed_cost_usd=Decimal("0.120000"),
             ),
             AiUsageEvent(
                 pipeline_run_id=run.id,
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s2_analysis",
+                stage="analysis",
                 billed_cost_usd=Decimal("0.080000"),
             ),
             AiUsageEvent(
                 pipeline_run_id=run.id,
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s3_contacts",
+                stage="contacts",
                 billed_cost_usd=Decimal("0.050000"),
             ),
         ]
@@ -448,8 +448,8 @@ def test_pipeline_run_costs_aggregate_by_stage(sqlite_session: Session) -> None:
 
     result = get_pipeline_run_costs(run_id=run.id, session=sqlite_session)
     assert result.total_cost_usd == Decimal("0.250000")
-    assert result.by_stage["s2_analysis"].cost_usd == Decimal("0.200000")
-    assert result.by_stage["s3_contacts"].cost_usd == Decimal("0.050000")
+    assert result.by_stage["analysis"].cost_usd == Decimal("0.200000")
+    assert result.by_stage["contacts"].cost_usd == Decimal("0.050000")
 
 
 def test_campaign_costs_aggregate_by_stage(sqlite_session: Session) -> None:
@@ -459,13 +459,13 @@ def test_campaign_costs_aggregate_by_stage(sqlite_session: Session) -> None:
             AiUsageEvent(
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s2_analysis",
+                stage="analysis",
                 billed_cost_usd=Decimal("0.110000"),
             ),
             AiUsageEvent(
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s4_validation",
+                stage="validation",
                 billed_cost_usd=Decimal("0.090000"),
             ),
         ]
@@ -474,8 +474,8 @@ def test_campaign_costs_aggregate_by_stage(sqlite_session: Session) -> None:
 
     result = get_campaign_costs(campaign_id=campaign.id, session=sqlite_session)
     assert result.total_cost_usd == Decimal("0.200000")
-    assert result.by_stage["s2_analysis"].cost_usd == Decimal("0.110000")
-    assert result.by_stage["s4_validation"].cost_usd == Decimal("0.090000")
+    assert result.by_stage["analysis"].cost_usd == Decimal("0.110000")
+    assert result.by_stage["validation"].cost_usd == Decimal("0.090000")
 
 
 def test_cost_reconciliation_summary_counts_statuses(sqlite_session: Session) -> None:
@@ -485,21 +485,21 @@ def test_cost_reconciliation_summary_counts_statuses(sqlite_session: Session) ->
             AiUsageEvent(
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s2_analysis",
+                stage="analysis",
                 billed_cost_usd=Decimal("0.010000"),
                 reconciliation_status="pending",
             ),
             AiUsageEvent(
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s2_analysis",
+                stage="analysis",
                 billed_cost_usd=Decimal("0.020000"),
                 reconciliation_status="reconciled",
             ),
             AiUsageEvent(
                 campaign_id=campaign.id,
                 company_id=company.id,
-                stage="s2_analysis",
+                stage="analysis",
                 billed_cost_usd=Decimal("0.030000"),
                 reconciliation_status="reconciled",
             ),
@@ -532,7 +532,7 @@ def test_analysis_service_records_ai_usage_event(sqlite_engine, sqlite_session: 
     sqlite_session.add(run)
     pipeline_run = PipelineRun(
         campaign_id=campaign.id,
-        status=PipelineRunStatus.RUNNING,
+        state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
     )
     sqlite_session.add(pipeline_run)
@@ -566,7 +566,7 @@ def test_analysis_service_records_ai_usage_event(sqlite_engine, sqlite_session: 
         website_url=company.normalized_url,
         normalized_url=company.normalized_url,
         domain=company.domain,
-        status="completed",
+        state="succeeded",
         terminal_state=True,
         pages_fetched_count=1,
         pipeline_run_id=pipeline_run.id,
@@ -618,4 +618,4 @@ def test_analysis_service_records_ai_usage_event(sqlite_engine, sqlite_session: 
     event = sqlite_session.exec(select(AiUsageEvent).where(col(AiUsageEvent.company_id) == company.id)).one()
     assert event.pipeline_run_id == pipeline_run.id
     assert event.company_id == company.id
-    assert event.stage == "s2_analysis"
+    assert event.stage == "analysis"

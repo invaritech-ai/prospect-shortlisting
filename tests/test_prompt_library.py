@@ -46,7 +46,7 @@ def test_delete_prompt_with_runs_raises_409(sqlite_session: Session) -> None:
         prompt_id=p.id,
         general_model="gpt-4o",
         classify_model="gpt-4o",
-        status=RunStatus.COMPLETED,
+        status=RunStatus.SUCCEEDED,
     )
     sqlite_session.add(run)
     sqlite_session.commit()
@@ -65,7 +65,7 @@ def test_run_count_reflects_actual_runs(sqlite_session: Session) -> None:
         prompt_id=p.id,
         general_model="gpt-4o",
         classify_model="gpt-4o",
-        status=RunStatus.COMPLETED,
+        status=RunStatus.SUCCEEDED,
     )
     sqlite_session.add(run)
     sqlite_session.commit()

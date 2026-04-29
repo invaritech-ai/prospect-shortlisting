@@ -77,13 +77,13 @@ def list_scrape_jobs(
     session: Session = Depends(get_session),
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    status_filter: Literal["all", "active", "completed", "failed"] = Query(default="all"),
+    status_filter: Literal["all", "active", "succeeded", "completed", "failed"] = Query(default="all"),
     search: str | None = Query(default=None, max_length=200),
 ) -> list[ScrapeJobRead]:
     statement = select(ScrapeJob)
     if status_filter == "active":
         statement = statement.where(col(ScrapeJob.terminal_state).is_(False))
-    elif status_filter == "succeeded":
+    elif status_filter in {"succeeded", "completed"}:
         statement = statement.where(col(ScrapeJob.state) == "succeeded")
     elif status_filter == "failed":
         statement = statement.where(col(ScrapeJob.state) == "failed")
