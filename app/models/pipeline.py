@@ -27,13 +27,6 @@ class CrawlJobState(StrEnum):
     DEAD = "dead"
 
 
-class RunStatus(StrEnum):
-    CREATED = "created"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-
-
 class AnalysisJobState(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -243,46 +236,18 @@ class ScrapePrompt(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
-class Run(SQLModel, table=True):
-    __tablename__ = "runs"
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    upload_id: UUID = Field(foreign_key="uploads.id", index=True)
-    prompt_id: UUID = Field(foreign_key="prompts.id", index=True)
-    general_model: str = Field(max_length=128)
-    classify_model: str = Field(max_length=128)
-    status: RunStatus = Field(
-        default=RunStatus.CREATED,
-        sa_column=Column(
-            SAEnum(
-                RunStatus,
-                values_callable=_enum_values,
-                name="runstatus",
-                create_type=False,
-            ),
-            default=RunStatus.CREATED,
-            nullable=False,
-            index=True,
-        ),
-    )
-    total_jobs: int = Field(default=0, ge=0)
-    completed_jobs: int = Field(default=0, ge=0)
-    failed_jobs: int = Field(default=0, ge=0)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-
-
 class AnalysisJob(SQLModel, table=True):
     __tablename__ = "analysis_jobs"
-    __table_args__ = (UniqueConstraint("run_id", "company_id", name="uq_analysis_jobs_run_company"),)
+    __table_args__ = (UniqueConstraint("pipeline_run_id", "company_id", name="uq_analysis_jobs_pipeline_run_company"),)
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    run_id: UUID = Field(foreign_key="runs.id", index=True)
     pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
     upload_id: UUID = Field(foreign_key="uploads.id", index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     crawl_artifact_id: UUID = Field(foreign_key="crawl_artifacts.id", index=True)
+    prompt_id: UUID = Field(foreign_key="prompts.id", index=True)
+    general_model: str = Field(max_length=128)
+    classify_model: str = Field(max_length=128)
 
     state: AnalysisJobState = Field(
         default=AnalysisJobState.QUEUED,

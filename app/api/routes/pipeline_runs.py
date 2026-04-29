@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from decimal import Decimal
 from uuid import UUID
 
@@ -33,10 +34,12 @@ from app.models import (
     Upload,
 )
 from app.models.pipeline import (
+    AnalysisJobState,
     PipelineRunStatus,
     PipelineStage,
     utcnow,
 )
+from app.services.context_service import bulk_ensure_crawl_adapters, bulk_latest_completed_scrape_jobs
 from app.services.idempotency_service import (
     IdempotencyConflictError,
     IdempotencyUnavailableError,
@@ -45,11 +48,9 @@ from app.services.idempotency_service import (
     normalize_idempotency_key,
     store_idempotency_response,
 )
-from app.services.run_service import RunService
 from app.tasks.analysis import run_analysis_job
 
 router = APIRouter(prefix="/v1", tags=["pipeline-runs"])
-run_service = RunService()
 
 
 def _zero_progress() -> PipelineStageProgressRead:
@@ -67,6 +68,49 @@ def _increment_progress(counter: PipelineStageProgressRead, status: str) -> None
     elif normalized in {"failed", "dead", "cancelled"}:
         counter.failed += 1
     counter.total += 1
+
+
+def _create_analysis_jobs_for_companies(
+    *,
+    session: Session,
+    companies: list[Company],
+    prompt: Prompt,
+    pipeline_run_id: UUID,
+) -> tuple[list[AnalysisJob], list[UUID]]:
+    scrape_map = bulk_latest_completed_scrape_jobs(
+        session=session,
+        normalized_urls=[company.normalized_url for company in companies if company.normalized_url],
+    )
+    artifact_map = bulk_ensure_crawl_adapters(
+        session=session,
+        companies=companies,
+        scrape_map=scrape_map,
+    )
+    prompt_hash = hashlib.sha256(prompt.prompt_text.encode("utf-8")).hexdigest()
+    jobs: list[AnalysisJob] = []
+    skipped_company_ids: list[UUID] = []
+    for company in companies:
+        artifact = artifact_map.get(company.id)
+        if artifact is None:
+            skipped_company_ids.append(company.id)
+            continue
+        jobs.append(
+            AnalysisJob(
+                pipeline_run_id=pipeline_run_id,
+                upload_id=company.upload_id,
+                company_id=company.id,
+                crawl_artifact_id=artifact.id,
+                prompt_id=prompt.id,
+                general_model=settings.general_model,
+                classify_model=settings.classify_model,
+                state=AnalysisJobState.QUEUED,
+                terminal_state=False,
+                prompt_hash=prompt_hash,
+            )
+        )
+    session.add_all(jobs)
+    session.flush()
+    return jobs, skipped_company_ids
 
 
 def _empty_cost_summary(*, pipeline_run_id: UUID | None = None, campaign_id: UUID | None = None) -> PipelineCostSummaryRead:
@@ -275,22 +319,21 @@ def start_pipeline_run(
         queued_count = enqueue_result.queued_count
         reused_count = len(reused_company_ids)
         s2_jobs_count = 0
+        jobs_to_enqueue: list[AnalysisJob] = []
         if reused_company_ids:
             reused_companies = list(
                 session.exec(select(Company).where(col(Company.id).in_(reused_company_ids)))
             )
-            _runs, jobs, _ = run_service.create_runs(
+            jobs, skipped_s2_company_ids = _create_analysis_jobs_for_companies(
                 session=session,
                 companies=reused_companies,
-                prompt_id=analysis_prompt_id,
-                general_model=settings.general_model,
-                classify_model=settings.classify_model,
                 pipeline_run_id=run.id,
+                prompt=prompt,
             )
-            # Runs/jobs are flushed by service; queue jobs now, commit below.
-            for job in jobs:
-                run_analysis_job.delay(str(job.id))
+            if skipped_s2_company_ids:
+                run.skipped_count += len(skipped_s2_company_ids)
             s2_jobs_count = len(jobs)
+            jobs_to_enqueue = jobs
         run.reused_count = reused_count
         run.queued_count = queued_count
         run.failed_count = failed_count
@@ -324,6 +367,8 @@ def start_pipeline_run(
                 )
             )
         session.commit()
+        for job in jobs_to_enqueue:
+            run_analysis_job.delay(str(job.id))
 
         response = PipelineRunStartResponse(
             pipeline_run_id=run.id,

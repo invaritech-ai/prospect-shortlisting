@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 from sqlalchemy.engine import Engine
@@ -24,7 +25,7 @@ from app.models.pipeline import (
 )
 from app.services.contact_queue_service import ContactQueueService
 from app.services.contact_runtime_service import ContactRuntimeService
-from app.services.run_service import RunService
+from app.services.context_service import bulk_ensure_crawl_adapters, bulk_latest_completed_scrape_jobs
 
 
 def _parse_prompt_id(snapshot: dict | None) -> UUID | None:
@@ -64,7 +65,8 @@ def enqueue_s2_for_scrape_success(engine: Engine, scrape_job_id: UUID) -> None:
             return
 
         prompt_id = _parse_prompt_id(run.analysis_prompt_snapshot)
-        if prompt_id is None or session.get(Prompt, prompt_id) is None:
+        prompt = session.get(Prompt, prompt_id) if prompt_id is not None else None
+        if prompt is None:
             return
 
         company_ids = _snapshot_company_ids(run)
@@ -81,16 +83,41 @@ def enqueue_s2_for_scrape_success(engine: Engine, scrape_job_id: UUID) -> None:
         if not companies:
             return
 
-        queued_runs, queued_jobs, skipped_company_ids = RunService().create_runs(
+        scrape_map = bulk_latest_completed_scrape_jobs(
+            session=session,
+            normalized_urls=[company.normalized_url for company in companies if company.normalized_url],
+        )
+        artifact_map = bulk_ensure_crawl_adapters(
             session=session,
             companies=companies,
-            prompt_id=prompt_id,
-            general_model=settings.general_model,
-            classify_model=settings.classify_model,
-            pipeline_run_id=run.id,
+            scrape_map=scrape_map,
         )
+        prompt_hash = hashlib.sha256(prompt.prompt_text.encode("utf-8")).hexdigest()
+        queued_jobs: list[AnalysisJob] = []
+        skipped_company_ids: list[UUID] = []
+        for company in companies:
+            artifact = artifact_map.get(company.id)
+            if artifact is None:
+                skipped_company_ids.append(company.id)
+                continue
+            queued_jobs.append(
+                AnalysisJob(
+                    pipeline_run_id=run.id,
+                    upload_id=company.upload_id,
+                    company_id=company.id,
+                    crawl_artifact_id=artifact.id,
+                    prompt_id=prompt.id,
+                    general_model=settings.general_model,
+                    classify_model=settings.classify_model,
+                    state=AnalysisJobState.QUEUED,
+                    terminal_state=False,
+                    prompt_hash=prompt_hash,
+                )
+            )
         if not queued_jobs:
             return
+        session.add_all(queued_jobs)
+        session.flush()
 
         session.add(
             PipelineRunEvent(
@@ -100,7 +127,6 @@ def enqueue_s2_for_scrape_success(engine: Engine, scrape_job_id: UUID) -> None:
                 payload_json={
                     "scrape_job_id": str(scrape_job.id),
                     "queued_analysis_jobs": len(queued_jobs),
-                    "queued_runs": len(queued_runs),
                     "skipped_companies": len(skipped_company_ids),
                 },
             )

@@ -23,7 +23,6 @@ from app.models.pipeline import (
     PipelineRunEvent,
     Prompt,
     ScrapePrompt,
-    Run,
     TitleMatchRule,
     Upload,
 )
@@ -43,7 +42,6 @@ __all__ = [
     "CrawlArtifact",
     "Prompt",
     "ScrapePrompt",
-    "Run",
     "AnalysisJob",
     "ClassificationResult",
     "JobEvent",

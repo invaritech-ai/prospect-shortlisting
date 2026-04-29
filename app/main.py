@@ -13,7 +13,6 @@ from app.api.routes.pipeline_runs import router as pipeline_runs_router
 from app.api.routes.prompts import router as prompts_router
 from app.api.routes.queue_admin import router as queue_admin_router
 from app.api.routes.queue_history import router as queue_history_router
-from app.api.routes.runs import router as runs_router
 from app.api.routes.scrape_actions import router as scrape_actions_router
 from app.api.routes.scrape_jobs import router as scrape_jobs_router
 from app.api.routes.scrape_prompts import router as scrape_prompts_router
@@ -65,7 +64,6 @@ def create_app() -> FastAPI:
     app.include_router(prompts_router)
     app.include_router(queue_admin_router)
     app.include_router(queue_history_router)
-    app.include_router(runs_router)
     app.include_router(scrape_actions_router)
     app.include_router(scrape_jobs_router)
     app.include_router(scrape_prompts_router)

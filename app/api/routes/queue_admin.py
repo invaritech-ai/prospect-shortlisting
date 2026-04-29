@@ -1,4 +1,4 @@
-"""Operator queue-management endpoints: drain, reset stuck, mark failed, refresh runs."""
+"""Operator queue-management endpoints: drain, reset stuck, mark failed."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import case, or_, update
+from sqlalchemy import or_, update
 from sqlmodel import Session, col, func, select
 
 from app.api.schemas.contacts import (
@@ -28,7 +28,6 @@ from app.models import (
     ContactFetchBatch,
     ContactFetchJob,
     ContactProviderAttempt,
-    Run,
     ScrapeJob,
     Upload,
 )
@@ -36,7 +35,6 @@ from app.models.pipeline import (
     AnalysisJobState,
     ContactFetchJobState,
     ContactProviderAttemptState,
-    RunStatus,
 )
 from app.services.contact_queue_service import ContactQueueService
 from app.services.contact_runtime_service import ContactRuntimeService
@@ -74,10 +72,6 @@ class ResetStuckAnalysisResult(BaseModel):
 
 class MarkEmptyCompletedResult(BaseModel):
     marked_count: int
-
-
-class RefreshRunStatusResult(BaseModel):
-    refreshed_count: int
 
 
 class RecomputePipelineStagesResult(BaseModel):
@@ -239,54 +233,6 @@ def mark_empty_completed_failed(session: Session = Depends(get_session)) -> Mark
     )
     session.commit()
     return MarkEmptyCompletedResult(marked_count=result.rowcount or 0)  # type: ignore[union-attr]
-
-
-@router.post("/runs/refresh-status", response_model=RefreshRunStatusResult)
-def refresh_run_statuses(session: Session = Depends(get_session)) -> RefreshRunStatusResult:
-    """Recalculate status/progress for all non-completed runs based on current job states."""
-    runs = list(
-        session.exec(
-            select(Run).where(col(Run.status).in_([RunStatus.RUNNING, RunStatus.CREATED]))
-        )
-    )
-    if not runs:
-        return RefreshRunStatusResult(refreshed_count=0)
-
-    run_ids = [r.id for r in runs]
-    agg_rows = session.exec(
-        select(
-            AnalysisJob.run_id,
-            func.count(case((col(AnalysisJob.state) == AnalysisJobState.SUCCEEDED, 1))).label("succeeded"),
-            func.count(case((col(AnalysisJob.state).in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD]), 1))).label("failed"),
-            func.count(case((col(AnalysisJob.terminal_state).is_(True), 1))).label("terminal"),
-        )
-        .where(col(AnalysisJob.run_id).in_(run_ids))
-        .group_by(AnalysisJob.run_id)
-    ).all()
-
-    counts = {row.run_id: row for row in agg_rows}
-    now = datetime.now(timezone.utc)
-    for run in runs:
-        if run.total_jobs == 0:
-            continue
-        row = counts.get(run.id)
-        succeeded = row.succeeded if row else 0
-        failed = row.failed if row else 0
-        terminal = row.terminal if row else 0
-
-        run.completed_jobs = succeeded
-        run.failed_jobs = failed
-        is_done = terminal >= run.total_jobs
-        if is_done:
-            run.status = RunStatus.FAILED if failed > 0 else RunStatus.SUCCEEDED
-            if not run.finished_at:
-                run.finished_at = now
-        else:
-            run.status = RunStatus.RUNNING
-        session.add(run)
-
-    session.commit()
-    return RefreshRunStatusResult(refreshed_count=len(runs))
 
 
 @router.post("/pipeline/recompute-stages", response_model=RecomputePipelineStagesResult)

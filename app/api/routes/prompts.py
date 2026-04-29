@@ -7,7 +7,7 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.prompt import PromptCreate, PromptRead, PromptUpdate
 from app.db.session import get_session
-from app.models import Prompt, Run
+from app.models import AnalysisJob, Prompt
 
 router = APIRouter(prefix="/v1", tags=["prompts"])
 
@@ -30,9 +30,9 @@ def list_prompts(
     prompt_ids = [p.id for p in prompts]
     run_count_rows = list(
         session.exec(
-            select(Run.prompt_id, func.count(Run.id).label("cnt"))
-            .where(col(Run.prompt_id).in_(prompt_ids))
-            .group_by(Run.prompt_id)
+            select(AnalysisJob.prompt_id, func.count(AnalysisJob.id).label("cnt"))
+            .where(col(AnalysisJob.prompt_id).in_(prompt_ids))
+            .group_by(AnalysisJob.prompt_id)
         ).all()
     )
     run_count_map: dict = {row[0]: int(row[1]) for row in run_count_rows}
@@ -70,7 +70,7 @@ def update_prompt(prompt_id: UUID, payload: PromptUpdate, session: Session = Dep
     session.commit()
     session.refresh(prompt)
     run_count = int(
-        session.exec(select(func.count(Run.id)).where(col(Run.prompt_id) == prompt_id)).one()
+        session.exec(select(func.count(AnalysisJob.id)).where(col(AnalysisJob.prompt_id) == prompt_id)).one()
     )
     return _as_prompt_read(prompt, run_count)
 
@@ -81,12 +81,12 @@ def delete_prompt(prompt_id: UUID, session: Session = Depends(get_session)) -> N
     if not prompt:
         raise HTTPException(status_code=404, detail="Prompt not found.")
     run_count = int(
-        session.exec(select(func.count(Run.id)).where(col(Run.prompt_id) == prompt_id)).one()
+        session.exec(select(func.count(AnalysisJob.id)).where(col(AnalysisJob.prompt_id) == prompt_id)).one()
     )
     if run_count > 0:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot delete: prompt has {run_count} associated run(s). Disable it instead.",
+            detail=f"Cannot delete: prompt has {run_count} associated analysis job(s). Disable it instead.",
         )
     session.delete(prompt)
     session.commit()

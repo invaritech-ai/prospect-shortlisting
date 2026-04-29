@@ -16,8 +16,6 @@ from app.models.pipeline import (
     JobEvent,
     JobType,
     PredictedLabel,
-    Run,
-    RunStatus,
 )
 
 
@@ -28,7 +26,6 @@ def _enum_values(enum_cls: type) -> list[str]:
 def test_native_db_enum_columns_bind_python_values() -> None:
     expected = {
         (CrawlJob, "state"): _enum_values(CrawlJobState),
-        (Run, "status"): _enum_values(RunStatus),
         (AnalysisJob, "state"): _enum_values(AnalysisJobState),
         (ClassificationResult, "predicted_label"): _enum_values(PredictedLabel),
         (JobEvent, "job_type"): _enum_values(JobType),

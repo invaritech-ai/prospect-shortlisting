@@ -8,10 +8,9 @@ from app.api.schemas.scrape import (
     ScrapePageContentRead,
     ScrapePageRead,
 )
-from app.api.schemas.analysis import AnalysisJobDetailRead, AnalysisRunJobRead
+from app.api.schemas.analysis import AnalysisJobDetailRead, AnalysisPipelineJobRead
 from app.api.schemas.prompt import PromptCreate, PromptRead, PromptUpdate
 from app.api.schemas.scrape_prompt import ScrapePromptCreate, ScrapePromptRead, ScrapePromptUpdate
-from app.api.schemas.run import RunCreateRequest, RunCreateResult, RunRead
 from app.api.schemas.upload import (
     CompanyList,
     CompanyDeleteRequest,
@@ -41,11 +40,8 @@ __all__ = [
     "ScrapePromptCreate",
     "ScrapePromptRead",
     "ScrapePromptUpdate",
-    "AnalysisRunJobRead",
+    "AnalysisPipelineJobRead",
     "AnalysisJobDetailRead",
-    "RunCreateRequest",
-    "RunCreateResult",
-    "RunRead",
     "UploadValidationError",
     "CompanyRead",
     "CompanyListItem",

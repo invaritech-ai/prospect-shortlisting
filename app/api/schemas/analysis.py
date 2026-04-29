@@ -9,9 +9,9 @@ from pydantic import BaseModel, field_validator
 from app.api.schemas.base import UTCReadModel
 
 
-class AnalysisRunJobRead(UTCReadModel):
+class AnalysisPipelineJobRead(UTCReadModel):
     analysis_job_id: UUID
-    run_id: UUID
+    pipeline_run_id: UUID | None
     company_id: UUID
     domain: str
     state: str
@@ -54,7 +54,7 @@ class FeedbackRead(UTCReadModel):
 
 class AnalysisJobDetailRead(UTCReadModel):
     analysis_job_id: UUID
-    run_id: UUID
+    pipeline_run_id: UUID | None
     company_id: UUID
     domain: str
     state: str
@@ -65,7 +65,7 @@ class AnalysisJobDetailRead(UTCReadModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     prompt_name: str
-    run_status: str
+    pipeline_run_state: str | None = None
     predicted_label: str | None = None
     confidence: float | None = None
     reasoning_json: dict[str, Any] | None = None

@@ -6,30 +6,30 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import String, cast
 from sqlmodel import Session, col, select
 
-from app.api.schemas.analysis import AnalysisJobDetailRead, AnalysisRunJobRead
+from app.api.schemas.analysis import AnalysisJobDetailRead, AnalysisPipelineJobRead
 from app.db.session import get_session
-from app.models import AnalysisJob, ClassificationResult, Company, Prompt, Run
+from app.models import AnalysisJob, ClassificationResult, Company, PipelineRun, Prompt
 
 
 router = APIRouter(prefix="/v1", tags=["analysis"])
 
 
-@router.get("/runs/{run_id}/jobs", response_model=list[AnalysisRunJobRead])
-def list_run_jobs(
-    run_id: UUID,
+@router.get("/pipeline-runs/{pipeline_run_id}/analysis-jobs", response_model=list[AnalysisPipelineJobRead])
+def list_pipeline_run_analysis_jobs(
+    pipeline_run_id: UUID,
     session: Session = Depends(get_session),
     limit: int = Query(default=500, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
-) -> list[AnalysisRunJobRead]:
-    run = session.get(Run, run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found.")
+) -> list[AnalysisPipelineJobRead]:
+    pipeline_run = session.get(PipelineRun, pipeline_run_id)
+    if not pipeline_run:
+        raise HTTPException(status_code=404, detail="Pipeline run not found.")
 
     rows = list(
         session.exec(
             select(
                 AnalysisJob.id,
-                AnalysisJob.run_id,
+                AnalysisJob.pipeline_run_id,
                 AnalysisJob.company_id,
                 Company.domain,
                 cast(AnalysisJob.state, String()),
@@ -44,16 +44,16 @@ def list_run_jobs(
             )
             .join(Company, Company.id == AnalysisJob.company_id)
             .outerjoin(ClassificationResult, ClassificationResult.analysis_job_id == AnalysisJob.id)
-            .where(col(AnalysisJob.run_id) == run_id)
+            .where(col(AnalysisJob.pipeline_run_id) == pipeline_run_id)
             .order_by(col(Company.domain).asc(), col(AnalysisJob.created_at).asc())
             .offset(offset)
             .limit(limit)
         )
     )
     return [
-        AnalysisRunJobRead(
+        AnalysisPipelineJobRead(
             analysis_job_id=row[0],
-            run_id=row[1],
+            pipeline_run_id=row[1],
             company_id=row[2],
             domain=row[3],
             state=row[4],
@@ -78,7 +78,7 @@ def get_analysis_job_detail(
     row = session.exec(
         select(
             AnalysisJob.id,
-            AnalysisJob.run_id,
+            AnalysisJob.pipeline_run_id,
             AnalysisJob.company_id,
             Company.domain,
             cast(AnalysisJob.state, String()),
@@ -89,15 +89,15 @@ def get_analysis_job_detail(
             AnalysisJob.started_at,
             AnalysisJob.finished_at,
             Prompt.name,
-            cast(Run.status, String()),
+            cast(PipelineRun.state, String()),
             cast(ClassificationResult.predicted_label, String()),
             ClassificationResult.confidence,
             ClassificationResult.reasoning_json,
             ClassificationResult.evidence_json,
         )
         .join(Company, Company.id == AnalysisJob.company_id)
-        .join(Run, Run.id == AnalysisJob.run_id)
-        .join(Prompt, Prompt.id == Run.prompt_id)
+        .outerjoin(PipelineRun, PipelineRun.id == AnalysisJob.pipeline_run_id)
+        .join(Prompt, Prompt.id == AnalysisJob.prompt_id)
         .outerjoin(ClassificationResult, ClassificationResult.analysis_job_id == AnalysisJob.id)
         .where(col(AnalysisJob.id) == analysis_job_id)
     ).first()
@@ -106,7 +106,7 @@ def get_analysis_job_detail(
 
     return AnalysisJobDetailRead(
         analysis_job_id=row[0],
-        run_id=row[1],
+        pipeline_run_id=row[1],
         company_id=row[2],
         domain=row[3],
         state=row[4],
@@ -117,7 +117,7 @@ def get_analysis_job_detail(
         started_at=row[9],
         finished_at=row[10],
         prompt_name=row[11],
-        run_status=row[12],
+        pipeline_run_state=row[12],
         predicted_label=row[13],
         confidence=float(row[14]) if row[14] is not None else None,
         reasoning_json=row[15],

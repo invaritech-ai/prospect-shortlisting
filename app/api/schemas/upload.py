@@ -79,7 +79,7 @@ class CompanyListItem(UTCReadModel):
     latest_scrape_job_id: UUID | None = None
     latest_scrape_status: str | None = None
     latest_scrape_terminal: bool | None = None
-    latest_analysis_run_id: UUID | None = None
+    latest_analysis_pipeline_run_id: UUID | None = None
     latest_analysis_job_id: UUID | None = None
     latest_analysis_status: str | None = None
     latest_analysis_terminal: bool | None = None

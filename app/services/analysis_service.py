@@ -20,7 +20,6 @@ from app.models import (
     ClassificationResult,
     Company,
     Prompt,
-    Run,
     Upload,
 )
 from app.models.pipeline import AnalysisJobState, PredictedLabel
@@ -33,7 +32,6 @@ from app.services.context_service import (
 from app.services.llm_client import ERR_API_KEY_MISSING, ERR_RATE_LIMITED, LLMClient
 from app.services.pipeline_service import recompute_company_stages
 from app.services.pipeline_run_orchestrator import enqueue_s3_for_analysis_success
-from app.services.run_service import RunService
 
 
 logger = logging.getLogger(__name__)
@@ -101,13 +99,6 @@ class AnalysisService:
         ERR_RATE_LIMITED:    "analysis_llm_rate_limited",
     }
 
-    def __init__(self) -> None:
-        self._run_service = RunService()
-
-    # ── Delegate create_runs to RunService (kept for backwards compat) ───────
-    def create_runs(self, **kwargs):  # type: ignore[override]
-        return self._run_service.create_runs(**kwargs)
-
     def run_analysis_job(self, *, engine: Any, analysis_job_id: UUID) -> AnalysisJob | None:
         """Run classification for a single AnalysisJob.
 
@@ -152,24 +143,21 @@ class AnalysisService:
                 session.add(analysis_job)
                 session.commit()
 
-            run = session.get(Run, analysis_job.run_id)
-            prompt = session.get(Prompt, run.prompt_id) if run else None
+            prompt = session.get(Prompt, analysis_job.prompt_id)
             company = session.get(Company, analysis_job.company_id)
             upload = session.get(Upload, company.upload_id) if company else None
-            if not run or not prompt or not company:
+            if not prompt or not company:
                 analysis_job.state = AnalysisJobState.FAILED
                 analysis_job.terminal_state = True
                 analysis_job.last_error_code = "analysis_dependencies_missing"
-                analysis_job.last_error_message = "Run, prompt, or company missing."
+                analysis_job.last_error_message = "Prompt or company missing."
                 analysis_job.finished_at = utcnow()
                 session.add(analysis_job)
                 session.commit()
-                self._run_service.refresh_run_status(session=session, run_id=analysis_job.run_id)
                 return analysis_job
 
             latest_scrape = latest_completed_scrape_job(session=session, normalized_url=company.normalized_url)
 
-            run_id = run.id
             attempt_count = analysis_job.attempt_count
             max_attempts = analysis_job.max_attempts
             campaign_id = upload.campaign_id if upload else None
@@ -189,7 +177,7 @@ class AnalysisService:
                     rendered_prompt = ""
                     input_hash = None
                 else:
-                    classify_model = run.classify_model
+                    classify_model = analysis_job.classify_model
                     rendered_prompt = render_prompt(
                         prompt_text=prompt.prompt_text,
                         domain=company.domain,
@@ -238,7 +226,6 @@ class AnalysisService:
                         recompute_company_stages(session, company_ids=[analysis_job.company_id])
                         session.commit()
                         log_event(logger, "analysis_cache_hit", analysis_job_id=str(analysis_job_id))
-                        self._run_service.refresh_run_status(session=session, run_id=run_id)
                         session.refresh(analysis_job)
                         enqueue_s3_for_analysis_success(engine=engine, analysis_job_id=analysis_job.id)
                         return analysis_job
@@ -251,7 +238,6 @@ class AnalysisService:
                 error_code=early_fail[0],
                 error_message=early_fail[1],
                 lock_token=lock_token,
-                run_id=run_id,
                 attempt_count=attempt_count,
                 max_attempts=max_attempts,
             )
@@ -283,7 +269,6 @@ class AnalysisService:
                 error_code=error_code,
                 error_message="Classification model returned no response.",
                 lock_token=lock_token,
-                run_id=run_id,
                 attempt_count=attempt_count,
                 max_attempts=max_attempts,
             )
@@ -336,7 +321,6 @@ class AnalysisService:
             session.add(analysis_job)
             recompute_company_stages(session, company_ids=[analysis_job.company_id])
             session.commit()
-            self._run_service.refresh_run_status(session=session, run_id=run_id)
             session.refresh(analysis_job)
             enqueue_s3_for_analysis_success(engine=engine, analysis_job_id=analysis_job.id)
             return analysis_job
@@ -349,7 +333,6 @@ class AnalysisService:
         error_code: str,
         error_message: str,
         lock_token: str,
-        run_id: UUID,
         attempt_count: int,
         max_attempts: int,
     ) -> AnalysisJob:
@@ -379,8 +362,6 @@ class AnalysisService:
             analysis_job.last_error_message = error_message
             session.add(analysis_job)
             session.commit()
-            if analysis_job.terminal_state:
-                self._run_service.refresh_run_status(session=session, run_id=run_id)
             session.refresh(analysis_job)
             return analysis_job
 

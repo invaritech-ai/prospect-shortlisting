@@ -79,7 +79,7 @@ def list_companies(
             latest_scrape_job_id=row[10],
             latest_scrape_status=str(row[11]) if row[11] is not None else None,
             latest_scrape_terminal=row[12],
-            latest_analysis_run_id=row[13],
+            latest_analysis_pipeline_run_id=row[13],
             latest_analysis_status=str(row[14]) if row[14] is not None else None,
             latest_analysis_terminal=row[15],
             latest_analysis_job_id=row[16],

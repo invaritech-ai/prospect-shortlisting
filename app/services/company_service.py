@@ -215,7 +215,7 @@ def _latest_analysis_subquery() -> Any:
         select(  # type: ignore[call-overload]
             col(AnalysisJob.company_id).label("company_id"),
             col(AnalysisJob.id).label("analysis_job_id"),
-            col(AnalysisJob.run_id).label("run_id"),
+            col(AnalysisJob.pipeline_run_id).label("pipeline_run_id"),
             cast(col(AnalysisJob.state), String()).label("state"),
             col(AnalysisJob.terminal_state).label("terminal_state"),
             activity_ts.label("analysis_updated_at"),
@@ -407,7 +407,7 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             col(Company.pipeline_stage), col(Company.created_at),
             ctx.latest_decision_text, ctx.latest_confidence,
             ctx.latest_scrape.c.job_id, ctx.latest_scrape.c.state, ctx.latest_scrape.c.terminal_state,
-            ctx.latest_analysis.c.run_id, ctx.latest_analysis.c.state,
+            ctx.latest_analysis.c.pipeline_run_id, ctx.latest_analysis.c.state,
             ctx.latest_analysis.c.terminal_state, ctx.latest_analysis.c.analysis_job_id,
             col(CompanyFeedback.thumbs), col(CompanyFeedback.comment), col(CompanyFeedback.manual_label),
             ctx.latest_scrape.c.last_error_code,

@@ -24,7 +24,6 @@ from app.models import (  # noqa: F401
     IntegrationSecret,
     JobEvent,
     Prompt,
-    Run,
     ScrapeJob,
     ScrapePage,
     TitleMatchRule,

@@ -29,7 +29,6 @@ from app.models import (  # noqa: F401
     PipelineRun,
     PipelineRunEvent,
     Prompt,
-    Run,
     ScrapeJob,
     ScrapePrompt,
     ScrapePage,
