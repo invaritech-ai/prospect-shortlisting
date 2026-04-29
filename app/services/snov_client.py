@@ -28,7 +28,8 @@ from urllib.request import Request, urlopen
 
 from app.core.logging import log_event
 from app.services import credentials_resolver
-from app.services.redis_client import get_redis
+def get_redis():
+    return None
 
 logger = logging.getLogger(__name__)
 

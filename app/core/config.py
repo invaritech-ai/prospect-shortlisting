@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_site_url: str = "https://local.prospect-shortlisting"
     openrouter_app_name: str = "prospect-shortlisting-scraper"
-    redis_url: str = "redis://127.0.0.1:6379/0"
     upload_file_ttl_hours: int = 24
     scrape_static_timeout_sec: float = 12.0
     scrape_stealth_timeout_ms: int = 120000  # 2 min — CAPTCHA solving + slow pages

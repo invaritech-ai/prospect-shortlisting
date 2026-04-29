@@ -7,8 +7,6 @@ from sqlmodel import Session, col, select
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
 from app.api.schemas.upload import (
-    CompanyDeleteQueued,
-    CompanyDeleteRequest,
     CompanyList,
     CompanyListItem,
 )
@@ -139,29 +137,3 @@ def upsert_company_feedback(
     )
 
 
-@router.delete("/companies", response_model=CompanyDeleteQueued)
-def delete_companies(
-    payload: CompanyDeleteRequest,
-    session: Session = Depends(get_session),
-) -> CompanyDeleteQueued:
-    from app.tasks.company import cascade_delete_companies as delete_task
-
-    company_ids = list(dict.fromkeys(payload.company_ids))
-    queued_ids = list(
-        session.exec(
-            select(Company.id)
-            .join(Upload, col(Upload.id) == col(Company.upload_id))
-            .where(
-                col(Upload.campaign_id) == payload.campaign_id,
-                col(Company.id).in_(company_ids),
-            )
-        )
-    )
-    if not queued_ids:
-        raise HTTPException(status_code=404, detail="No matching companies found in this campaign.")
-
-    delete_task.delay(
-        company_ids=[str(cid) for cid in queued_ids],
-        campaign_id=str(payload.campaign_id),
-    )
-    return CompanyDeleteQueued(queued_count=len(queued_ids), queued_ids=queued_ids)

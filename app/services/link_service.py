@@ -8,7 +8,8 @@ import re
 
 from app.services.fetch_service import fetch_with_fallback, should_skip_url
 from app.services.llm_client import LLMClient
-from app.services.redis_client import get_redis
+def get_redis():
+    return None
 from app.services.url_utils import canonical_internal_url, clean_text
 
 _LINK_CACHE_TTL = 86400  # 24 hours

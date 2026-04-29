@@ -12,20 +12,10 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
-    ContactFetchQueued,
-    ContactFetchRequest,
-    ContactCompanyListResponse,
-    ContactCompanySummary,
-    ContactCountsResponse,
-    ContactIdsResult,
     ContactListResponse,
     ContactRead,
     ContactRematchRequest,
     ContactRematchResult,
-    ContactRevealQueued,
-    ContactRevealRequest,
-    ContactVerifyQueued,
-    ContactVerifyRequest,
     RematchResult,
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
@@ -39,7 +29,6 @@ from app.models import (
     Campaign,
     Company,
     Contact,
-    ContactVerifyJob,
     TitleMatchRule,
     Upload,
 )
@@ -51,19 +40,26 @@ from app.services.contact_query_service import (
     parse_letters as _parse_letters,
     validate_campaign_upload_scope as _validate_campaign_upload_scope,
 )
-from app.services.contact_queue_service import ContactQueueService
-from app.services.contact_reveal_queue_service import ContactRevealQueueService
-from app.services.contact_reveal_queue_service import discovered_group_key
-from app.services.contact_verify_service import is_contact_verification_eligible
 from app.services.title_match_service import (
     compute_title_rule_stats,
     rematch_contacts as _rematch_contacts,
     seed_title_rules,
     test_title_match_detailed,
 )
-from app.tasks.contacts import verify_contacts_batch
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
+
+
+def _discovered_group_key(contact: Contact) -> str:
+    linkedin = (contact.linkedin_url or "").strip().lower()
+    if linkedin:
+        return f"linkedin:{linkedin}"
+    first_name = (contact.first_name or "").strip().lower()
+    last_name = (contact.last_name or "").strip().lower()
+    title = (contact.title or "").strip().lower()
+    if first_name and last_name and title:
+        return f"name_title:{first_name}|{last_name}|{title}"
+    return f"provider:{contact.source_provider}:{contact.provider_person_id}"
 
 
 def _campaign_or_404(session: Session, campaign_id: UUID) -> Campaign:
@@ -196,7 +192,7 @@ def list_all_contacts(
                     "domain": domain,
                     "emails": email_map.get(contact.id, []),
                     "freshness_status": "fresh",
-                    "group_key": discovered_group_key(contact),
+                    "group_key": _discovered_group_key(contact),
                     "last_seen_at": contact.last_seen_at,
                     "provider_has_email": contact.provider_has_email,
                     "source_provider": contact.source_provider,
@@ -240,165 +236,6 @@ def list_all_contacts(
     )
 
 
-@router.get("/contacts/ids", response_model=ContactIdsResult)
-def list_contact_ids(
-    campaign_id: UUID = Query(...),
-    title_match: bool | None = Query(default=None),
-    verification_status: str | None = Query(default=None),
-    stage_filter: str = Query(default="all"),
-    stale_days: int | None = Query(default=None, ge=1, le=365),
-    search: str | None = Query(default=None),
-    letters: str | None = Query(default=None),
-    upload_id: UUID | None = Query(default=None),
-    session: Session = Depends(get_session),
-) -> ContactIdsResult:
-    _campaign_or_404(session=session, campaign_id=campaign_id)
-    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
-    letter_values = _parse_letters(letters)
-    q = select(Contact.id).join(Company, col(Company.id) == col(Contact.company_id))
-    q = q.where(_campaign_upload_scope(campaign_id))
-    q = _apply_contact_filters(
-        q,
-        title_match=title_match,
-        verification_status=verification_status,
-        search=search,
-        stage_filter=stage_filter,
-        stale_days=stale_days,
-        letters=letter_values or None,
-    )
-    if upload_id is not None:
-        q = q.where(col(Company.upload_id) == upload_id)
-    ids = list(session.exec(q.order_by(col(Contact.last_seen_at).desc(), col(Contact.created_at).desc())).all())
-    return ContactIdsResult(ids=ids, total=len(ids))
-
-
-@router.get("/contacts/counts", response_model=ContactCountsResponse)
-def get_contact_counts(
-    campaign_id: UUID = Query(...),
-    session: Session = Depends(get_session),
-) -> ContactCountsResponse:
-    _campaign_or_404(session=session, campaign_id=campaign_id)
-    base = (
-        select(Contact)
-        .join(Company, col(Company.id) == col(Contact.company_id))
-        .where(_campaign_upload_scope(campaign_id))
-        .subquery()
-    )
-    row = session.exec(
-        select(
-            func.count().label("total"),
-            func.count().filter(base.c.title_match.is_(True)).label("matched"),
-            func.count().filter(base.c.email.is_not(None)).label("already_revealed"),
-        ).select_from(base)
-    ).one()
-    total = int(row.total or 0)
-    matched = int(row.matched or 0)
-    already_revealed = int(row.already_revealed or 0)
-    return ContactCountsResponse(
-        total=total,
-        matched=matched,
-        stale=0,
-        fresh=total,
-        already_revealed=already_revealed,
-    )
-
-
-@router.get("/contacts/companies", response_model=ContactCompanyListResponse)
-def list_contact_companies(
-    campaign_id: UUID = Query(...),
-    search: str | None = Query(default=None),
-    title_match: bool | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    session: Session = Depends(get_session),
-) -> ContactCompanyListResponse:
-    _campaign_or_404(session=session, campaign_id=campaign_id)
-    q = (
-        select(
-            Company.id,
-            Company.domain,
-            func.count(Contact.id).label("total_count"),
-            func.count().filter(col(Contact.title_match).is_(True)).label("title_matched_count"),
-            func.count().filter(col(Contact.email).is_not(None)).label("email_count"),
-            func.count().filter(col(Contact.pipeline_stage) == "fetched").label("fetched_count"),
-            func.count().filter(col(Contact.pipeline_stage) == "campaign_ready").label("campaign_ready_count"),
-            func.max(Contact.updated_at).label("last_contact_attempted_at"),
-        )
-        .join(Contact, col(Contact.company_id) == col(Company.id))
-        .where(_campaign_upload_scope(campaign_id))
-        .group_by(Company.id, Company.domain)
-    )
-    if title_match is not None:
-        q = q.where(col(Contact.title_match).is_(title_match))
-    if search:
-        q = q.where(col(Company.domain).ilike(f"%{search.strip()}%"))
-    rows = list(session.exec(q.order_by(col(Company.domain).asc()).offset(offset).limit(limit)).all())
-    total = session.exec(select(func.count()).select_from(q.subquery())).one()
-    items = [
-        ContactCompanySummary(
-            company_id=row[0],
-            domain=row[1],
-            total_count=int(row[2] or 0),
-            title_matched_count=int(row[3] or 0),
-            unmatched_count=max(0, int(row[2] or 0) - int(row[3] or 0)),
-            matched_no_email_count=max(0, int(row[3] or 0) - int(row[4] or 0)),
-            email_count=int(row[4] or 0),
-            fetched_count=int(row[5] or 0),
-            verified_count=0,
-            campaign_ready_count=int(row[6] or 0),
-            eligible_verify_count=0,
-            last_contact_attempted_at=row[7],
-        )
-        for row in rows
-    ]
-    return ContactCompanyListResponse(
-        total=int(total or 0),
-        has_more=(offset + len(items)) < int(total or 0),
-        limit=limit,
-        offset=offset,
-        items=items,
-    )
-
-
-@router.post("/contacts/fetch", response_model=ContactFetchQueued, status_code=202)
-def fetch_contacts_endpoint(
-    payload: ContactFetchRequest,
-    session: Session = Depends(get_session),
-) -> ContactFetchQueued:
-    campaign = session.get(Campaign, payload.campaign_id)
-    if campaign is None:
-        raise HTTPException(status_code=404, detail="Campaign not found.")
-
-    query = (
-        select(Company)
-        .join(Upload, col(Upload.id) == col(Company.upload_id))
-        .where(
-            col(Upload.campaign_id) == payload.campaign_id,
-            col(Company.pipeline_stage) == "contact_ready",
-        )
-    )
-    if payload.company_ids:
-        query = query.where(col(Company.id).in_(payload.company_ids))
-
-    companies = list(session.exec(query).all())
-    if not companies:
-        raise HTTPException(status_code=422, detail="No contact_ready companies found for this campaign.")
-
-    queue_service = ContactQueueService()
-    result = queue_service.enqueue_fetches(
-        session=session,
-        companies=companies,
-        provider_mode="both",
-        campaign_id=payload.campaign_id,
-        trigger_source="manual",
-    )
-    # Adapter: ContactEnqueueResult uses queued_job_ids, not job_ids
-    return ContactFetchQueued(
-        queued_count=result.queued_count,
-        job_ids=result.queued_job_ids,
-    )
-
-
 @router.post("/contacts/rematch", response_model=ContactRematchResult)
 def rematch_contacts_endpoint(
     payload: ContactRematchRequest,
@@ -421,91 +258,6 @@ def rematch_contacts_endpoint(
         campaign_id=payload.campaign_id,
         matched_count=updated,
         total_count=int(total),
-    )
-
-
-@router.post("/contacts/reveal", response_model=ContactRevealQueued, status_code=202)
-def reveal_contacts_endpoint(
-    payload: ContactRevealRequest,
-    session: Session = Depends(get_session),
-) -> ContactRevealQueued:
-    campaign = session.get(Campaign, payload.campaign_id)
-    if campaign is None:
-        raise HTTPException(status_code=404, detail="Campaign not found.")
-
-    # Fetch title-matched contacts that have not yet been revealed
-    contacts_to_reveal = list(
-        session.exec(
-            select(Contact)
-            .join(Company, col(Company.id) == col(Contact.company_id))
-            .join(Upload, col(Upload.id) == col(Company.upload_id))
-            .where(
-                col(Upload.campaign_id) == payload.campaign_id,
-                col(Contact.title_match).is_(True),
-                col(Contact.is_active).is_(True),
-                col(Contact.email).is_(None),
-            )
-        ).all()
-    )
-    if not contacts_to_reveal:
-        raise HTTPException(status_code=422, detail="No revealable contacts found for this campaign.")
-
-    reveal_service = ContactRevealQueueService()
-    result = reveal_service.enqueue_reveals(
-        session=session,
-        campaign_id=payload.campaign_id,
-        discovered_contacts=contacts_to_reveal,
-        reveal_scope="campaign",
-        trigger_source="manual",
-    )
-    if result.batch_id is None:
-        raise HTTPException(status_code=422, detail="Reveal is disabled or paused.")
-    # Adapter: ContactRevealEnqueueResult uses queued_job_ids; response schema uses job_id (batch)
-    return ContactRevealQueued(
-        queued_count=result.queued_count,
-        job_id=result.batch_id,
-    )
-
-
-@router.post("/contacts/verify", response_model=ContactVerifyQueued, status_code=202)
-def verify_contacts_endpoint(
-    payload: ContactVerifyRequest,
-    session: Session = Depends(get_session),
-) -> ContactVerifyQueued:
-    campaign = session.get(Campaign, payload.campaign_id)
-    if campaign is None:
-        raise HTTPException(status_code=404, detail="Campaign not found.")
-
-    eligible_contacts = list(
-        session.exec(
-            select(Contact)
-            .join(Company, col(Company.id) == col(Contact.company_id))
-            .join(Upload, col(Upload.id) == col(Company.upload_id))
-            .where(
-                col(Upload.campaign_id) == payload.campaign_id,
-                col(Contact.title_match).is_(True),
-                col(Contact.is_active).is_(True),
-                col(Contact.verification_status) == "unverified",
-                col(Contact.email).is_not(None),
-            )
-        ).all()
-    )
-    eligible_contacts = [c for c in eligible_contacts if is_contact_verification_eligible(c)]
-    if not eligible_contacts:
-        raise HTTPException(status_code=422, detail="No verification-eligible contacts found for this campaign.")
-
-    job = ContactVerifyJob(
-        contact_ids_json=[str(c.id) for c in eligible_contacts],
-        selected_count=len(eligible_contacts),
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    verify_contacts_batch.delay(str(job.id))
-
-    return ContactVerifyQueued(
-        queued_count=len(eligible_contacts),
-        job_id=job.id,
     )
 
 

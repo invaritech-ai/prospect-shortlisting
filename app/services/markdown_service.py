@@ -7,7 +7,8 @@ import html2text
 
 from app.services import credentials_resolver
 from app.services.llm_client import LLMClient
-from app.services.redis_client import get_redis
+def get_redis():
+    return None
 from app.services.url_utils import clean_text
 
 # Minimum meaningful chars from rule-based conversion before we try LLM.

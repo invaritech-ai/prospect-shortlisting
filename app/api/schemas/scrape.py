@@ -117,7 +117,7 @@ class JobActionResult(BaseModel):
 
 class JobEnqueueResult(BaseModel):
     job_id: UUID
-    celery_task_id: str
+    task_id: str
     message: str
     idempotency_key: str | None = None
     idempotency_replayed: bool = False

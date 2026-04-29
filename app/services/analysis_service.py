@@ -31,7 +31,6 @@ from app.services.context_service import (
 )
 from app.services.llm_client import ERR_API_KEY_MISSING, ERR_RATE_LIMITED, LLMClient
 from app.services.pipeline_service import recompute_company_stages
-from app.services.pipeline_run_orchestrator import enqueue_s3_for_analysis_success
 
 
 logger = logging.getLogger(__name__)
@@ -227,7 +226,6 @@ class AnalysisService:
                         session.commit()
                         log_event(logger, "analysis_cache_hit", analysis_job_id=str(analysis_job_id))
                         session.refresh(analysis_job)
-                        enqueue_s3_for_analysis_success(engine=engine, analysis_job_id=analysis_job.id)
                         return analysis_job
         # ── session closed; connection returned to pool ──────────────────────
 
