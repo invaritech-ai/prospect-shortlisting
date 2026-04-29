@@ -56,7 +56,7 @@ def enqueue_s2_for_scrape_success(engine: Engine, scrape_job_id: UUID) -> None:
             scrape_job is None
             or scrape_job.pipeline_run_id is None
             or not scrape_job.terminal_state
-            or scrape_job.status != "completed"
+            or scrape_job.state != "succeeded"
         ):
             return
         run = session.get(PipelineRun, scrape_job.pipeline_run_id)
@@ -95,7 +95,7 @@ def enqueue_s2_for_scrape_success(engine: Engine, scrape_job_id: UUID) -> None:
         session.add(
             PipelineRunEvent(
                 pipeline_run_id=run.id,
-                stage=PipelineStage.S2_ANALYSIS.value,
+                stage=PipelineStage.ANALYSIS.value,
                 event_type="s1_to_s2_queued",
                 payload_json={
                     "scrape_job_id": str(scrape_job.id),
@@ -177,7 +177,7 @@ def enqueue_s3_for_analysis_success(engine: Engine, analysis_job_id: UUID) -> No
         session.add(
             PipelineRunEvent(
                 pipeline_run_id=pipeline_run.id,
-                stage=PipelineStage.S3_CONTACTS.value,
+                stage=PipelineStage.CONTACTS.value,
                 event_type="s2_to_s3_queued",
                 payload_json={
                     "analysis_job_id": str(analysis_job.id),

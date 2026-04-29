@@ -127,7 +127,7 @@ class ContactRead(UTCReadModel):
     company_id: UUID
     contact_fetch_job_id: UUID | None = None
     domain: str
-    provider: str
+    source_provider: str
     provider_person_id: str
     first_name: str
     last_name: str

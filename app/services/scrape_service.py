@@ -15,13 +15,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, delete, select
 
 from app.core.logging import log_event
-from sqlalchemy import update as sa_update
 from app.models import AnalysisJob, ClassificationResult, Company, ScrapeJob, ScrapePage
 from app.services.domain_policy import get_default_manager
 from app.services.fetch_service import (
     FetchErrorCode,
     FetchResult,  # re-exported for backwards compat
-    fetch_with_fallback,
     is_parked_domain,
     needs_stealth_after_static_and_impersonate,
     resolve_domain,
@@ -199,14 +197,14 @@ class ScrapeService:
                 .where(
                     col(ScrapeJob.id) == job_id,
                     col(ScrapeJob.terminal_state).is_(False),
-                    col(ScrapeJob.status).in_(["created", "running"]),
+                    col(ScrapeJob.state).in_(["created", "running"]),
                     or_(
                         col(ScrapeJob.lock_token).is_(None),
                         col(ScrapeJob.lock_expires_at) < now,
                     ),
                 )
                 .values(
-                    status="running",
+                    state="running",
                     started_at=now,
                     lock_token=lock_token,
                     lock_expires_at=now + _SCRAPE_LOCK_TTL,
@@ -221,7 +219,7 @@ class ScrapeService:
             if job.lock_token != lock_token:
                 log_event(
                     logger, "scrape_skipped_not_owner", job_id=str(job_id),
-                    job_status=job.status, terminal=job.terminal_state,
+                    job_status=job.state, terminal=job.terminal_state,
                     lock_held_by="none" if job.lock_token is None else "other",
                     lock_expires_at=str(job.lock_expires_at),
                 )
@@ -231,7 +229,6 @@ class ScrapeService:
             js_fallback = job.js_fallback
             include_sitemap = job.include_sitemap
             classify_model = job.classify_model
-            general_model = job.general_model
             log_event(logger, "scrape_lock_acquired", job_id=str(job_id),
                       domain=domain, js_fallback=js_fallback, include_sitemap=include_sitemap)
 
@@ -242,7 +239,8 @@ class ScrapeService:
             with Session(engine) as session:
                 job = session.get(ScrapeJob, job_id)
                 if job and job.lock_token == lock_token:
-                    job.status = "site_unavailable"
+                    job.state = "failed"
+                    job.failure_reason = "site_unavailable"
                     job.terminal_state = True
                     job.last_error_code = "dns_not_resolved"
                     job.last_error_message = f"{domain} :: dns_not_resolved"
@@ -530,11 +528,13 @@ class ScrapeService:
                     )
                     if all_permanent:
                         dominant = max(set(failure_codes), key=failure_codes.count)
-                        job.status = "site_unavailable"
+                        job.state = "failed"
+                        job.failure_reason = "site_unavailable"
                         job.last_error_code = dominant
                         job.last_error_message = f"All fetches failed with permanent error: {dominant}"
                     else:
-                        job.status = "failed"
+                        job.state = "failed"
+                        job.failure_reason = "unknown"
                         job.last_error_code = "no_pages_fetched"
                         job.last_error_message = "No pages could be fetched."
                     job.terminal_state = True
@@ -558,11 +558,6 @@ class ScrapeService:
             snap for snap in fetched_pages
             if snap["success"] and snap["status_code"] < 400 and snap.get("text_len", 0) >= 80
         ]
-        ineligible_snaps = [
-            snap for snap in fetched_pages
-            if not (snap["success"] and snap["status_code"] < 400 and snap.get("text_len", 0) >= 80)
-        ]
-
         # Batch-convert all eligible pages in a single LLM call
         batch_input = [
             {"url": snap["url"], "title": snap.get("title", ""), "page_text": snap.get("raw_text", "")}
@@ -644,11 +639,13 @@ class ScrapeService:
             job.lock_expires_at = None
 
             if markdown_pages == 0:
-                job.status = "failed"
+                job.state = "failed"
+                job.failure_reason = "unknown"
                 job.last_error_code = "no_markdown_produced"
                 job.last_error_message = "Scrape completed but produced no markdown pages."
             else:
-                job.status = "completed"
+                job.state = "succeeded"
+                job.failure_reason = None
                 job.last_error_code = None
                 job.last_error_message = None
 
@@ -670,7 +667,7 @@ class ScrapeService:
             session.add(job)
             recompute_company_stages(session, normalized_urls=[normalized_url])
             session.commit()
-            if job.status == "completed":
+            if job.state == "succeeded":
                 enqueue_s2_for_scrape_success(engine=engine, scrape_job_id=job.id)
 
             log_event(

@@ -449,7 +449,7 @@ class ContactService:
                 for contact in session.exec(
                     select(Contact).where(
                         col(Contact.company_id) == company_id,
-                        col(Contact.provider) == provider,
+                        col(Contact.source_provider) == provider,
                     )
                 )
             }
@@ -469,7 +469,7 @@ class ContactService:
                         Contact(
                             company_id=company_id,
                             contact_fetch_job_id=job_id,
-                            provider=provider,
+                            source_provider=provider,
                             provider_person_id=provider_person_id,
                             first_name=entry.get("first_name") or "",
                             last_name=entry.get("last_name") or "",

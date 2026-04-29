@@ -148,7 +148,8 @@ def _scrape_stats(
     # most-recently-created terminal job.
     latest_stmt = select(
         ScrapeJob.id,
-        ScrapeJob.status,
+        ScrapeJob.state,
+        ScrapeJob.failure_reason,
         ScrapeJob.terminal_state,
         ScrapeJob.updated_at,
         ScrapeJob.started_at,
@@ -184,23 +185,22 @@ def _scrape_stats(
     row = session.exec(
         select(
             func.count().label("total"),
-            func.count(case((literal_column("lo.status") == "completed", 1))).label("completed"),
-            func.count(case((literal_column("lo.status") == "site_unavailable", 1))).label("site_unavailable"),
+            func.count(case((literal_column("lo.state") == "succeeded", 1))).label("completed"),
+            func.count(case((literal_column("lo.failure_reason") == "site_unavailable", 1))).label("site_unavailable"),
             func.count(case((
                 literal_column("lo.terminal_state").is_(True)
-                & (literal_column("lo.status") != "completed")
-                & (literal_column("lo.status") != "site_unavailable"),
+                & (literal_column("lo.state") != "succeeded"),
                 1,
             ))).label("failed"),
             func.count(case((
                 literal_column("lo.terminal_state").is_(False)
-                & (literal_column("lo.status") == "running"),
+                & (literal_column("lo.state") == "running"),
                 1,
             ))).label("running"),
-            func.count(case((literal_column("lo.status") == "created", 1))).label("queued"),
+            func.count(case((literal_column("lo.state") == "created", 1))).label("queued"),
             func.count(case((
                 literal_column("lo.terminal_state").is_(False)
-                & (literal_column("lo.status") == "running")
+                & (literal_column("lo.state") == "running")
                 & (literal_column("lo.updated_at") < stuck_cutoff),
                 1,
             ))).label("stuck_count"),
@@ -226,7 +226,7 @@ def _scrape_stats(
             ScrapeJob.created_at,
             ScrapeJob.updated_at,
         )
-        .where(col(ScrapeJob.status) == "completed")
+        .where(col(ScrapeJob.state) == "succeeded")
         .where(col(ScrapeJob.pipeline_run_id).in_(campaign_run_ids))
         .order_by(col(ScrapeJob.updated_at).desc())
         .limit(_SAMPLE_SIZE)
@@ -632,13 +632,13 @@ def _cost_totals() -> StageCostTotals:
 
 
 def _stage_cost_key(stage: str) -> str | None:
-    if stage == "s1_scrape":
+    if stage == "scrape":
         return "scrape"
-    if stage == "s2_analysis":
+    if stage == "analysis":
         return "analysis"
-    if stage == "s3_contacts":
+    if stage == "contacts":
         return "contact_fetch"
-    if stage == "s4_validation":
+    if stage == "validation":
         return "validation"
     return None
 
@@ -837,7 +837,7 @@ def get_company_counts(
     latest_scrape = latest_scrape_subquery()
     effective_decision = func.coalesce(CompanyFeedback.manual_label, latest_classification.c.predicted_label)
     decision_lower = func.lower(func.coalesce(effective_decision, ""))
-    scrape_status = latest_scrape.c.status
+    scrape_status = latest_scrape.c.state
 
     counts_stmt = (
         select(  # type: ignore[call-overload]
@@ -845,15 +845,15 @@ def get_company_counts(
             func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("scrape_not_started"),
             func.sum(case((scrape_status.in_(["created", "running"]), 1), else_=0)).label("scrape_in_progress"),
             func.sum(case((scrape_status == "cancelled", 1), else_=0)).label("scrape_cancelled"),
-            func.sum(case((scrape_status == "site_unavailable", 1), else_=0)).label("scrape_permanent_fail"),
-            func.sum(case((scrape_status.in_(["failed", "step1_failed", "dead"]), 1), else_=0)).label("scrape_soft_fail"),
+            func.sum(case((latest_scrape.c.failure_reason == "site_unavailable", 1), else_=0)).label("scrape_permanent_fail"),
+            func.sum(case((scrape_status.in_(["failed", "dead"]), 1), else_=0)).label("scrape_soft_fail"),
             func.sum(case((decision_lower == "", 1), else_=0)).label("unlabeled"),
             func.sum(case((decision_lower == "possible", 1), else_=0)).label("possible"),
             func.sum(case((decision_lower == "unknown", 1), else_=0)).label("unknown"),
             func.sum(case((decision_lower == "crap", 1), else_=0)).label("crap"),
-            func.sum(case((scrape_status == "completed", 1), else_=0)).label("scrape_done"),
+            func.sum(case((scrape_status == "succeeded", 1), else_=0)).label("scrape_done"),
             func.sum(case((latest_scrape.c.job_id.is_(None), 1), else_=0)).label("not_scraped"),
-            func.sum(case((scrape_status.in_(["failed", "step1_failed", "dead"]), 1), else_=0)).label("scrape_failed"),
+            func.sum(case((scrape_status.in_(["failed", "dead"]), 1), else_=0)).label("scrape_failed"),
         )
         .select_from(Company)
         .join(Upload, col(Upload.id) == col(Company.upload_id))

@@ -161,7 +161,7 @@ def list_all_contacts(
         "last_name": col(Contact.last_name),
         "title": col(Contact.title),
         "title_match": col(Contact.title_match),
-        "provider": col(Contact.provider),
+        "source_provider": col(Contact.source_provider),
         "last_seen_at": col(Contact.last_seen_at),
         "provider_has_email": col(Contact.provider_has_email),
         "verification_status": col(Contact.verification_status),
@@ -190,6 +190,7 @@ def list_all_contacts(
                     "emails": email_map.get(contact.id, []),
                     "last_seen_at": contact.last_seen_at,
                     "provider_has_email": contact.provider_has_email,
+                    "source_provider": contact.source_provider,
                 }
             )
         )
@@ -393,7 +394,7 @@ def export_contacts_csv(
             col(Contact.title),
             col(Contact.email),
             col(Contact.verification_status),
-            col(Contact.provider),
+            col(Contact.source_provider),
             col(Contact.email_provider),
         )
         .join(Company, col(Company.id) == col(Contact.company_id))
@@ -413,7 +414,7 @@ def export_contacts_csv(
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerow(["domain", "first_name", "last_name", "title", "email",
-                     "verification_status", "provider", "email_provider"])
+                     "verification_status", "source_provider", "email_provider"])
     for row in rows:
         writer.writerow(list(row))
 

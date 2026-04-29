@@ -168,7 +168,7 @@ def reconcile_stuck_jobs() -> None:
 
         # Reset never-started scrapes (no reconcile_count increment).
         for job in never_started_scrapes:
-            job.status = "created"
+            job.state = "created"
             job.lock_token = None
             job.lock_expires_at = None
             job.updated_at = now
@@ -178,7 +178,8 @@ def reconcile_stuck_jobs() -> None:
         for job in stuck_scrapes:
             job.reconcile_count = (job.reconcile_count or 0) + 1
             if job.reconcile_count > _SCRAPE_MAX_RECONCILE_ATTEMPTS:
-                job.status = "failed"
+                job.state = "failed"
+                job.failure_reason = "unknown"
                 job.terminal_state = True
                 job.last_error_code = "needs_manual_review"
                 job.last_error_message = (
@@ -189,7 +190,7 @@ def reconcile_stuck_jobs() -> None:
                 log_event(logger, "reconciler_flagged_scrape", job_id=str(job.id),
                           reconcile_count=job.reconcile_count)
             else:
-                job.status = "created"
+                job.state = "created"
                 job.lock_token = None
                 job.lock_expires_at = None
             job.updated_at = now

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID
 
 from sqlmodel import Session, col, select
@@ -39,7 +38,7 @@ def bulk_latest_completed_scrape_jobs(
             select(ScrapeJob)
             .where(
                 col(ScrapeJob.normalized_url).in_(normalized_urls)
-                & (col(ScrapeJob.status) == "completed")
+                & (col(ScrapeJob.state) == "succeeded")
             )
             .order_by(col(ScrapeJob.created_at).desc())
         )
@@ -56,7 +55,7 @@ def latest_completed_scrape_job(*, session: Session, normalized_url: str) -> Scr
         select(ScrapeJob)
         .where(
             (col(ScrapeJob.normalized_url) == normalized_url)
-            & (col(ScrapeJob.status) == "completed")
+            & (col(ScrapeJob.state) == "succeeded")
         )
         .order_by(col(ScrapeJob.created_at).desc())
     ).first()
@@ -148,7 +147,7 @@ def bulk_ensure_crawl_adapters(
             continue
         actual_state = (
             CrawlJobState.SUCCEEDED
-            if scrape_job.status == "completed" and (scrape_job.pages_fetched_count or 0) > 0
+            if scrape_job.state == "succeeded" and (scrape_job.pages_fetched_count or 0) > 0
             else CrawlJobState.FAILED
         )
         cj = existing_crawl_jobs.get(company.id)

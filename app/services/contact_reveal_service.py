@@ -31,7 +31,6 @@ from app.services.apollo_client import (
     ApolloClient,
 )
 from app.services.contact_runtime_service import ContactRuntimeService
-from app.services.pipeline_service import recompute_contact_stages
 from app.services.snov_client import (
     ERR_SNOV_AUTH_FAILED,
     ERR_SNOV_CREDENTIALS_MISSING,
@@ -284,7 +283,7 @@ class ContactRevealService:
                         error_message="Company not found.",
                     )
                 members = self._load_reveal_members(session=session, job=job)
-                provider_members = [member for member in members if member.provider == provider]
+                provider_members = [member for member in members if member.source_provider == provider]
                 if not provider_members:
                     return self._complete_reveal_attempt(
                         engine=engine,
@@ -470,7 +469,6 @@ class ContactRevealService:
                 company_id=company_id,
                 contact_entry=contact_entry,
             )
-            touched_contact_id: UUID | None = None
             if existing:
                 existing.contact_fetch_job_id = contact_fetch_job_id
                 existing.first_name = contact_entry["first_name"] or existing.first_name
@@ -491,16 +489,24 @@ class ContactRevealService:
                     provider_email_status=contact_entry.get("provider_email_status"),
                 )
                 existing.email_provider = provider
+                has_email = bool((existing.email or "").strip())
+                if has_email and existing.title_match and existing.verification_status == "valid":
+                    existing.pipeline_stage = "campaign_ready"
+                elif has_email:
+                    existing.pipeline_stage = "email_revealed"
+                else:
+                    existing.pipeline_stage = "fetched"
                 existing.updated_at = utcnow()
                 session.add(existing)
-                touched_contact_id = existing.id
             else:
                 # Find the member contact record to get provider_person_id etc.
                 member = members[0] if members else None
+                has_email = bool((contact_entry.get("email") or "").strip())
+                verification_status = contact_entry["verification_status"]
                 new_contact = Contact(
                     company_id=company_id,
                     contact_fetch_job_id=contact_fetch_job_id,
-                    provider=provider,
+                    source_provider=provider,
                     provider_person_id=member.provider_person_id if member else "",
                     first_name=contact_entry["first_name"],
                     last_name=contact_entry["last_name"],
@@ -510,14 +516,18 @@ class ContactRevealService:
                     email=contact_entry["email"],
                     email_provider=provider,
                     provider_email_status=contact_entry["provider_email_status"],
-                    verification_status=contact_entry["verification_status"],
+                    verification_status=verification_status,
+                    pipeline_stage=(
+                        "campaign_ready"
+                        if has_email and bool(contact_entry["title_match"]) and verification_status == "valid"
+                        else "email_revealed"
+                        if has_email
+                        else "fetched"
+                    ),
                     reveal_raw_json=reveal_raw_json,
                 )
                 session.add(new_contact)
                 session.flush()
-                touched_contact_id = new_contact.id
-            if touched_contact_id is not None:
-                recompute_contact_stages(session, contact_ids=[touched_contact_id])
             session.commit()
         return 1
 
@@ -727,10 +737,10 @@ class ContactRevealService:
             )
         )
         if not jobs:
-            batch.state = ContactFetchBatchState.COMPLETED
+            batch.state = ContactFetchBatchState.SUCCEEDED
         elif all(job.terminal_state for job in jobs):
             if any(job.state == ContactFetchJobState.SUCCEEDED for job in jobs):
-                batch.state = ContactFetchBatchState.COMPLETED
+                batch.state = ContactFetchBatchState.SUCCEEDED
                 batch.last_error_code = None
                 batch.last_error_message = None
             else:

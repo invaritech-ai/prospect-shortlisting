@@ -410,7 +410,7 @@ class AnalysisService:
                     pipeline_run_id=pipeline_run_id,
                     campaign_id=campaign_id,
                     company_id=company_id,
-                    stage="s2_analysis",
+                    stage="analysis",
                     attempt_number=max(1, int(attempt_number or 1)),
                     provider=str(usage_meta.get("provider") or "openrouter"),
                     model=usage_meta.get("model"),

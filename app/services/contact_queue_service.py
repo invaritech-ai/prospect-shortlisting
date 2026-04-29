@@ -245,13 +245,13 @@ class ContactQueueService:
         )
         if not jobs:
             batch.state = (
-                ContactFetchBatchState.COMPLETED
+                ContactFetchBatchState.SUCCEEDED
                 if (batch.reused_count or 0) > 0 or batch.requested_count == 0
                 else ContactFetchBatchState.FAILED
             )
         elif all(job.terminal_state for job in jobs):
             if any(job.state == ContactFetchJobState.SUCCEEDED for job in jobs):
-                batch.state = ContactFetchBatchState.COMPLETED
+                batch.state = ContactFetchBatchState.SUCCEEDED
                 batch.last_error_code = None
                 batch.last_error_message = None
             else:
@@ -307,7 +307,7 @@ class ContactQueueService:
             last_seen = session.exec(
                 select(func.max(Contact.last_seen_at)).where(
                     col(Contact.company_id) == company_id,
-                    col(Contact.provider) == provider,
+                    col(Contact.source_provider) == provider,
                 )
             ).one()
             if last_seen is None:

@@ -11,7 +11,7 @@ from app.api.schemas.contacts import ContactVerifyRequest, MatchGapFilter
 from app.models import Company, Contact, Upload
 from app.models.pipeline import utcnow
 
-_ALLOWED_CONTACT_STAGE_FILTERS = frozenset({"all", "fetched", "verified", "campaign_ready"})
+_ALLOWED_CONTACT_STAGE_FILTERS = frozenset({"all", "fetched", "email_revealed", "campaign_ready"})
 _ALLOWED_MATCH_GAP_FILTERS = frozenset({"all", "contacts_no_match", "matched_no_email", "ready_candidates"})
 
 
@@ -123,7 +123,7 @@ def apply_contact_filters(
         cutoff = utcnow() - timedelta(days=stale_days)
         stmt = stmt.where(
             col(Contact.verification_status) != "unverified",
-            col(Contact.pipeline_stage).in_(["verified", "campaign_ready"]),
+            col(Contact.pipeline_stage).in_(["email_revealed", "campaign_ready"]),
             col(Contact.updated_at) <= cutoff,
         )
     if letters:

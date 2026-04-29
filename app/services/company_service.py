@@ -197,9 +197,10 @@ def latest_scrape_subquery() -> Any:
         select(  # type: ignore[call-overload]
             col(ScrapeJob.normalized_url).label("normalized_url"),
             col(ScrapeJob.id).label("job_id"),
-            col(ScrapeJob.status).label("status"),
+            col(ScrapeJob.state).label("state"),
             col(ScrapeJob.terminal_state).label("terminal_state"),
             col(ScrapeJob.last_error_code).label("last_error_code"),
+            col(ScrapeJob.failure_reason).label("failure_reason"),
             activity_ts.label("scrape_updated_at"),
         )
         .distinct(col(ScrapeJob.normalized_url))
@@ -279,15 +280,15 @@ def _apply_scrape_filter(stmt: Any, latest_scrape: Any, normalized_scrape_filter
     if normalized_scrape_filter == "not-started":
         return stmt.where(latest_scrape.c.job_id.is_(None))
     if normalized_scrape_filter == "in-progress":
-        return stmt.where(latest_scrape.c.status.in_(["created", "running"]))
+        return stmt.where(latest_scrape.c.state.in_(["created", "running"]))
     if normalized_scrape_filter == "done":
-        return stmt.where(latest_scrape.c.status == "completed")
+        return stmt.where(latest_scrape.c.state == "succeeded")
     if normalized_scrape_filter == "cancelled":
-        return stmt.where(latest_scrape.c.status == "cancelled")
+        return stmt.where(latest_scrape.c.state == "cancelled")
     if normalized_scrape_filter == "permanent":
-        return stmt.where(latest_scrape.c.status == "site_unavailable")
+        return stmt.where(latest_scrape.c.failure_reason == "site_unavailable")
     if normalized_scrape_filter == "soft":
-        return stmt.where(latest_scrape.c.status.in_(["failed", "step1_failed", "dead"]))
+        return stmt.where(latest_scrape.c.state.in_(["failed", "dead"]))
     return stmt
 
 
@@ -309,9 +310,9 @@ def _apply_pipeline_status_filter(
 ) -> Any:
     if normalized_status_filter == "all":
         return stmt
-    scrape_status = func.lower(func.coalesce(latest_scrape.c.status, ""))
-    analysis_status = func.lower(func.coalesce(latest_analysis.c.state, ""))
-    contact_status = func.lower(func.coalesce(latest_contact_fetch.c.state, ""))
+    scrape_status = func.coalesce(latest_scrape.c.state, "")
+    analysis_status = func.coalesce(latest_analysis.c.state, "")
+    contact_status = func.coalesce(latest_contact_fetch.c.state, "")
     decision_present = func.coalesce(col(CompanyFeedback.manual_label), latest_decision_text)
 
     if normalized_status_filter == "not-started":
@@ -325,18 +326,18 @@ def _apply_pipeline_status_filter(
     if normalized_status_filter == "cancelled":
         return stmt.where(scrape_status == "cancelled")
     if normalized_status_filter == "complete":
-        return stmt.where(and_(scrape_status == "completed", func.coalesce(decision_present, "") != ""))
+        return stmt.where(and_(scrape_status == "succeeded", func.coalesce(decision_present, "") != ""))
     if normalized_status_filter == "has-failures":
         return stmt.where(or_(
-            scrape_status.in_(["failed", "step1_failed", "site_unavailable", "dead"]),
+            scrape_status.in_(["failed", "dead"]),
             analysis_status.in_(["failed", "dead"]),
             contact_status == "failed",
         ))
     if normalized_status_filter == "permanent-failures":
-        return stmt.where(scrape_status == "site_unavailable")
+        return stmt.where(latest_scrape.c.failure_reason == "site_unavailable")
     if normalized_status_filter == "soft-failures":
         return stmt.where(or_(
-            scrape_status.in_(["failed", "step1_failed", "dead"]),
+            scrape_status.in_(["failed", "dead"]),
             analysis_status.in_(["failed", "dead"]),
             contact_status == "failed",
         ))
@@ -405,7 +406,7 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             col(Company.raw_url), col(Company.normalized_url), col(Company.domain),
             col(Company.pipeline_stage), col(Company.created_at),
             ctx.latest_decision_text, ctx.latest_confidence,
-            ctx.latest_scrape.c.job_id, ctx.latest_scrape.c.status, ctx.latest_scrape.c.terminal_state,
+            ctx.latest_scrape.c.job_id, ctx.latest_scrape.c.state, ctx.latest_scrape.c.terminal_state,
             ctx.latest_analysis.c.run_id, ctx.latest_analysis.c.state,
             ctx.latest_analysis.c.terminal_state, ctx.latest_analysis.c.analysis_job_id,
             col(CompanyFeedback.thumbs), col(CompanyFeedback.comment), col(CompanyFeedback.manual_label),
@@ -473,7 +474,7 @@ def apply_company_sort(stmt: Any, filters: CompanyFilters, ctx: CompanyQueryCont
         "last_activity": ctx.last_activity,
         "decision": ctx.decision_rank,
         "confidence": ctx.latest_confidence,
-        "scrape_status": ctx.latest_scrape.c.status,
+        "scrape_status": ctx.latest_scrape.c.state,
         "contact_count": func.coalesce(ctx.contact_counts.c.contact_count, 0),
         "discovered_contact_count": func.coalesce(ctx.contact_counts.c.contact_count, 0),
         "scrape_updated_at": func.coalesce(ctx.latest_scrape.c.scrape_updated_at, _ACTIVITY_EPOCH),

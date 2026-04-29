@@ -149,6 +149,13 @@ def rematch_contacts(session: Session, *, campaign_id: UUID) -> int:
         if contact.title_match == new_match:
             continue
         contact.title_match = new_match
+        has_email = bool((contact.email or "").strip())
+        if has_email and contact.title_match and contact.verification_status == "valid":
+            contact.pipeline_stage = "campaign_ready"
+        elif has_email:
+            contact.pipeline_stage = "email_revealed"
+        else:
+            contact.pipeline_stage = "fetched"
         contact.updated_at = now
         session.add(contact)
         updated += 1

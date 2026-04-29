@@ -83,10 +83,10 @@ def list_scrape_jobs(
     statement = select(ScrapeJob)
     if status_filter == "active":
         statement = statement.where(col(ScrapeJob.terminal_state).is_(False))
-    elif status_filter == "completed":
-        statement = statement.where(col(ScrapeJob.status) == "completed")
+    elif status_filter == "succeeded":
+        statement = statement.where(col(ScrapeJob.state) == "succeeded")
     elif status_filter == "failed":
-        statement = statement.where(col(ScrapeJob.status) == "failed")
+        statement = statement.where(col(ScrapeJob.state) == "failed")
     if search:
         statement = statement.where(col(ScrapeJob.domain).ilike(f"%{search.strip()}%"))
 
@@ -202,12 +202,13 @@ def enqueue_scrape_job(
             raise HTTPException(status_code=409, detail="Job is still active. Cannot retry a non-terminal job.")
 
         # Reset job state for retry.
-        job.status = "created"
+        job.state = "created"
         job.terminal_state = False
         job.lock_token = None
         job.lock_expires_at = None
         job.last_error_code = None
         job.last_error_message = None
+        job.failure_reason = None
         job.reconcile_count = 0
         job.started_at = None
         job.finished_at = None

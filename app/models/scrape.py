@@ -30,9 +30,10 @@ class ScrapeJob(SQLModel, table=True):
     normalized_url: str
     domain: str
 
-    # Lifecycle: created → running → completed / failed
-    status: str = Field(default="created", index=True)
+    # Lifecycle: created → running → succeeded / failed
+    state: str = Field(default="created", index=True)
     terminal_state: bool = Field(default=False)
+    failure_reason: Optional[str] = Field(default=None, max_length=128, index=True)
 
     # Per-job model config
     js_fallback: bool = Field(default=True)

@@ -57,8 +57,9 @@ class ScrapeJobRead(UTCReadModel):
     website_url: str
     normalized_url: str
     domain: str
-    status: str
+    state: str
     terminal_state: bool
+    failure_reason: str | None = None
     js_fallback: bool
     include_sitemap: bool
     general_model: str

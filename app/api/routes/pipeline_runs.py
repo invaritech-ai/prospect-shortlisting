@@ -62,9 +62,9 @@ def _increment_progress(counter: PipelineStageProgressRead, status: str) -> None
         counter.queued += 1
     elif normalized == "running":
         counter.running += 1
-    elif normalized in {"completed", "succeeded"}:
+    elif normalized == "succeeded":
         counter.completed += 1
-    elif normalized in {"failed", "dead", "site_unavailable", "step1_failed", "cancelled"}:
+    elif normalized in {"failed", "dead", "cancelled"}:
         counter.failed += 1
     counter.total += 1
 
@@ -219,7 +219,7 @@ def start_pipeline_run(
 
         run = PipelineRun(
             campaign_id=payload.campaign_id,
-            status=PipelineRunStatus.RUNNING,
+            state=PipelineRunStatus.RUNNING,
             company_ids_snapshot=[str(company_id) for company_id in resolved_company_ids],
             scrape_rules_snapshot=payload.scrape_rules_snapshot,
             analysis_prompt_snapshot=payload.analysis_prompt_snapshot,
@@ -235,7 +235,7 @@ def start_pipeline_run(
         session.commit()
         session.refresh(run)
 
-        force_s1 = bool((payload.force_rerun or {}).get("s1_scrape"))
+        force_s1 = bool((payload.force_rerun or {}).get("scrape"))
         companies_for_s1 = companies
         reused_company_ids: list[UUID] = []
         if companies and not force_s1:
@@ -247,7 +247,7 @@ def start_pipeline_run(
                         select(ScrapeJob)
                         .where(
                             col(ScrapeJob.normalized_url).in_(normalized_urls),
-                            col(ScrapeJob.status) == "completed",
+                            col(ScrapeJob.state) == "succeeded",
                             col(ScrapeJob.terminal_state).is_(True),
                         )
                         .order_by(col(ScrapeJob.created_at).desc())
@@ -299,7 +299,7 @@ def start_pipeline_run(
         session.add(
             PipelineRunEvent(
                 pipeline_run_id=run.id,
-                stage=PipelineStage.S1_SCRAPE.value,
+                stage=PipelineStage.SCRAPE.value,
                 event_type="start_requested",
                 payload_json={
                     "requested_count": run.requested_count,
@@ -315,7 +315,7 @@ def start_pipeline_run(
             session.add(
                 PipelineRunEvent(
                     pipeline_run_id=run.id,
-                    stage=PipelineStage.S2_ANALYSIS.value,
+                    stage=PipelineStage.ANALYSIS.value,
                     event_type="reused_s1_queued_s2",
                     payload_json={
                         "reused_company_ids_count": len(reused_company_ids),
@@ -342,7 +342,7 @@ def start_pipeline_run(
         return response
     except Exception:
         if run is not None:
-            run.status = PipelineRunStatus.FAILED
+            run.state = PipelineRunStatus.FAILED
             run.finished_at = utcnow()
             run.updated_at = utcnow()
             session.add(run)
@@ -362,31 +362,31 @@ def get_pipeline_run_progress(run_id: UUID, session: Session = Depends(get_sessi
         raise HTTPException(status_code=404, detail="Pipeline run not found.")
 
     stages: dict[str, PipelineStageProgressRead] = {
-        PipelineStage.S1_SCRAPE.value: _zero_progress(),
-        PipelineStage.S2_ANALYSIS.value: _zero_progress(),
-        PipelineStage.S3_CONTACTS.value: _zero_progress(),
-        PipelineStage.S4_VALIDATION.value: _zero_progress(),
+        PipelineStage.SCRAPE.value: _zero_progress(),
+        PipelineStage.ANALYSIS.value: _zero_progress(),
+        PipelineStage.CONTACTS.value: _zero_progress(),
+        PipelineStage.VALIDATION.value: _zero_progress(),
     }
 
-    for status in session.exec(select(ScrapeJob.status).where(col(ScrapeJob.pipeline_run_id) == run_id)).all():
-        _increment_progress(stages[PipelineStage.S1_SCRAPE.value], str(status))
+    for status in session.exec(select(ScrapeJob.state).where(col(ScrapeJob.pipeline_run_id) == run_id)).all():
+        _increment_progress(stages[PipelineStage.SCRAPE.value], str(status))
     for state in session.exec(select(AnalysisJob.state).where(col(AnalysisJob.pipeline_run_id) == run_id)).all():
-        _increment_progress(stages[PipelineStage.S2_ANALYSIS.value], str(state))
+        _increment_progress(stages[PipelineStage.ANALYSIS.value], str(state))
     for state in session.exec(select(ContactFetchJob.state).where(col(ContactFetchJob.pipeline_run_id) == run_id)).all():
-        _increment_progress(stages[PipelineStage.S3_CONTACTS.value], str(state))
+        _increment_progress(stages[PipelineStage.CONTACTS.value], str(state))
     for state in session.exec(select(ContactVerifyJob.state).where(col(ContactVerifyJob.pipeline_run_id) == run_id)).all():
-        _increment_progress(stages[PipelineStage.S4_VALIDATION.value], str(state))
+        _increment_progress(stages[PipelineStage.VALIDATION.value], str(state))
 
     total_stage_rows = sum(stage.total for stage in stages.values())
     terminal_stage_rows = sum(stage.completed + stage.failed for stage in stages.values())
-    computed_status = run.status
+    computed_status = run.state
     if total_stage_rows > 0 and terminal_stage_rows >= total_stage_rows:
-        computed_status = PipelineRunStatus.COMPLETED if run.failed_count == 0 else PipelineRunStatus.FAILED
+        computed_status = PipelineRunStatus.SUCCEEDED if run.failed_count == 0 else PipelineRunStatus.FAILED
 
     return PipelineRunProgressRead(
         pipeline_run_id=run.id,
         campaign_id=run.campaign_id,
-        status=computed_status,
+        state=computed_status,
         requested_count=run.requested_count,
         reused_count=run.reused_count,
         queued_count=run.queued_count,

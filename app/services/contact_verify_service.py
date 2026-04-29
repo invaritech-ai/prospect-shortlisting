@@ -10,7 +10,6 @@ from sqlmodel import Session, col, select
 
 from app.models import ContactVerifyJob, Contact
 from app.models.pipeline import ContactVerifyJobState
-from app.services.pipeline_service import recompute_contact_stages
 from app.services.zerobounce_client import (
     ERR_ZEROBOUNCE_AUTH_FAILED,
     ERR_ZEROBOUNCE_KEY_MISSING,
@@ -147,7 +146,6 @@ class ContactVerifyService:
 
         verified_count = 0
         skipped_count = len(contacts) - len(eligible)
-        touched_ids: list[UUID] = []
         with Session(engine) as session:
             job = session.get(ContactVerifyJob, job_id)
             if not job or job.lock_token != lock_token:
@@ -166,12 +164,17 @@ class ContactVerifyService:
                     continue
                 contact.verification_status = normalize_zerobounce_status(str(payload.get("status") or "unknown"))
                 contact.zerobounce_raw = payload
+                has_email = bool((contact.email or "").strip())
+                if has_email and contact.title_match and contact.verification_status == "valid":
+                    contact.pipeline_stage = "campaign_ready"
+                elif has_email:
+                    contact.pipeline_stage = "email_revealed"
+                else:
+                    contact.pipeline_stage = "fetched"
                 contact.updated_at = utcnow()
                 session.add(contact)
-                touched_ids.append(contact.id)
                 verified_count += 1
 
-            recompute_contact_stages(session, contact_ids=touched_ids)
             session.commit()
 
         return self._complete_job(

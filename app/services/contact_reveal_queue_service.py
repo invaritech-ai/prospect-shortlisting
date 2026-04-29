@@ -30,7 +30,7 @@ def discovered_group_key(contact: Contact) -> str:
     title = (contact.title or "").strip().lower()
     if first_name and last_name and title:
         return f"name_title:{first_name}|{last_name}|{title}"
-    return f"provider:{contact.provider}:{contact.provider_person_id}"
+    return f"provider:{contact.source_provider}:{contact.provider_person_id}"
 
 
 class ContactRevealQueueService:
@@ -102,7 +102,7 @@ class ContactRevealQueueService:
         batch.already_revealing_count = already_revealing_count
         batch.skipped_revealed_count = skipped_revealed_count
         if not jobs_to_create:
-            batch.state = ContactFetchBatchState.COMPLETED
+            batch.state = ContactFetchBatchState.SUCCEEDED
             batch.finished_at = utcnow()
         batch.updated_at = utcnow()
         session.add(batch)
@@ -121,7 +121,7 @@ class ContactRevealQueueService:
 
     @staticmethod
     def _requested_providers(contacts: Iterable[Contact]) -> list[str]:
-        providers = {contact.provider for contact in contacts}
+        providers = {contact.source_provider for contact in contacts}
         requested: list[str] = []
         if "apollo" in providers:
             requested.append("apollo")

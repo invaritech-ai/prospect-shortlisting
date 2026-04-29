@@ -5,22 +5,13 @@ from uuid import UUID
 
 from sqlmodel import Session, col, select
 
-from app.models import AnalysisJob, ClassificationResult, Company, CompanyFeedback, Contact, ScrapeJob
+from app.models import AnalysisJob, ClassificationResult, Company, CompanyFeedback, ScrapeJob
 from app.models.pipeline import CompanyPipelineStage
 
 
 def normalize_label(raw: str | None) -> str | None:
     value = (raw or "").strip().lower()
     return value or None
-
-
-def normalize_verification_status(raw: str | None) -> str:
-    value = normalize_label(raw) or "unverified"
-    if value in {"catch-all", "catch_all"}:
-        return "catch_all"
-    if value in {"not_valid", "not valid"}:
-        return "invalid"
-    return value
 
 
 def effective_company_label(session: Session, company_id: UUID) -> str | None:
@@ -47,7 +38,7 @@ def latest_usable_scrape(session: Session, normalized_url: str) -> ScrapeJob | N
         select(ScrapeJob)
         .where(
             col(ScrapeJob.normalized_url) == normalized_url,
-            col(ScrapeJob.status) == "completed",
+            col(ScrapeJob.state) == "succeeded",
             col(ScrapeJob.markdown_pages_count) > 0,
         )
         .order_by(col(ScrapeJob.created_at).desc())
@@ -95,52 +86,3 @@ def recompute_company_stages(
             session.add(company)
             changed += 1
     return changed
-
-
-def contact_stage_for_contact(contact: Contact) -> str:
-    verification_status = normalize_verification_status(contact.verification_status)
-    if (
-        contact.title_match
-        and bool((contact.email or "").strip())
-        and verification_status == "valid"
-    ):
-        return "campaign_ready"
-    if verification_status != "unverified":
-        return "verified"
-    return "fetched"
-
-
-def recompute_contact_stages(
-    session: Session,
-    *,
-    contact_ids: Iterable[UUID] | None = None,
-    company_ids: Iterable[UUID] | None = None,
-) -> int:
-    statement = select(Contact)
-    ids = _coerce_ids(contact_ids)
-    owner_ids = _coerce_ids(company_ids)
-    if ids:
-        statement = statement.where(col(Contact.id).in_(ids))
-    elif owner_ids:
-        statement = statement.where(col(Contact.company_id).in_(owner_ids))
-
-    contacts = list(session.exec(statement))
-    changed = 0
-    for contact in contacts:
-        next_stage = contact_stage_for_contact(contact)
-        next_status = normalize_verification_status(contact.verification_status)
-        if contact.verification_status != next_status:
-            contact.verification_status = next_status
-            session.add(contact)
-            changed += 1
-        if contact.pipeline_stage != next_stage:
-            contact.pipeline_stage = next_stage
-            session.add(contact)
-            changed += 1
-    return changed
-
-
-def recompute_all_stages(session: Session) -> tuple[int, int]:
-    company_changed = recompute_company_stages(session)
-    contact_changed = recompute_contact_stages(session)
-    return company_changed, contact_changed

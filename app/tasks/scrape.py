@@ -87,7 +87,8 @@ def _mark_failed(job_id: str, error_code: str, error_message: str) -> None:
             sa_update(ScrapeJob)
             .where(col(ScrapeJob.id) == job_id)
             .values(
-                status="failed",
+                state="failed",
+                failure_reason="unknown",
                 terminal_state=True,
                 last_error_code=error_code,
                 last_error_message=error_message,

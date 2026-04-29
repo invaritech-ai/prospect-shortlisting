@@ -40,7 +40,7 @@ class PipelineStageProgressRead(BaseModel):
 class PipelineRunProgressRead(BaseModel):
     pipeline_run_id: UUID
     campaign_id: UUID
-    status: PipelineRunStatus
+    state: PipelineRunStatus
     requested_count: int
     reused_count: int
     queued_count: int

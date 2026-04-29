@@ -40,7 +40,7 @@ from app.models.pipeline import (
 )
 from app.services.contact_queue_service import ContactQueueService
 from app.services.contact_runtime_service import ContactRuntimeService
-from app.services.pipeline_service import recompute_all_stages
+from app.services.pipeline_service import recompute_company_stages
 from app.services.scrape_rules_store import load_rules_for_job
 
 
@@ -82,7 +82,6 @@ class RefreshRunStatusResult(BaseModel):
 
 class RecomputePipelineStagesResult(BaseModel):
     refreshed_company_count: int
-    refreshed_contact_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +93,8 @@ def drain_queue(session: Session = Depends(get_session)) -> DrainQueueResult:
     """Cancel all queued work."""
     cancelled_scrape = session.exec(
         update(ScrapeJob)
-        .where(col(ScrapeJob.status) == "created")
-        .values(status="cancelled", terminal_state=True)
+        .where(col(ScrapeJob.state) == "created")
+        .values(state="cancelled", failure_reason=None, terminal_state=True)
     ).rowcount  # type: ignore[union-attr]
 
     cancelled_analysis = session.exec(
@@ -123,7 +122,7 @@ def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResul
         session.exec(
             select(ScrapeJob.id).where(
                 col(ScrapeJob.terminal_state).is_(False)
-                & (col(ScrapeJob.status) == "running")
+                & (col(ScrapeJob.state) == "running")
             )
         ).all()
     )
@@ -131,7 +130,7 @@ def reset_stuck_jobs(session: Session = Depends(get_session)) -> ResetStuckResul
         session.exec(
             update(ScrapeJob)
             .where(col(ScrapeJob.id).in_(stuck_ids))
-            .values(status="created", lock_token=None, lock_expires_at=None, updated_at=_utcnow())
+            .values(state="created", failure_reason=None, lock_token=None, lock_expires_at=None, updated_at=_utcnow())
         )
         session.commit()
         for job_id in stuck_ids:
@@ -146,10 +145,10 @@ def mark_non_completed_failed(session: Session = Depends(get_session)) -> MarkFa
     result = session.exec(
         update(ScrapeJob)
         .where(
-            (col(ScrapeJob.status) != "completed")
-            & (col(ScrapeJob.status) != "failed")
+            (col(ScrapeJob.state) != "succeeded")
+            & (col(ScrapeJob.state) != "failed")
         )
-        .values(status="failed", terminal_state=True)
+        .values(state="failed", failure_reason="unknown", terminal_state=True)
     )
     session.commit()
     return MarkFailedResult(marked_count=result.rowcount or 0)  # type: ignore[union-attr]
@@ -228,11 +227,12 @@ def mark_empty_completed_failed(session: Session = Depends(get_session)) -> Mark
     result = session.exec(
         update(ScrapeJob)
         .where(
-            (col(ScrapeJob.status) == "completed")
+            (col(ScrapeJob.state) == "succeeded")
             & (col(ScrapeJob.markdown_pages_count) == 0)
         )
         .values(
-            status="failed",
+            state="failed",
+            failure_reason="unknown",
             terminal_state=True,
             last_error_code=func.coalesce(ScrapeJob.last_error_code, "no_markdown_produced"),
         )
@@ -278,7 +278,7 @@ def refresh_run_statuses(session: Session = Depends(get_session)) -> RefreshRunS
         run.failed_jobs = failed
         is_done = terminal >= run.total_jobs
         if is_done:
-            run.status = RunStatus.FAILED if failed > 0 else RunStatus.COMPLETED
+            run.status = RunStatus.FAILED if failed > 0 else RunStatus.SUCCEEDED
             if not run.finished_at:
                 run.finished_at = now
         else:
@@ -291,11 +291,10 @@ def refresh_run_statuses(session: Session = Depends(get_session)) -> RefreshRunS
 
 @router.post("/pipeline/recompute-stages", response_model=RecomputePipelineStagesResult)
 def recompute_pipeline_stages(session: Session = Depends(get_session)) -> RecomputePipelineStagesResult:
-    company_changed, contact_changed = recompute_all_stages(session)
+    company_changed = recompute_company_stages(session)
     session.commit()
     return RecomputePipelineStagesResult(
         refreshed_company_count=company_changed,
-        refreshed_contact_count=contact_changed,
     )
 
 

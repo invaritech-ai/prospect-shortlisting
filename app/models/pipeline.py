@@ -26,7 +26,7 @@ class CrawlJobState(StrEnum):
 class RunStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
@@ -39,9 +39,9 @@ class AnalysisJobState(StrEnum):
 
 
 class PredictedLabel(StrEnum):
-    POSSIBLE = "Possible"
-    CRAP = "Crap"
-    UNKNOWN = "Unknown"
+    POSSIBLE = "possible"
+    CRAP = "crap"
+    UNKNOWN = "unknown"
 
 
 class JobType(StrEnum):
@@ -61,7 +61,7 @@ class ContactFetchJobState(StrEnum):
 class ContactFetchBatchState(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
     PAUSED = "paused"
 
@@ -93,15 +93,16 @@ class ContactVerifyJobState(StrEnum):
 class PipelineRunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
+    DEAD = "dead"
 
 
 class PipelineStage(StrEnum):
-    S1_SCRAPE = "s1_scrape"
-    S2_ANALYSIS = "s2_analysis"
-    S3_CONTACTS = "s3_contacts"
-    S4_VALIDATION = "s4_validation"
+    SCRAPE = "scrape"
+    ANALYSIS = "analysis"
+    CONTACTS = "contacts"
+    VALIDATION = "validation"
 
 
 class Campaign(SQLModel, table=True):
@@ -160,6 +161,7 @@ class CrawlJob(SQLModel, table=True):
     max_attempts: int = Field(default=3, ge=1)
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
+    failure_reason: str | None = Field(default=None, max_length=128, index=True)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
@@ -320,7 +322,7 @@ class PipelineRun(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     campaign_id: UUID = Field(foreign_key="campaigns.id", index=True)
-    status: PipelineRunStatus = Field(default=PipelineRunStatus.QUEUED, sa_column=Column(Text, nullable=False, index=True))
+    state: PipelineRunStatus = Field(default=PipelineRunStatus.QUEUED, sa_column=Column(Text, nullable=False, index=True))
     company_ids_snapshot: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     scrape_rules_snapshot: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     analysis_prompt_snapshot: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -457,6 +459,7 @@ class ContactFetchJob(SQLModel, table=True):
 
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
+    failure_reason: str | None = Field(default=None, max_length=128, index=True)
 
     lock_token: str | None = Field(default=None, max_length=64)
     lock_expires_at: datetime | None = Field(default=None, index=True)
@@ -491,6 +494,7 @@ class ContactProviderAttempt(SQLModel, table=True):
     max_attempts: int = Field(default=5, ge=1)
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
+    failure_reason: str | None = Field(default=None, max_length=128, index=True)
     deferred_reason: str | None = Field(default=None, max_length=128)
     next_retry_at: datetime | None = Field(default=None, index=True)
     lock_token: str | None = Field(default=None, max_length=64)
@@ -588,6 +592,7 @@ class ContactRevealAttempt(SQLModel, table=True):
     max_attempts: int = Field(default=5, ge=1)
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
+    failure_reason: str | None = Field(default=None, max_length=128, index=True)
     deferred_reason: str | None = Field(default=None, max_length=128)
     next_retry_at: datetime | None = Field(default=None, index=True)
     lock_token: str | None = Field(default=None, max_length=64)
@@ -644,13 +649,13 @@ class Contact(SQLModel, table=True):
 
     __tablename__ = "contacts"
     __table_args__ = (
-        UniqueConstraint("company_id", "provider", "provider_person_id", name="uq_contacts_provider_key"),
+        UniqueConstraint("company_id", "source_provider", "provider_person_id", name="uq_contacts_provider_key"),
     )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     company_id: UUID = Field(foreign_key="companies.id", index=True)
     contact_fetch_job_id: UUID | None = Field(default=None, foreign_key="contact_fetch_jobs.id", index=True)
-    provider: str = Field(max_length=32, index=True)
+    source_provider: str = Field(max_length=32, index=True)
     provider_person_id: str = Field(max_length=255, index=True)
     first_name: str = Field(default="", max_length=255)
     last_name: str = Field(default="", max_length=255)
@@ -679,6 +684,7 @@ class Contact(SQLModel, table=True):
 
     # Verification
     verification_status: str = Field(default="unverified", max_length=32, index=True)
+    verification_provider: str | None = Field(default=None, max_length=32, index=True)
     zerobounce_raw: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )

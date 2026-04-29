@@ -10,7 +10,6 @@ from uuid import UUID
 from sqlalchemy import case as sa_case
 from sqlmodel import Session, col, func, select
 
-from app.core.logging import log_event
 from app.models import (
     AnalysisJob,
     Company,
@@ -136,7 +135,7 @@ class RunService:
         run.failed_jobs = failed
         is_done = terminal >= run.total_jobs
         if is_done:
-            run.status = RunStatus.FAILED if failed > 0 else RunStatus.COMPLETED
+            run.status = RunStatus.FAILED if failed > 0 else RunStatus.SUCCEEDED
             if not run.finished_at:
                 run.finished_at = utcnow()
         else:
