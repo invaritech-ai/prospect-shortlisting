@@ -9,32 +9,43 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.api.routes.campaigns import create_campaign
-from app.api.routes.companies import (
-    delete_companies,
-    export_companies_csv,
-    get_company_counts,
-    get_letter_counts,
-    list_companies,
-    list_company_ids,
-)
-from app.api.routes.contacts import (
-    _select_verification_contact_ids,
-    export_contacts_csv,
-    fetch_contacts_for_company,
-    get_contact_counts,
-    list_company_contacts,
-    list_all_contacts,
-    list_contacts_by_company,
-)
+from app.api.routes.companies import delete_companies, list_companies
+from app.api.routes.contacts import list_all_contacts
 from app.api.routes.runs import create_runs
 from app.api.routes.scrape_actions import scrape_selected_companies
-from app.api.schemas.contacts import ContactVerifyRequest
 from app.api.schemas.run import RunCreateRequest
 from app.api.schemas.upload import CompanyDeleteRequest, CompanyScrapeRequest
-from app.api.routes.stats import get_cost_stats, get_stats
+from app.api.routes.stats import get_company_counts, get_cost_stats, get_stats
+from app.tasks import company as company_tasks
 from app.api.schemas.campaign import CampaignCreate
 from app.models import AiUsageEvent, Company, ContactFetchJob, Prompt, ProspectContact, Upload
 from app.models.pipeline import CompanyPipelineStage
+
+
+def _list_companies(session: Session, *, campaign_id, **overrides):
+    params = {
+        "session": session,
+        "campaign_id": campaign_id,
+        "limit": 25,
+        "offset": 0,
+        "decision_filter": "all",
+        "scrape_filter": "all",
+        "include_total": False,
+        "letter": None,
+        "letters": None,
+        "stage_filter": "all",
+        "status_filter": "all",
+        "search": None,
+        "sort_by": "last_activity",
+        "sort_dir": "desc",
+        "upload_id": None,
+    }
+    params.update(overrides)
+    return list_companies(**params)
+
+
+def _get_company_counts(session: Session, *, campaign_id, upload_id=None):
+    return get_company_counts(session=session, campaign_id=campaign_id, upload_id=upload_id)
 
 
 def _seed_upload(session: Session, filename: str, *, campaign_id) -> Upload:
@@ -90,11 +101,11 @@ def test_company_routes_are_campaign_scoped(sqlite_session: Session) -> None:
 
     upload_a = _seed_upload(sqlite_session, "a.csv", campaign_id=campaign_a.id)
     upload_b = _seed_upload(sqlite_session, "b.csv", campaign_id=campaign_b.id)
-    company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="alpha.example")
+    _seed_company(sqlite_session, upload_id=upload_a.id, domain="alpha.example")
     _seed_company(sqlite_session, upload_id=upload_b.id, domain="beta.example")
     sqlite_session.commit()
 
-    rows = list_companies(
+    rows = _list_companies(
         session=sqlite_session,
         campaign_id=campaign_a.id,
         include_total=True,
@@ -104,33 +115,9 @@ def test_company_routes_are_campaign_scoped(sqlite_session: Session) -> None:
     assert rows.total == 1
     assert [item.domain for item in rows.items] == ["alpha.example"]
 
-    company_ids = list_company_ids(
-        session=sqlite_session,
-        campaign_id=campaign_a.id,
-        decision_filter="all",
-        scrape_filter="all",
-        stage_filter="all",
-    )
-    assert company_ids.total == 1
-    assert company_ids.ids == [company_a.id]
-
-    letter_counts = get_letter_counts(
-        session=sqlite_session,
-        campaign_id=campaign_a.id,
-        decision_filter="all",
-        scrape_filter="all",
-        stage_filter="all",
-    )
-    assert letter_counts.counts["a"] == 1
-    assert letter_counts.counts["b"] == 0
-
-    counts = get_company_counts(session=sqlite_session, campaign_id=campaign_a.id)
+    counts = _get_company_counts(session=sqlite_session, campaign_id=campaign_a.id)
     assert counts.total == 1
     assert counts.contact_ready == 1
-
-    export_response = export_companies_csv(session=sqlite_session, campaign_id=campaign_a.id)
-    assert "alpha.example" in export_response.body.decode("utf-8")
-    assert "beta.example" not in export_response.body.decode("utf-8")
 
 
 def test_contact_and_stats_routes_are_campaign_scoped(sqlite_session: Session) -> None:
@@ -166,22 +153,6 @@ def test_contact_and_stats_routes_are_campaign_scoped(sqlite_session: Session) -
     assert letters.letter_counts["n"] == 1
     assert letters.letter_counts["s"] == 0
 
-    by_company = list_contacts_by_company(
-        session=sqlite_session,
-        campaign_id=campaign_a.id,
-        stage_filter="all",
-        limit=50,
-        offset=0,
-    )
-    assert by_company.total == 1
-    assert [item.domain for item in by_company.items] == ["north.example"]
-    company_contacts = list_company_contacts(session=sqlite_session, campaign_id=campaign_a.id, company_id=company_a.id)
-    assert company_contacts.total == 1
-
-    contact_counts = get_contact_counts(session=sqlite_session, campaign_id=campaign_a.id)
-    assert contact_counts.total == 1
-    assert contact_counts.eligible_verify == 1
-
     stats = get_stats(session=sqlite_session, campaign_id=campaign_a.id)
     assert stats.validation.total == 0
     assert stats.contact_fetch.total == 1
@@ -198,10 +169,6 @@ def test_contact_and_stats_routes_are_campaign_scoped(sqlite_session: Session) -
     cost_rows = get_cost_stats(session=sqlite_session, campaign_id=campaign_a.id, limit=50, offset=0)
     assert cost_rows.total == 1
     assert [item.domain for item in cost_rows.items] == ["north.example"]
-    export_response = export_contacts_csv(session=sqlite_session, campaign_id=campaign_a.id)
-    export_text = export_response.body.decode("utf-8")
-    assert "north.example" in export_text
-    assert "south.example" not in export_text
 
 
 def test_stats_upload_scope_errors_are_explicit(sqlite_session: Session) -> None:
@@ -218,10 +185,6 @@ def test_stats_upload_scope_errors_are_explicit(sqlite_session: Session) -> None
         get_stats(session=sqlite_session, campaign_id=campaign_a.id, upload_id=upload_b.id)
     assert mismatch_exc.value.status_code == 422
 
-    with pytest.raises(HTTPException) as contacts_scope_exc:
-        list_company_contacts(session=sqlite_session, campaign_id=campaign_a.id, company_id=_seed_company(sqlite_session, upload_id=upload_b.id, domain="wrong.example").id)
-    assert contacts_scope_exc.value.status_code == 422
-
 
 def test_contact_routes_missing_campaign_raise_404(sqlite_session: Session) -> None:
     missing_campaign_id = uuid4()
@@ -236,60 +199,9 @@ def test_contact_routes_missing_campaign_raise_404(sqlite_session: Session) -> N
         )
     assert contacts_exc.value.status_code == 404
 
-    with pytest.raises(HTTPException) as by_company_exc:
-        list_contacts_by_company(
-            session=sqlite_session,
-            campaign_id=missing_campaign_id,
-            stage_filter="all",
-            limit=50,
-            offset=0,
-        )
-    assert by_company_exc.value.status_code == 404
-
-    with pytest.raises(HTTPException) as counts_exc:
-        get_contact_counts(session=sqlite_session, campaign_id=missing_campaign_id)
-    assert counts_exc.value.status_code == 404
-
-    with pytest.raises(HTTPException) as export_exc:
-        export_contacts_csv(session=sqlite_session, campaign_id=missing_campaign_id)
-    assert export_exc.value.status_code == 404
 
 
-def test_contact_fetch_and_company_contacts_missing_campaign_raise_404(sqlite_session: Session) -> None:
-    campaign = create_campaign(payload=CampaignCreate(name="Missing Campaign Contacts"), session=sqlite_session)
-    upload = _seed_upload(sqlite_session, "missing-campaign.csv", campaign_id=campaign.id)
-    company = _seed_company(sqlite_session, upload_id=upload.id, domain="missing-campaign.example")
-    _seed_contact(sqlite_session, company=company, email="x@missing-campaign.example")
-    sqlite_session.commit()
-
-    with pytest.raises(HTTPException) as fetch_exc:
-        fetch_contacts_for_company(company_id=company.id, campaign_id=uuid4(), session=sqlite_session)
-    assert fetch_exc.value.status_code == 404
-
-    with pytest.raises(HTTPException) as company_contacts_exc:
-        list_company_contacts(company_id=company.id, campaign_id=uuid4(), session=sqlite_session)
-    assert company_contacts_exc.value.status_code == 404
-
-
-def test_verify_selection_is_campaign_scoped(sqlite_session: Session) -> None:
-    campaign_a = create_campaign(payload=CampaignCreate(name="Verify A"), session=sqlite_session)
-    campaign_b = create_campaign(payload=CampaignCreate(name="Verify B"), session=sqlite_session)
-    upload_a = _seed_upload(sqlite_session, "verify-a.csv", campaign_id=campaign_a.id)
-    upload_b = _seed_upload(sqlite_session, "verify-b.csv", campaign_id=campaign_b.id)
-    company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="verify-a.example")
-    company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="verify-b.example")
-    _seed_contact(sqlite_session, company=company_a, email="a@verify.example")
-    _seed_contact(sqlite_session, company=company_b, email="b@verify.example")
-    sqlite_session.commit()
-
-    selected = _select_verification_contact_ids(
-        sqlite_session,
-        ContactVerifyRequest(campaign_id=campaign_a.id, search="verify.example"),
-    )
-    assert len(selected) == 1
-
-
-def test_delete_companies_is_campaign_scoped(sqlite_session: Session) -> None:
+def test_delete_companies_is_campaign_scoped(sqlite_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     campaign_a = create_campaign(payload=CampaignCreate(name="Delete A"), session=sqlite_session)
     campaign_b = create_campaign(payload=CampaignCreate(name="Delete B"), session=sqlite_session)
     upload_a = _seed_upload(sqlite_session, "delete-a.csv", campaign_id=campaign_a.id)
@@ -298,14 +210,26 @@ def test_delete_companies_is_campaign_scoped(sqlite_session: Session) -> None:
     company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="delete-b.example")
     sqlite_session.commit()
 
+    captured: dict[str, object] = {}
+
+    def fake_delay(*, company_ids: list[str], campaign_id: str) -> None:
+        captured["company_ids"] = company_ids
+        captured["campaign_id"] = campaign_id
+
+    monkeypatch.setattr(company_tasks.cascade_delete_companies, "delay", fake_delay)
+
     result = delete_companies(
         payload=CompanyDeleteRequest(campaign_id=campaign_a.id, company_ids=[company_a.id, company_b.id]),
         session=sqlite_session,
     )
 
-    assert result.deleted_ids == [company_a.id]
-    assert result.missing_ids == [company_b.id]
-    assert sqlite_session.get(Company, company_a.id) is None
+    assert result.queued_ids == [company_a.id]
+    assert result.queued_count == 1
+    assert captured == {
+        "company_ids": [str(company_a.id)],
+        "campaign_id": str(campaign_a.id),
+    }
+    assert sqlite_session.get(Company, company_a.id) is not None
     assert sqlite_session.get(Company, company_b.id) is not None
 
 

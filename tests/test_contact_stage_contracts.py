@@ -9,14 +9,7 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.api.routes.campaigns import create_campaign
-from app.api.routes.contacts import (
-    fetch_contacts_for_company,
-    fetch_contacts_selected,
-    get_contact_counts,
-    list_all_contacts,
-    list_contacts_by_company,
-    verify_contacts,
-)
+from app.api.routes.contacts import list_all_contacts
 from app.api.routes.discovered_contacts import (
     list_discovered_contact_ids,
     list_discovered_contacts,
@@ -24,9 +17,7 @@ from app.api.routes.discovered_contacts import (
 )
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.contacts import (
-    BulkContactFetchRequest,
     ContactRevealRequest,
-    ContactVerifyRequest,
 )
 from app.models import Campaign, Company, ContactFetchJob, DiscoveredContact, ProspectContact, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
@@ -107,34 +98,6 @@ def _seed_prospect_contact(
     return contact
 
 
-def test_s3_fetch_routes_only_dispatch_fetch_jobs(sqlite_session: Session) -> None:
-    campaign, company = _seed_campaign_company(sqlite_session, domain="fetch.example", campaign_name="Fetch Contract")
-    sqlite_session.commit()
-
-    with (
-        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch,
-        patch("app.tasks.contacts.reveal_contact_emails.delay") as mock_reveal,
-        patch("app.tasks.contacts.verify_contacts_batch.delay") as mock_verify,
-    ):
-        result_for_company = fetch_contacts_for_company(
-            company_id=company.id,
-            campaign_id=campaign.id,
-            force_refresh=False,
-            session=sqlite_session,
-        )
-        result_selected = fetch_contacts_selected(
-            BulkContactFetchRequest(campaign_id=campaign.id, company_ids=[company.id]),
-            session=sqlite_session,
-            x_idempotency_key=None,
-        )
-
-    assert result_for_company.requested_count == 1
-    assert result_selected.requested_count == 1
-    assert mock_dispatch.call_count == 2
-    mock_reveal.assert_not_called()
-    mock_verify.assert_not_called()
-
-
 def test_s3_read_routes_do_not_touch_provider_work(sqlite_session: Session) -> None:
     campaign, company = _seed_campaign_company(sqlite_session, domain="read.example", campaign_name="Read Contract")
     _seed_prospect_contact(sqlite_session, company=company, title_match=True, email="test@read.example")
@@ -146,12 +109,8 @@ def test_s3_read_routes_do_not_touch_provider_work(sqlite_session: Session) -> N
         patch("app.tasks.contacts.verify_contacts_batch.delay") as mock_verify,
     ):
         contacts = list_all_contacts(session=sqlite_session, campaign_id=campaign.id)
-        companies = list_contacts_by_company(session=sqlite_session, campaign_id=campaign.id)
-        counts = get_contact_counts(session=sqlite_session, campaign_id=campaign.id)
 
     assert contacts.total == 1
-    assert companies.total == 1
-    assert counts.total == 1
     mock_dispatch.assert_not_called()
     mock_reveal.assert_not_called()
     mock_verify.assert_not_called()
@@ -336,55 +295,3 @@ def test_s4_reveal_route_rejects_ineligible_contacts(sqlite_session: Session) ->
     mock_dispatch.assert_not_called()
     mock_verify.assert_not_called()
 
-
-def test_s5_verify_route_scopes_to_eligible_contacts(sqlite_session: Session) -> None:
-    campaign_a, company_a = _seed_campaign_company(sqlite_session, domain="verify-a.example", campaign_name="Verify A")
-    campaign_b, company_b = _seed_campaign_company(sqlite_session, domain="verify-b.example", campaign_name="Verify B")
-    eligible = _seed_prospect_contact(sqlite_session, company=company_a, title_match=True, email="eligible@verify.example")
-    other_campaign = _seed_prospect_contact(sqlite_session, company=company_b, title_match=True, email="other@verify.example")
-    sqlite_session.commit()
-
-    with (
-        patch("app.api.routes.contacts.verify_contacts_batch.delay") as mock_verify,
-        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch,
-        patch("app.tasks.contacts.reveal_contact_emails.delay") as mock_reveal,
-    ):
-        result = verify_contacts(
-            ContactVerifyRequest(
-                campaign_id=campaign_a.id,
-                contact_ids=[eligible.id, other_campaign.id],
-            ),
-            session=sqlite_session,
-            x_idempotency_key=None,
-        )
-
-    assert result.selected_count == 1
-    mock_verify.assert_called_once()
-    mock_dispatch.assert_not_called()
-    mock_reveal.assert_not_called()
-
-
-def test_s5_verify_route_rejects_ineligible_contacts(sqlite_session: Session) -> None:
-    campaign, company = _seed_campaign_company(sqlite_session, domain="verify-reject.example", campaign_name="Verify Reject")
-    ineligible = _seed_prospect_contact(sqlite_session, company=company, title_match=False, email="ineligible@verify.example")
-    sqlite_session.commit()
-
-    with (
-        patch("app.api.routes.contacts.verify_contacts_batch.delay") as mock_verify,
-        patch("app.tasks.contacts.dispatch_contact_fetch_jobs.delay") as mock_dispatch,
-        patch("app.tasks.contacts.reveal_contact_emails.delay") as mock_reveal,
-    ):
-        with pytest.raises(HTTPException) as excinfo:
-            verify_contacts(
-                ContactVerifyRequest(
-                    campaign_id=campaign.id,
-                    contact_ids=[ineligible.id],
-                ),
-                session=sqlite_session,
-                x_idempotency_key=None,
-            )
-
-    assert excinfo.value.status_code == 422
-    mock_verify.assert_not_called()
-    mock_dispatch.assert_not_called()
-    mock_reveal.assert_not_called()
