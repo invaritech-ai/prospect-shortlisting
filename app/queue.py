@@ -20,8 +20,15 @@ _connector = PsycopgConnector(
     conninfo=_psycopg_dsn,
     min_size=0,
     max_size=10,
-    kwargs={},  # psycopg_pool.AsyncConnectionPool.kwargs defaults to None;
-                # Procrastinate does **pool.kwargs in listen_notify which crashes on None
+    # kwargs is a named pool param (not **kwargs); defaults to None which causes
+    # **pool.kwargs to crash in listen_notify. Pass explicit connection-level args.
+    kwargs={
+        "connect_timeout": 10,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+    },
 )
 
 app = App(

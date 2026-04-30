@@ -196,10 +196,9 @@ async def scrape_selected_companies(
                 classify_model=_DEFAULT_CLASSIFY_MODEL,
             )
             session.commit()
-            await scrape_website.defer_async(
+            await scrape_website.configure(priority=BULK_USER).defer_async(
                 job_id=str(job.id),
                 scrape_rules=payload.scrape_rules.model_dump() if payload.scrape_rules else None,
-                priority=BULK_USER,
             )
             queued_job_ids.append(job.id)
         except (ScrapeJobAlreadyRunningError, CircuitBreakerOpenError, ValueError):
@@ -259,9 +258,8 @@ async def scrape_all_companies(
                 classify_model=_DEFAULT_CLASSIFY_MODEL,
             )
             session.commit()
-            await scrape_website.defer_async(
+            await scrape_website.configure(priority=BULK_PIPELINE).defer_async(
                 job_id=str(job.id),
-                priority=BULK_PIPELINE,
             )
             queued_job_ids.append(job.id)
         except (ScrapeJobAlreadyRunningError, CircuitBreakerOpenError, ValueError):

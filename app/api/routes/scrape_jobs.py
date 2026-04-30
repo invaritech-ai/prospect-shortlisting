@@ -46,11 +46,13 @@ async def create_scrape_job(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    await scrape_website.defer_async(
-        job_id=str(job.id),
-        scrape_rules=payload.scrape_rules.model_dump() if payload.scrape_rules else None,
-        priority=USER_ACTION,
-    )
+    try:
+        await scrape_website.configure(priority=USER_ACTION).defer_async(
+            job_id=str(job.id),
+            scrape_rules=payload.scrape_rules.model_dump() if payload.scrape_rules else None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
     return ScrapeJobRead.model_validate(job, from_attributes=True)
 
 
