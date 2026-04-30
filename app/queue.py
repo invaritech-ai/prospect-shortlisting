@@ -18,7 +18,8 @@ _psycopg_dsn = settings.database_url.replace("postgresql+psycopg://", "postgresq
 
 _connector = PsycopgConnector(
     conninfo=_psycopg_dsn,
-    min_size=0,  # don't pre-warm connections at startup; open on first use
+    min_size=0,
+    max_size=10,
 )
 
 app = App(
