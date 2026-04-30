@@ -55,7 +55,7 @@ cd apps/web && npm ci && cd ../..
 
 ```bash
 uv run alembic upgrade head
-uv run python -m procrastinate --app=app.queue:app schema --apply
+uv run python -m procrastinate --app=app.queue.app schema --apply
 ```
 
 The second command creates Procrastinate's internal tables (`procrastinate_jobs`, etc.). It is idempotent — safe to run repeatedly.
