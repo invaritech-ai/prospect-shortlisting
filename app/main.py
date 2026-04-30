@@ -24,7 +24,22 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     configure_logging()
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+
+    from contextlib import asynccontextmanager
+    from app.queue import app as queue_app
+
+    @asynccontextmanager
+    async def lifespan(fast_app: FastAPI):  # noqa: ARG001
+        init_db()
+        if not (settings.settings_encryption_key or "").strip():
+            logger.warning(
+                "settings_encryption_key_missing: integration settings writes are disabled until "
+                "PS_SETTINGS_ENCRYPTION_KEY is configured"
+            )
+        async with queue_app.open_async(conninfo=settings.database_url):
+            yield
+
+    app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     origins = [value.strip() for value in settings.cors_allow_origins.split(",") if value.strip()]
     if origins:
         app.add_middleware(
@@ -34,15 +49,6 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-
-    @app.on_event("startup")
-    def startup_event() -> None:
-        init_db()
-        if not (settings.settings_encryption_key or "").strip():
-            logger.warning(
-                "settings_encryption_key_missing: integration settings writes are disabled until "
-                "PS_SETTINGS_ENCRYPTION_KEY is configured"
-            )
 
     @app.get("/v1/health/live")
     def live() -> dict[str, str]:
@@ -55,10 +61,7 @@ def create_app() -> FastAPI:
     @app.post("/v1/health/ping-job", status_code=202)
     async def queue_ping_job() -> dict[str, str]:
         from app.jobs.health import ping
-        from app.queue import app as queue_app
-
-        async with queue_app.open_async():
-            await ping.defer_async()
+        await ping.defer_async()
         return {"status": "queued"}
 
     app.include_router(analysis_router)

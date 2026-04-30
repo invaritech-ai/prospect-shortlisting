@@ -55,7 +55,7 @@ cd apps/web && npm ci && cd ../..
 
 ```bash
 uv run alembic upgrade head
-uv run procrastinate --app=app.queue.app schema --apply
+uv run python -m procrastinate --app=app.queue:app schema --apply
 ```
 
 The second command creates Procrastinate's internal tables (`procrastinate_jobs`, etc.). It is idempotent — safe to run repeatedly.
@@ -79,21 +79,25 @@ cd apps/web && npm run dev
 
 **S1 — Scraping:**
 ```bash
-PS_WORKER_PROCESS=1 uv run procrastinate --app=app.queue.app worker --queue scrape --concurrency 4
+PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
+  uv run python -m procrastinate --app=app.queue.app worker --queue scrape --concurrency 4
 ```
 
 **S2 — AI Decision:**
 ```bash
-PS_WORKER_PROCESS=1 uv run procrastinate --app=app.queue.app worker --queue ai_decision --concurrency 2
+PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
+  uv run python -m procrastinate --app=app.queue.app worker --queue ai_decision --concurrency 2
 ```
 
 **S3/S4/S5 — Provider (contact fetch, reveal, validation):**
 ```bash
-PS_WORKER_PROCESS=1 uv run procrastinate --app=app.queue.app worker \
+PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
+  uv run python -m procrastinate --app=app.queue.app worker \
   --queue contact_fetch --queue email_reveal --queue validation --concurrency 5
 ```
 
-`PS_WORKER_PROCESS=1` switches the DB pool to NullPool (one connection per task, no persistent pool), which is correct for worker processes.
+`PS_WORKER_PROCESS=1` switches the DB pool to NullPool (one connection per task, no persistent pool).
+`PROCRASTINATE_CONNECTION_STRING` tells the Procrastinate CLI which database to connect to.
 
 You only need to run the workers for the pipeline stages you are actively testing. The API works independently of the workers for all read/write endpoints.
 

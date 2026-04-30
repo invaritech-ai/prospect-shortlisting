@@ -12,11 +12,7 @@ from procrastinate import App, PsycopgConnector
 from app.core.config import settings
 
 
-_connector = PsycopgConnector(
-    kwargs={
-        "conninfo": settings.database_url,
-    },
-)
+_connector = PsycopgConnector()
 
 app = App(
     connector=_connector,
