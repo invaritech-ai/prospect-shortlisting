@@ -161,7 +161,9 @@ def _scrape_stats(
         )
         .label("rn"),
     )
-    latest_stmt = latest_stmt.where(col(ScrapeJob.pipeline_run_id).in_(campaign_run_ids))
+    # Scope by domain membership in the campaign's uploads, not by pipeline_run_id.
+    # Jobs created via scrape-selected have pipeline_run_id=None and would be
+    # invisible if filtered by pipeline_run_id.
     if upload_id:
         latest_stmt = latest_stmt.where(
             col(ScrapeJob.normalized_url).in_(

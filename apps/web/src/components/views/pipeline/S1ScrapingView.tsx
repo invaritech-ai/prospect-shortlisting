@@ -59,19 +59,17 @@ const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
 
 function scrapeBadgeClass(status: string): string {
   const s = status.toLowerCase()
-  if (s === 'completed') return 'bg-emerald-50 text-emerald-800'
+  if (s === 'succeeded') return 'bg-emerald-50 text-emerald-800'
   if (s === 'running') return 'bg-blue-50 text-blue-800'
-  if (s === 'queued' || s === 'created') return 'bg-amber-50 text-amber-800'
-  if (s === 'failed' || s === 'dead' || s === 'step1_failed') return 'bg-rose-50 text-rose-800'
+  if (s === 'created') return 'bg-amber-50 text-amber-800'
+  if (s === 'failed') return 'bg-rose-50 text-rose-800'
   if (s === 'cancelled') return 'bg-slate-100 text-slate-500'
-  if (s === 'site_unavailable') return 'bg-orange-50 text-orange-800'
   return 'bg-slate-100 text-slate-600'
 }
 
 function scrapeBadgeLabel(status: string): string {
   const s = status.toLowerCase()
-  if (s === 'site_unavailable') return 'site_unavailable (permanent)'
-  if (s === 'failed' || s === 'step1_failed') return `${s} (soft)`
+  if (s === 'failed') return 'failed (soft)'
   return status
 }
 
