@@ -80,20 +80,20 @@ cd apps/web && npm run dev
 **S1 — Scraping:**
 ```bash
 PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
-  uv run python -m procrastinate --app=app.queue.app worker --queue scrape --concurrency 4
+  uv run python -m procrastinate --app=app.queue.app worker -q scrape -c 4
 ```
 
 **S2 — AI Decision:**
 ```bash
 PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
-  uv run python -m procrastinate --app=app.queue.app worker --queue ai_decision --concurrency 2
+  uv run python -m procrastinate --app=app.queue.app worker -q ai_decision -c 2
 ```
 
 **S3/S4/S5 — Provider (contact fetch, reveal, validation):**
 ```bash
 PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
   uv run python -m procrastinate --app=app.queue.app worker \
-  --queue contact_fetch --queue email_reveal --queue validation --concurrency 5
+  -q contact_fetch,email_reveal,validation -c 5
 ```
 
 `PS_WORKER_PROCESS=1` switches the DB pool to NullPool (one connection per task, no persistent pool).

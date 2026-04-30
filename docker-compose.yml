@@ -57,9 +57,9 @@ services:
       - "procrastinate"
       - "--app=app.queue.app"
       - "worker"
-      - "--queue"
+      - "-q"
       - "scrape"
-      - "--concurrency"
+      - "-c"
       - "4"
     restart: unless-stopped
 
@@ -83,9 +83,9 @@ services:
       - "procrastinate"
       - "--app=app.queue.app"
       - "worker"
-      - "--queue"
+      - "-q"
       - "ai_decision"
-      - "--concurrency"
+      - "-c"
       - "2"
     restart: unless-stopped
 
@@ -109,13 +109,9 @@ services:
       - "procrastinate"
       - "--app=app.queue.app"
       - "worker"
-      - "--queue"
-      - "contact_fetch"
-      - "--queue"
-      - "email_reveal"
-      - "--queue"
-      - "validation"
-      - "--concurrency"
+      - "-q"
+      - "contact_fetch,email_reveal,validation"
+      - "-c"
       - "5"
     restart: unless-stopped
 
