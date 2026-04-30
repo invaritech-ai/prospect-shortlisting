@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
                 "settings_encryption_key_missing: integration settings writes are disabled until "
                 "PS_SETTINGS_ENCRYPTION_KEY is configured"
             )
-        async with queue_app.open_async(conninfo=settings.database_url):
+        async with queue_app.open_async():
             yield
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
