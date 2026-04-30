@@ -20,6 +20,8 @@ _connector = PsycopgConnector(
     conninfo=_psycopg_dsn,
     min_size=0,
     max_size=10,
+    kwargs={},  # psycopg_pool.AsyncConnectionPool.kwargs defaults to None;
+                # Procrastinate does **pool.kwargs in listen_notify which crashes on None
 )
 
 app = App(
