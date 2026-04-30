@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi import Response as FastAPIResponse
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlmodel import Session, col, select
 
 from app.api.schemas.contacts import (
+    ContactCountsResponse,
     ContactListResponse,
     ContactRead,
     ContactRematchRequest,
@@ -24,6 +26,7 @@ from app.api.schemas.contacts import (
     TitleTestResult,
     TitleRuleStatsResponse,
 )
+from app.core.config import settings
 from app.db.session import get_session
 from app.models import (
     Campaign,
@@ -170,7 +173,7 @@ def list_all_contacts(
         "verification_status": col(Contact.verification_status),
         "pipeline_stage": col(Contact.pipeline_stage),
     }
-    _sort_expr = _contact_sort_map[_sb]
+    _sort_expr: Any = _contact_sort_map[_sb]
     _sort_expr = _sort_expr.desc() if _sd == "desc" else _sort_expr.asc()
 
     rows = list(
@@ -236,6 +239,61 @@ def list_all_contacts(
     )
 
 
+@router.get("/contacts/counts", response_model=ContactCountsResponse)
+def get_contact_counts(
+    campaign_id: UUID = Query(...),
+    upload_id: UUID | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> ContactCountsResponse:
+    _campaign_or_404(session=session, campaign_id=campaign_id)
+    if not isinstance(upload_id, UUID):
+        upload_id = getattr(upload_id, "default", None)
+    _validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
+
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=settings.contact_discovery_freshness_days)
+    stmt = (
+        select(  # type: ignore[call-overload]
+            func.count(col(Contact.id)).label("total"),
+            func.coalesce(func.sum(case((col(Contact.title_match).is_(True), 1), else_=0)), 0).label("matched"),
+            func.coalesce(
+                func.sum(case((col(Contact.updated_at) <= stale_cutoff, 1), else_=0)),
+                0,
+            ).label("stale"),
+            func.coalesce(
+                func.sum(case((col(Contact.updated_at) > stale_cutoff, 1), else_=0)),
+                0,
+            ).label("fresh"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (col(Contact.email).is_not(None))
+                            | col(Contact.pipeline_stage).in_(["email_revealed", "campaign_ready"]),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("already_revealed"),
+        )
+        .select_from(Contact)
+        .join(Company, col(Company.id) == col(Contact.company_id))
+        .where(_campaign_upload_scope(campaign_id), col(Contact.is_active).is_(True))
+    )
+    if upload_id is not None:
+        stmt = stmt.where(col(Company.upload_id) == upload_id)
+
+    row = session.exec(stmt).one()
+    return ContactCountsResponse(
+        total=int(row[0] or 0),
+        matched=int(row[1] or 0),
+        stale=int(row[2] or 0),
+        fresh=int(row[3] or 0),
+        already_revealed=int(row[4] or 0),
+    )
+
+
 @router.post("/contacts/rematch", response_model=ContactRematchResult)
 def rematch_contacts_endpoint(
     payload: ContactRematchRequest,
@@ -249,7 +307,7 @@ def rematch_contacts_endpoint(
     updated = _rematch_contacts(session, campaign_id=payload.campaign_id)
     # total_count: all contacts for this campaign
     total = session.exec(
-        select(func.count(Contact.id))
+        select(func.count(col(Contact.id)))
         .join(Company, col(Company.id) == col(Contact.company_id))
         .join(Upload, col(Upload.id) == col(Company.upload_id))
         .where(col(Upload.campaign_id) == payload.campaign_id)
@@ -268,7 +326,7 @@ def export_contacts_csv(
     session: Session = Depends(get_session),
 ) -> FastAPIResponse:
     query = (
-        select(
+        select(  # type: ignore[call-overload]
             col(Company.domain),
             col(Contact.first_name),
             col(Contact.last_name),

@@ -3,18 +3,22 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
 from app.api.schemas.upload import (
     CompanyList,
     CompanyListItem,
+    LetterCounts,
 )
 from app.db.session import get_session
 from app.models import Company, CompanyFeedback, Upload
 from app.models.pipeline import utcnow
 from app.services.company_service import (
     CompanyFilters,
+    apply_company_filters,
+    build_company_query_context,
     build_company_count_stmt,
     build_company_list_stmt,
     validate_campaign_upload_scope,
@@ -97,6 +101,53 @@ def list_companies(
     return CompanyList(total=total, has_more=has_more, limit=limit, offset=offset, items=items)
 
 
+@router.get("/companies/letter-counts", response_model=LetterCounts)
+def get_letter_counts(
+    session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
+    decision_filter: str = Query(default="all"),
+    scrape_filter: str = Query(default="all"),
+    stage_filter: str = Query(default="all"),
+    status_filter: str = Query(default="all"),
+    search: str | None = Query(default=None, max_length=200),
+    upload_id: UUID | None = Query(default=None),
+) -> LetterCounts:
+    filters = validate_company_filters(
+        decision_filter=decision_filter,
+        scrape_filter=scrape_filter,
+        stage_filter=stage_filter,
+        status_filter=status_filter,
+        search=search,
+        letter=None,
+        letters=None,
+        upload_id=upload_id,
+    )
+    validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
+
+    ctx = build_company_query_context()
+    letter_expr = func.lower(func.substr(Company.domain, 1, 1))
+    stmt = (
+        select(letter_expr.label("letter"), func.count().label("count"))
+        .select_from(Company)
+        .join(Upload, col(Upload.id) == col(Company.upload_id))
+        .outerjoin(ctx.latest_classification, ctx.latest_classification.c.company_id == col(Company.id))
+        .outerjoin(ctx.latest_scrape, ctx.latest_scrape.c.normalized_url == col(Company.normalized_url))
+        .outerjoin(ctx.latest_analysis, ctx.latest_analysis.c.company_id == col(Company.id))
+        .outerjoin(ctx.latest_contact_fetch, ctx.latest_contact_fetch.c.company_id == col(Company.id))
+        .outerjoin(CompanyFeedback, col(CompanyFeedback.company_id) == col(Company.id))
+        .where(col(Upload.campaign_id) == campaign_id)
+        .where(letter_expr.between("a", "z"))
+        .group_by(letter_expr)
+    )
+    stmt = apply_company_filters(stmt, filters, ctx)
+
+    counts = {chr(ord("a") + i): 0 for i in range(26)}
+    for letter, count in session.exec(stmt):
+        if letter in counts:
+            counts[letter] = int(count or 0)
+    return LetterCounts(counts=counts)
+
+
 @router.put("/companies/{company_id}/feedback", response_model=FeedbackRead)
 def upsert_company_feedback(
     company_id: UUID,
@@ -135,5 +186,3 @@ def upsert_company_feedback(
         manual_label=feedback.manual_label,
         updated_at=feedback.updated_at,
     )
-
-

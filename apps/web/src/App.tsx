@@ -84,6 +84,7 @@ import { CompanyContactsPreviewPanel } from './components/panels/CompanyContacts
 import { ScrapeDiagnosticsPanel } from './components/panels/ScrapeDiagnosticsPanel'
 
 // UI
+import { GlobalLoadingOverlay } from './components/ui/GlobalLoadingOverlay'
 import { Toast, type ToastNoticeAction } from './components/ui/Toast'
 
 const MAX_POLL_FAILURES = 3
@@ -131,6 +132,7 @@ function App() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(INITIAL_ROUTE_STATE.campaignId)
   const [isCampaignLoading, setIsCampaignLoading] = useState(false)
   const [isCampaignSaving, setIsCampaignSaving] = useState(false)
+  const [busyMessage, setBusyMessage] = useState<string | null>(null)
   const [latestPipelineRunId, setLatestPipelineRunId] = useState<string | null>(null)
   const [latestPipelineRunProgress, setLatestPipelineRunProgress] = useState<PipelineRunProgressRead | null>(null)
   const [campaignCostSummary, setCampaignCostSummary] = useState<PipelineCostSummaryRead | null>(null)
@@ -551,6 +553,7 @@ function App() {
     event.preventDefault()
     if (!file) { setError('Choose a file first.'); return }
     setError(''); setNotice(''); setIsUploading(true)
+    setBusyMessage('Uploading file…')
     try {
       const result = await uploadFileToCampaign(file, selectedCampaignId || undefined)
       setFile(null)
@@ -570,11 +573,15 @@ function App() {
         )
       }
     } catch (err) { setError(parseApiError(err)) }
-    finally { setIsUploading(false) }
+    finally {
+      setBusyMessage(null)
+      setIsUploading(false)
+    }
   }
 
   const onCreateCampaign = async (name: string, description: string) => {
     setIsCampaignSaving(true)
+    setBusyMessage('Creating campaign…')
     setError('')
     try {
       const created = await createCampaign({ name, description })
@@ -584,12 +591,14 @@ function App() {
     } catch (err) {
       setError(parseApiError(err))
     } finally {
+      setBusyMessage(null)
       setIsCampaignSaving(false)
     }
   }
 
   const onDeleteCampaign = async (campaignId: string) => {
     setIsCampaignSaving(true)
+    setBusyMessage('Deleting campaign…')
     setError('')
     try {
       await deleteCampaign(campaignId)
@@ -601,12 +610,14 @@ function App() {
     } catch (err) {
       setError(parseApiError(err))
     } finally {
+      setBusyMessage(null)
       setIsCampaignSaving(false)
     }
   }
 
   const onAssignUploads = async (campaignId: string, uploadIds: string[]) => {
     setIsCampaignSaving(true)
+    setBusyMessage('Assigning uploads…')
     setError('')
     try {
       const updated = await assignUploadsToCampaign(campaignId, uploadIds)
@@ -616,6 +627,7 @@ function App() {
     } catch (err) {
       setError(parseApiError(err))
     } finally {
+      setBusyMessage(null)
       setIsCampaignSaving(false)
     }
   }
@@ -1336,6 +1348,8 @@ function App() {
         isOpen={isTitleRulesOpen}
         onClose={() => setIsTitleRulesOpen(false)}
       />
+
+      {busyMessage !== null && <GlobalLoadingOverlay message={busyMessage} />}
     </>
   )
 }

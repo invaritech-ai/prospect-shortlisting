@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,8 +15,9 @@ from app.api.schemas.campaign import (
     CampaignRead,
     CampaignUpdate,
 )
+from app.api.schemas.pipeline_run import PipelineCostSummaryRead, PipelineStageCostRead
 from app.db.session import get_session
-from app.models import Campaign, Company, Upload
+from app.models import AiUsageEvent, Campaign, Company, Upload
 from app.models.pipeline import utcnow
 
 router = APIRouter(prefix="/v1", tags=["campaigns"])
@@ -81,7 +84,7 @@ def list_campaigns(
 ) -> CampaignList:
     upload_counts = (
         select(
-            Upload.campaign_id.label("campaign_id"),
+            col(Upload.campaign_id).label("campaign_id"),
             func.count().label("upload_count"),
         )
         .where(col(Upload.campaign_id).is_not(None))
@@ -90,8 +93,8 @@ def list_campaigns(
     )
     company_counts = (
         select(
-            Upload.campaign_id.label("campaign_id"),
-            func.count(Company.id).label("company_count"),
+            col(Upload.campaign_id).label("campaign_id"),
+            func.count(col(Company.id)).label("company_count"),
         )
         .join(Company, col(Company.upload_id) == col(Upload.id))
         .where(col(Upload.campaign_id).is_not(None))
@@ -132,6 +135,59 @@ def get_campaign(campaign_id: UUID, session: Session = Depends(get_session)) -> 
         raise HTTPException(status_code=404, detail="Campaign not found.")
     upload_count, company_count = _get_campaign_counts(session, campaign_id)
     return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)
+
+
+@router.get("/campaigns/{campaign_id}/costs", response_model=PipelineCostSummaryRead)
+def get_campaign_costs(campaign_id: UUID, session: Session = Depends(get_session)) -> PipelineCostSummaryRead:
+    campaign = session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+
+    rows: list[tuple[Any, Any, Any, Any, Any]] = list(
+        session.exec(
+            select(  # type: ignore[call-overload]
+                col(AiUsageEvent.stage),
+                func.coalesce(func.sum(col(AiUsageEvent.billed_cost_usd)), Decimal("0")).label("cost_usd"),
+                func.count(col(AiUsageEvent.id)).label("event_count"),
+                func.coalesce(func.sum(col(AiUsageEvent.input_tokens)), 0).label("input_tokens"),
+                func.coalesce(func.sum(col(AiUsageEvent.output_tokens)), 0).label("output_tokens"),
+            )
+            .where(col(AiUsageEvent.campaign_id) == campaign_id)
+            .group_by(col(AiUsageEvent.stage))
+        )
+    )
+
+    by_stage: dict[str, PipelineStageCostRead] = {}
+    total_cost = Decimal("0")
+    event_count = 0
+    input_tokens = 0
+    output_tokens = 0
+    for stage, cost, events, in_tokens, out_tokens in rows:
+        stage_cost = cost if isinstance(cost, Decimal) else Decimal(str(cost or 0))
+        stage_events = int(events or 0)
+        stage_input_tokens = int(in_tokens or 0)
+        stage_output_tokens = int(out_tokens or 0)
+        by_stage[str(stage)] = PipelineStageCostRead(
+            cost_usd=stage_cost,
+            event_count=stage_events,
+            input_tokens=stage_input_tokens,
+            output_tokens=stage_output_tokens,
+        )
+        total_cost += stage_cost
+        event_count += stage_events
+        input_tokens += stage_input_tokens
+        output_tokens += stage_output_tokens
+
+    return PipelineCostSummaryRead(
+        pipeline_run_id=None,
+        campaign_id=campaign_id,
+        company_id=None,
+        total_cost_usd=total_cost,
+        event_count=event_count,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        by_stage=by_stage,
+    )
 
 
 @router.patch("/campaigns/{campaign_id}", response_model=CampaignRead)
