@@ -129,6 +129,8 @@ class CompanyScrapeAllRequest(BaseModel):
 class CompanyScrapeResult(BaseModel):
     requested_count: int
     queued_count: int
+    skipped_count: int = 0
+    queue_depth: int = 0
     queued_job_ids: list[UUID]
     failed_company_ids: list[UUID]
     idempotency_key: str | None = None

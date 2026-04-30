@@ -677,3 +677,6 @@ class ScrapeService:
                 markdown_pages=markdown_pages,
                 llm_used=llm_used,
             )
+
+
+ScrapeJobManager = ScrapeService

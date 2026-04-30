@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import uuid4
 
 from sqlmodel import Session
@@ -7,10 +8,11 @@ from sqlmodel import Session
 from app.api.routes.campaigns import (
     assign_uploads_to_campaign,
     create_campaign,
+    get_campaign_costs,
     list_campaigns,
 )
 from app.api.schemas.campaign import CampaignAssignUploadsRequest, CampaignCreate
-from app.models import Upload
+from app.models import AiUsageEvent, Upload
 from app.services.upload_service import UploadService
 
 
@@ -61,3 +63,39 @@ def test_upload_service_respects_campaign_id(sqlite_session: Session) -> None:
     assert issues == []
     assert reused == 0
     assert upload.campaign_id == campaign.id
+
+
+def test_campaign_costs_summarize_usage_events(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Campaign Costs"), session=sqlite_session)
+    other = create_campaign(payload=CampaignCreate(name="Other Campaign Costs"), session=sqlite_session)
+    sqlite_session.add(
+        AiUsageEvent(
+            campaign_id=campaign.id,
+            stage="analysis",
+            billed_cost_usd=Decimal("0.125000"),
+            input_tokens=100,
+            output_tokens=25,
+        )
+    )
+    sqlite_session.add(
+        AiUsageEvent(
+            campaign_id=campaign.id,
+            stage="contacts",
+            billed_cost_usd=Decimal("0.025000"),
+            input_tokens=10,
+            output_tokens=5,
+        )
+    )
+    sqlite_session.add(AiUsageEvent(campaign_id=other.id, stage="analysis", billed_cost_usd=Decimal("9.000000")))
+    sqlite_session.commit()
+
+    costs = get_campaign_costs(campaign_id=campaign.id, session=sqlite_session)
+
+    assert costs.campaign_id == campaign.id
+    assert costs.pipeline_run_id is None
+    assert costs.total_cost_usd == Decimal("0.150000")
+    assert costs.event_count == 2
+    assert costs.input_tokens == 110
+    assert costs.output_tokens == 30
+    assert costs.by_stage["analysis"].cost_usd == Decimal("0.125000")
+    assert costs.by_stage["contacts"].cost_usd == Decimal("0.025000")

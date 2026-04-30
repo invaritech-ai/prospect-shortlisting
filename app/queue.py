@@ -18,4 +18,14 @@ _connector = PsycopgConnector(
     },
 )
 
-app = App(connector=_connector, import_paths=["app.jobs.health"])
+app = App(
+    connector=_connector,
+    import_paths=[
+        "app.jobs.health",
+        "app.jobs.scrape",
+        "app.jobs.ai_decision",
+        "app.jobs.contact_fetch",
+        "app.jobs.email_reveal",
+        "app.jobs.validation",
+    ],
+)

@@ -102,11 +102,16 @@ class ScrapePageContentRead(UTCReadModel):
     id: int
     job_id: UUID
     url: str
+    canonical_url: str
     page_kind: str
+    fetch_mode: str
     status_code: int
+    title: str
+    description: str
     markdown_content: str
     fetch_error_code: str
     fetch_error_message: str
+    created_at: datetime
     updated_at: datetime
 
 

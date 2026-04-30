@@ -35,16 +35,77 @@ services:
       retries: 5
       start_period: 20s
 
-  worker:
+  worker-scrape:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
     depends_on:
       api:
         condition: service_healthy
-    command: ["uv", "run", "procrastinate", "--app=app.queue.app", "worker"]
+    command:
+      - "uv"
+      - "run"
+      - "procrastinate"
+      - "--app=app.queue.app"
+      - "worker"
+      - "--queue"
+      - "scrape"
+      - "--concurrency"
+      - "4"
+    restart: unless-stopped
+
+  worker-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    command:
+      - "uv"
+      - "run"
+      - "procrastinate"
+      - "--app=app.queue.app"
+      - "worker"
+      - "--queue"
+      - "ai_decision"
+      - "--concurrency"
+      - "2"
+    restart: unless-stopped
+
+  worker-provider:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      PS_WORKER_PROCESS: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    command:
+      - "uv"
+      - "run"
+      - "procrastinate"
+      - "--app=app.queue.app"
+      - "worker"
+      - "--queue"
+      - "contact_fetch"
+      - "--queue"
+      - "email_reveal"
+      - "--queue"
+      - "validation"
+      - "--concurrency"
+      - "5"
     restart: unless-stopped
 
   # Operator UI (Vite). Pair with docker-compose.local.yml so the browser can

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, delete, select
 
 from app.api.routes.campaigns import create_campaign
-from app.api.routes.contacts import list_all_contacts
+from app.api.routes.contacts import get_contact_counts, list_all_contacts
 from app.api.routes.stats import get_stats
 from app.api.schemas.campaign import CampaignCreate
 from app.models import Company, ContactFetchJob, ContactVerifyJob, Contact, Upload
@@ -73,6 +73,44 @@ def test_list_contacts_supports_letters_filter(sqlite_session: Session) -> None:
         assert response.total == 1
         assert len(response.items) == 1
         assert response.items[0].domain == "wolf.example"
+    finally:
+        sqlite_session.exec(delete(Contact).where(col(Contact.company_id).in_(
+            select(Company.id).where(col(Company.upload_id) == upload.id)
+        )))
+        sqlite_session.exec(delete(ContactFetchJob).where(col(ContactFetchJob.company_id).in_(
+            select(Company.id).where(col(Company.upload_id) == upload.id)
+        )))
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_contact_counts_reads_contacts_table_directly(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Contact Counts"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "contact-counts.csv", campaign_id=campaign.id)
+    try:
+        company = _seed_company(sqlite_session, upload_id=upload.id, domain="counts.example")
+        matched = _seed_contact(sqlite_session, company=company, email="", days_old=0)
+        matched.title_match = True
+        matched.email = None
+        fresh_unmatched = _seed_contact(sqlite_session, company=company, email="", days_old=0)
+        fresh_unmatched.title_match = False
+        fresh_unmatched.email = None
+        stale = _seed_contact(sqlite_session, company=company, email="", days_old=45)
+        stale.title_match = False
+        stale.email = None
+        revealed = _seed_contact(sqlite_session, company=company, email="revealed@example.com", days_old=0)
+        revealed.title_match = True
+        revealed.pipeline_stage = "email_revealed"
+        sqlite_session.commit()
+
+        counts = get_contact_counts(session=sqlite_session, campaign_id=campaign.id, upload_id=None)
+
+        assert counts.total == 4
+        assert counts.matched == 2
+        assert counts.stale == 1
+        assert counts.fresh == 3
+        assert counts.already_revealed == 1
     finally:
         sqlite_session.exec(delete(Contact).where(col(Contact.company_id).in_(
             select(Company.id).where(col(Company.upload_id) == upload.id)

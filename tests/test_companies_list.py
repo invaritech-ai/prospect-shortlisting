@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, delete
 
 from app.api.routes.campaigns import create_campaign
-from app.api.routes.companies import list_companies
+from app.api.routes.companies import get_letter_counts, list_companies
 from app.api.routes.stats import get_company_counts
 from app.api.schemas.campaign import CampaignCreate
 from app.models import Company, CompanyFeedback, ContactFetchJob, Contact, ScrapeJob, Upload
@@ -121,6 +121,37 @@ def test_list_companies_search_is_server_filtered(sqlite_session: Session) -> No
         assert response.total == 2
         assert {item.domain for item in response.items} == {"alpha-search.example", "beta-search.example"}
 
+    finally:
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_company_letter_counts_honor_filters(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Letter Count Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "letter-counts.csv", campaign_id=campaign.id)
+    try:
+        _seed_company(sqlite_session, upload_id=upload.id, domain="alpha-search.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="apex.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="beta-search.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="gamma.example")
+        sqlite_session.commit()
+
+        counts = get_letter_counts(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            decision_filter="all",
+            scrape_filter="all",
+            stage_filter="all",
+            status_filter="all",
+            search="search",
+            upload_id=None,
+        )
+
+        assert counts.counts["a"] == 1
+        assert counts.counts["b"] == 1
+        assert counts.counts["g"] == 0
+        assert set(counts.counts) == {chr(ord("a") + i) for i in range(26)}
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
