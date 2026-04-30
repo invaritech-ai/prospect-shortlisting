@@ -18,7 +18,7 @@ def current_depth(engine: Engine, queue: str) -> int:
         row = conn.execute(
             text(
                 "SELECT COUNT(*) FROM procrastinate_jobs "
-                "WHERE queue = :q AND status IN ('todo', 'doing')"
+                "WHERE queue_name = :q AND status IN ('todo', 'doing')"
             ),
             {"q": queue},
         ).one()
