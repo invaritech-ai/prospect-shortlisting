@@ -12,7 +12,14 @@ from procrastinate import App, PsycopgConnector
 from app.core.config import settings
 
 
-_connector = PsycopgConnector(conninfo=settings.database_url)
+# PsycopgConnector expects a plain psycopg DSN (postgresql://...).
+# SQLAlchemy uses a dialect prefix (postgresql+psycopg://...) that psycopg rejects.
+_psycopg_dsn = settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+_connector = PsycopgConnector(
+    conninfo=_psycopg_dsn,
+    min_size=0,  # don't pre-warm connections at startup; open on first use
+)
 
 app = App(
     connector=_connector,
