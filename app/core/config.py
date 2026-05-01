@@ -59,9 +59,7 @@ class Settings(BaseSettings):
     scrape_proxy_url: str = ""
 
     markdown_model: str = "stepfun/step-3.5-flash"
-    # Browserless CDP URL, e.g. wss://production-sfo.browserless.io?token=YOUR_TOKEN
-    # When set, the stealth fetch tier connects to this remote real-Chrome instance
-    # instead of launching a local headless Chromium.
+    # Deprecated: no longer used. Stealth fetches are local-only (Scrapling).
     browserless_url: str | None = None
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     snov_client_id: str = ""

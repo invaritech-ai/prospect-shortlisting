@@ -21,7 +21,6 @@ services:
     env_file:
       - .env
     environment:
-      PROCRASTINATE_CONNECTION_STRING: ${DATABASE_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,7 +44,6 @@ services:
       - .env
     environment:
       PS_WORKER_PROCESS: "1"
-      PROCRASTINATE_CONNECTION_STRING: ${DATABASE_URL}
     depends_on:
       api:
         condition: service_healthy
@@ -60,7 +58,7 @@ services:
       - "-q"
       - "scrape"
       - "-c"
-      - "4"
+      - "2"
     restart: unless-stopped
 
   worker-ai:
@@ -71,7 +69,6 @@ services:
       - .env
     environment:
       PS_WORKER_PROCESS: "1"
-      PROCRASTINATE_CONNECTION_STRING: ${DATABASE_URL}
     depends_on:
       api:
         condition: service_healthy
@@ -97,7 +94,6 @@ services:
       - .env
     environment:
       PS_WORKER_PROCESS: "1"
-      PROCRASTINATE_CONNECTION_STRING: ${DATABASE_URL}
     depends_on:
       api:
         condition: service_healthy

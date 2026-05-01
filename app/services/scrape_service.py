@@ -617,6 +617,13 @@ class ScrapeService:
                     session.add(job)
                     recompute_company_stages(session, normalized_urls=[normalized_url])
                     session.commit()
+                    zero_page_summary = [
+                        {"success": False, "page_kind": p["page_kind"], "text_len": 0, "fetch_error_code": p.get("fetch_error_code", "")}
+                        for p in fetched_pages
+                    ]
+                    _, terminal_code = classify_scrape_outcome(zero_page_summary)
+                    log_event(logger, "scrape_completed", job_id=str(job_id), domain=domain,
+                              scrape_outcome="failed_gracefully", terminal_code=terminal_code)
             return
 
         # ── Phase 6: markdown conversion (batched rule-based + LLM) ────────────

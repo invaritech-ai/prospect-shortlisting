@@ -78,22 +78,19 @@ cd apps/web && npm run dev
 
 **S1 — Scraping:**
 ```bash
-PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
-  uv run python -m procrastinate --app=app.queue.app worker -q scrape -c 2
+PS_WORKER_PROCESS=1 uv run python -m procrastinate --app=app.queue.app worker -q scrape -c 2
 ```
 
 The scrape worker uses static fetches first, then curl_cffi impersonation, then local Scrapling browser fallback. The browser fallback is local-only; `PS_BROWSERLESS_URL` is not used by the scraper.
 
 **S2 — AI Decision:**
 ```bash
-PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
-  uv run python -m procrastinate --app=app.queue.app worker -q ai_decision -c 2
+PS_WORKER_PROCESS=1 uv run python -m procrastinate --app=app.queue.app worker -q ai_decision -c 2
 ```
 
 **S3/S4/S5 — Provider (contact fetch, reveal, validation):**
 ```bash
-PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
-  uv run python -m procrastinate --app=app.queue.app worker \
+PS_WORKER_PROCESS=1 uv run python -m procrastinate --app=app.queue.app worker \
   -q contact_fetch,email_reveal,validation -c 5
 ```
 
