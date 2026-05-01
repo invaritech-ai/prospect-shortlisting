@@ -57,19 +57,25 @@ const SUB_FILTERS: Array<{ value: ScrapeSubFilter; label: string }> = [
   { value: 'soft', label: 'Soft fail' },
 ]
 
-function scrapeBadgeClass(status: string): string {
+function scrapeBadgeClass(status: string, failureReason?: string | null): string {
   const s = status.toLowerCase()
   if (s === 'succeeded') return 'bg-emerald-50 text-emerald-800'
   if (s === 'running') return 'bg-blue-50 text-blue-800'
   if (s === 'created') return 'bg-amber-50 text-amber-800'
-  if (s === 'failed') return 'bg-rose-50 text-rose-800'
+  if (s === 'failed') {
+    return failureReason === 'site_unavailable'
+      ? 'bg-orange-50 text-orange-800'
+      : 'bg-rose-50 text-rose-800'
+  }
   if (s === 'cancelled') return 'bg-slate-100 text-slate-500'
   return 'bg-slate-100 text-slate-600'
 }
 
-function scrapeBadgeLabel(status: string): string {
+function scrapeBadgeLabel(status: string, failureReason?: string | null): string {
   const s = status.toLowerCase()
-  if (s === 'failed') return 'failed (soft)'
+  if (s === 'failed') {
+    return failureReason === 'site_unavailable' ? 'failed (permanent)' : 'failed (soft)'
+  }
   return status
 }
 
@@ -311,8 +317,8 @@ export function S1ScrapingView({
               >
                 <td className="p-3">
                   {c.latest_scrape_status ? (
-                    <Badge className={scrapeBadgeClass(c.latest_scrape_status)}>
-                      {scrapeBadgeLabel(c.latest_scrape_status)}
+                    <Badge className={scrapeBadgeClass(c.latest_scrape_status, c.latest_scrape_failure_reason)}>
+                      {scrapeBadgeLabel(c.latest_scrape_status, c.latest_scrape_failure_reason)}
                     </Badge>
                   ) : (
                     <span className="text-xs text-(--oc-muted)">not scraped</span>

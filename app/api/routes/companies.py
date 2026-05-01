@@ -102,12 +102,13 @@ def list_companies(
             feedback_comment=str(row[18]) if row[18] is not None else None,
             feedback_manual_label=str(row[19]) if row[19] is not None else None,
             latest_scrape_error_code=str(row[20]) if row[20] is not None else None,
-            contact_count=int(row[21]) if row[21] is not None else 0,
-            revealed_contact_count=int(row[21]) if row[21] is not None else 0,
-            discovered_contact_count=int(row[21]) if row[21] is not None else 0,
-            discovered_title_matched_count=int(row[22]) if row[22] is not None else 0,
-            contact_fetch_status=str(row[23]) if row[23] is not None else None,
-            last_activity=row[24],
+            latest_scrape_failure_reason=str(row[21]) if row[21] is not None else None,
+            contact_count=int(row[22]) if row[22] is not None else 0,
+            revealed_contact_count=int(row[22]) if row[22] is not None else 0,
+            discovered_contact_count=int(row[22]) if row[22] is not None else 0,
+            discovered_title_matched_count=int(row[23]) if row[23] is not None else 0,
+            contact_fetch_status=str(row[24]) if row[24] is not None else None,
+            last_activity=row[25],
         )
         for row in page_rows
     ]

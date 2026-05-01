@@ -78,6 +78,7 @@ export type CompanyListItem = {
   feedback_comment: string | null
   feedback_manual_label: 'possible' | 'unknown' | 'crap' | null
   latest_scrape_error_code: string | null
+  latest_scrape_failure_reason: string | null
   contact_count: number
   discovered_contact_count: number
   discovered_title_matched_count: number

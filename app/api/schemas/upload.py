@@ -87,6 +87,7 @@ class CompanyListItem(UTCReadModel):
     feedback_comment: str | None = None
     feedback_manual_label: str | None = None
     latest_scrape_error_code: str | None = None
+    latest_scrape_failure_reason: str | None = None
     contact_count: int = 0
     discovered_contact_count: int = 0
     discovered_title_matched_count: int = 0

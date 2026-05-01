@@ -288,7 +288,10 @@ def _apply_scrape_filter(stmt: Any, latest_scrape: Any, normalized_scrape_filter
     if normalized_scrape_filter == "permanent":
         return stmt.where(latest_scrape.c.failure_reason == "site_unavailable")
     if normalized_scrape_filter == "soft":
-        return stmt.where(latest_scrape.c.state.in_(["failed", "dead"]))
+        return stmt.where(
+            latest_scrape.c.state.in_(["failed", "dead"]),
+            latest_scrape.c.failure_reason != "site_unavailable",
+        )
     return stmt
 
 
@@ -411,6 +414,7 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             ctx.latest_analysis.c.terminal_state, ctx.latest_analysis.c.analysis_job_id,
             col(CompanyFeedback.thumbs), col(CompanyFeedback.comment), col(CompanyFeedback.manual_label),
             ctx.latest_scrape.c.last_error_code,
+            ctx.latest_scrape.c.failure_reason,
             func.coalesce(ctx.contact_counts.c.contact_count, 0),
             func.coalesce(ctx.contact_counts.c.title_matched_count, 0),
             ctx.latest_contact_fetch.c.state,

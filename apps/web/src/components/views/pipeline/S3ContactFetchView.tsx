@@ -66,6 +66,7 @@ function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
     feedback_comment: null,
     feedback_manual_label: null,
     latest_scrape_error_code: null,
+    latest_scrape_failure_reason: null,
     contact_count: summary.email_count,
     discovered_contact_count: summary.total_count,
     discovered_title_matched_count: summary.title_matched_count,
