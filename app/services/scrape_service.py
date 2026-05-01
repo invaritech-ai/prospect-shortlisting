@@ -30,7 +30,7 @@ from app.services.fetch_service import (
 from app.services.link_service import apply_page_selection_rules, discover_focus_targets
 from app.services.markdown_service import MarkdownService
 from app.services.pipeline_service import recompute_company_stages
-from app.services.url_utils import canonical_internal_url, clean_text, domain_from_url, normalize_url
+from app.services.url_utils import canonical_internal_url, clean_text, domain_from_url, normalize_url, rewrite_to_working_origin
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,29 @@ def utcnow() -> datetime:
 
 # Number of consecutive permanent failures before the circuit breaker opens.
 _CIRCUIT_BREAKER_THRESHOLD = 3
+
+
+_ORIGIN_RETRY_ERROR_CODES = frozenset({
+    FetchErrorCode.TLS_ERROR,
+    FetchErrorCode.ACCESS_DENIED,
+    FetchErrorCode.FETCH_FAILED,
+    FetchErrorCode.TIMEOUT,
+})
+
+
+def retry_url_for_working_origin(
+    *,
+    canonical: str,
+    working_origin_url: str,
+    domain: str,
+    error_code: str,
+) -> str:
+    if not working_origin_url or error_code not in _ORIGIN_RETRY_ERROR_CODES:
+        return ""
+    rewritten = rewrite_to_working_origin(canonical, working_origin_url, domain)
+    if not rewritten or rewritten == canonical:
+        return ""
+    return rewritten
 
 
 class ScrapeJobAlreadyRunningError(ValueError):
@@ -313,6 +336,7 @@ class ScrapeService:
         static_results: dict[str, FetchResult] = {}
         stealth_fallback_results: dict[str, FetchResult] = {}
         stealth_needed: list[tuple[str, str, int]] = []  # pages that need stealth
+        working_origin_url = ""
 
         for kind, canonical, depth in page_plan:
             tier_result = await scrape_page_fetch(
@@ -320,17 +344,40 @@ class ScrapeService:
             )
             if tier_result.selector is not None:
                 static_results[canonical] = tier_result
+                if not working_origin_url:
+                    working_origin_url = tier_result.final_url
                 logger.info(
                     "scrape_tier_hit kind=%s url=%s mode=%s",
                     kind, canonical, tier_result.fetch_mode,
                 )
             elif tier_result.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
                 static_results[canonical] = tier_result
-            elif needs_stealth_after_static_and_impersonate(tier_result) and js_fallback:
-                stealth_fallback_results[canonical] = tier_result
-                stealth_needed.append((kind, canonical, depth))
             else:
-                static_results[canonical] = tier_result
+                retry_url = retry_url_for_working_origin(
+                    canonical=canonical,
+                    working_origin_url=working_origin_url,
+                    domain=domain,
+                    error_code=tier_result.error_code,
+                )
+                if retry_url:
+                    retry_result = await scrape_page_fetch(
+                        retry_url, domain, job_id=str(job_id), policy=policy,
+                    )
+                    if retry_result.selector is not None:
+                        static_results[canonical] = retry_result
+                        if not working_origin_url:
+                            working_origin_url = retry_result.final_url
+                        logger.info(
+                            "scrape_origin_retry_success kind=%s url=%s retry_url=%s mode=%s",
+                            kind, canonical, retry_url, retry_result.fetch_mode,
+                        )
+                        continue
+                    tier_result = retry_result
+                if needs_stealth_after_static_and_impersonate(tier_result) and js_fallback:
+                    stealth_fallback_results[canonical] = tier_result
+                    stealth_needed.append((kind, canonical, depth))
+                else:
+                    static_results[canonical] = tier_result
 
         # 5b. Stealth fetch remaining pages in a single browser session
         stealth_results: dict[str, FetchResult] = {}

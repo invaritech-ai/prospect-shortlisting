@@ -4,6 +4,7 @@ import pytest
 
 from app.services import fetch_service
 from app.services.fetch_service import FetchResult
+from app.services.scrape_service import retry_url_for_working_origin
 from app.services.url_utils import canonical_internal_url, normalize_url, rewrite_to_working_origin
 
 
@@ -144,3 +145,21 @@ def test_rewrite_to_working_origin_rejects_unrelated_domain() -> None:
         )
         == ""
     )
+
+
+def test_retry_url_for_working_origin_only_for_recoverable_errors() -> None:
+    retry = retry_url_for_working_origin(
+        canonical="https://actusa.net/about",
+        working_origin_url="https://www.actusa.net/",
+        domain="actusa.net",
+        error_code="tls_error",
+    )
+    assert retry == "https://www.actusa.net/about"
+
+    no_retry = retry_url_for_working_origin(
+        canonical="https://actusa.net/missing",
+        working_origin_url="https://www.actusa.net/",
+        domain="actusa.net",
+        error_code="not_found",
+    )
+    assert no_retry == ""
