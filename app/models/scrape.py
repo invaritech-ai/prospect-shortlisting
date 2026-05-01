@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
+from app.models.pipeline import utc_datetime_field
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -60,12 +62,12 @@ class ScrapeJob(SQLModel, table=True):
     # Guards against duplicate workers writing results when Celery re-delivers
     # a task (e.g. after soft_time_limit expiry or worker respawn).
     lock_token: Optional[str] = Field(default=None, max_length=64)
-    lock_expires_at: Optional[datetime] = Field(default=None)
+    lock_expires_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: Optional[datetime] = Field(default=None)
-    finished_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
+    finished_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
 
 
 class ScrapePage(SQLModel, table=True):
@@ -89,5 +91,5 @@ class ScrapePage(SQLModel, table=True):
     fetch_error_code: str = Field(default="")
     fetch_error_message: str = Field(default="")
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow)

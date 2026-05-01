@@ -6,13 +6,32 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint, event
+from sqlalchemy import DateTime, JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint, event
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlmodel import Field, SQLModel
+
+_MISSING = object()
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def utc_datetime_field(
+    *,
+    default: datetime | None | object = _MISSING,
+    default_factory: Any = _MISSING,
+    nullable: bool = False,
+    index: bool = False,
+):
+    field_kwargs: dict[str, Any] = {
+        "sa_column": Column(DateTime(timezone=True), nullable=nullable, index=index),
+    }
+    if default_factory is not _MISSING:
+        field_kwargs["default_factory"] = default_factory
+    elif default is not _MISSING:
+        field_kwargs["default"] = default
+    return Field(**field_kwargs)
 
 
 def _enum_values(enum_cls: type[StrEnum]) -> list[str]:
@@ -108,8 +127,8 @@ class Campaign(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     name: str = Field(max_length=255, index=True)
     description: str | None = Field(default=None, max_length=2000)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class Upload(SQLModel, table=True):
@@ -126,7 +145,7 @@ class Upload(SQLModel, table=True):
         default=None,
         sa_column=Column(JSON, nullable=True),
     )
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class Company(SQLModel, table=True):
@@ -143,7 +162,7 @@ class Company(SQLModel, table=True):
         sa_column=Column(Text, nullable=False, index=True),
     )
     source_row_number: int | None = Field(default=None, index=True)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class CrawlJob(SQLModel, table=True):
@@ -172,10 +191,10 @@ class CrawlJob(SQLModel, table=True):
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
     failure_reason: str | None = Field(default=None, max_length=128, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow)
 
 
 class CrawlArtifact(SQLModel, table=True):
@@ -205,7 +224,7 @@ class CrawlArtifact(SQLModel, table=True):
     about_ocr_uri: str | None = Field(default=None, max_length=4096)
     product_ocr_uri: str | None = Field(default=None, max_length=4096)
 
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class Prompt(SQLModel, table=True):
@@ -215,7 +234,7 @@ class Prompt(SQLModel, table=True):
     name: str = Field(max_length=255, index=True)
     enabled: bool = Field(default=True, index=True)
     prompt_text: str
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ScrapePrompt(SQLModel, table=True):
@@ -232,8 +251,8 @@ class ScrapePrompt(SQLModel, table=True):
         default=None,
         sa_column=Column(JSON, nullable=True),
     )
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class AnalysisJob(SQLModel, table=True):
@@ -274,12 +293,12 @@ class AnalysisJob(SQLModel, table=True):
     # Idempotency / ownership lock — set atomically at job-start; guards against
     # duplicate workers writing results when the same task is delivered twice.
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None, index=True)
+    lock_expires_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
 
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ClassificationResult(SQLModel, table=True):
@@ -308,7 +327,7 @@ class ClassificationResult(SQLModel, table=True):
     input_hash: str | None = Field(default=None, max_length=64, index=True)
     from_cache: bool = Field(default=False)
     is_stale: bool = Field(default=False, index=True)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class CompanyFeedback(SQLModel, table=True):
@@ -318,8 +337,8 @@ class CompanyFeedback(SQLModel, table=True):
     thumbs: str | None = Field(default=None, max_length=8)  # 'up' | 'down'
     comment: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     manual_label: str | None = Field(default=None, max_length=16)  # 'possible' | 'unknown' | 'crap'
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow)
 
 
 
@@ -344,7 +363,7 @@ class JobEvent(SQLModel, table=True):
     to_state: str = Field(max_length=64)
     event_type: str = Field(max_length=128)
     payload_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class PipelineRun(SQLModel, table=True):
@@ -363,10 +382,10 @@ class PipelineRun(SQLModel, table=True):
     queued_count: int = Field(default=0, ge=0)
     skipped_count: int = Field(default=0, ge=0)
     failed_count: int = Field(default=0, ge=0)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
 
 
 class PipelineRunEvent(SQLModel, table=True):
@@ -378,7 +397,7 @@ class PipelineRunEvent(SQLModel, table=True):
     stage: str = Field(max_length=64, index=True)
     event_type: str = Field(max_length=128)
     payload_json: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class AiUsageEvent(SQLModel, table=True):
@@ -399,7 +418,7 @@ class AiUsageEvent(SQLModel, table=True):
     output_tokens: int | None = Field(default=None, ge=0)
     error_type: str | None = Field(default=None, max_length=128)
     reconciliation_status: str = Field(default="pending", max_length=32, index=True)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactFetchRuntimeControl(SQLModel, table=True):
@@ -420,8 +439,8 @@ class ContactFetchRuntimeControl(SQLModel, table=True):
     reveal_enabled: bool = Field(default=True, index=True)
     reveal_paused: bool = Field(default=False, index=True)
     reveal_dispatcher_batch_size: int = Field(default=50, ge=1)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactFetchBatch(SQLModel, table=True):
@@ -447,9 +466,9 @@ class ContactFetchBatch(SQLModel, table=True):
     stale_reused_count: int = Field(default=0, ge=0)
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactFetchJob(SQLModel, table=True):
@@ -492,15 +511,15 @@ class ContactFetchJob(SQLModel, table=True):
     failure_reason: str | None = Field(default=None, max_length=128, index=True)
 
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None, index=True)
+    lock_expires_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
 
     contacts_found: int = Field(default=0, ge=0)
     title_matched_count: int = Field(default=0, ge=0)
 
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactProviderAttempt(SQLModel, table=True):
@@ -526,15 +545,15 @@ class ContactProviderAttempt(SQLModel, table=True):
     last_error_message: str | None = Field(default=None, max_length=4000)
     failure_reason: str | None = Field(default=None, max_length=128, index=True)
     deferred_reason: str | None = Field(default=None, max_length=128)
-    next_retry_at: datetime | None = Field(default=None, index=True)
+    next_retry_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None, index=True)
+    lock_expires_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
     contacts_found: int = Field(default=0, ge=0)
     title_matched_count: int = Field(default=0, ge=0)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactRevealBatch(SQLModel, table=True):
@@ -555,9 +574,9 @@ class ContactRevealBatch(SQLModel, table=True):
     skipped_revealed_count: int = Field(default=0, ge=0)
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactRevealJob(SQLModel, table=True):
@@ -595,12 +614,12 @@ class ContactRevealJob(SQLModel, table=True):
     last_error_code: str | None = Field(default=None, max_length=128)
     last_error_message: str | None = Field(default=None, max_length=4000)
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None, index=True)
+    lock_expires_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
     revealed_count: int = Field(default=0, ge=0)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactRevealAttempt(SQLModel, table=True):
@@ -624,14 +643,14 @@ class ContactRevealAttempt(SQLModel, table=True):
     last_error_message: str | None = Field(default=None, max_length=4000)
     failure_reason: str | None = Field(default=None, max_length=128, index=True)
     deferred_reason: str | None = Field(default=None, max_length=128)
-    next_retry_at: datetime | None = Field(default=None, index=True)
+    next_retry_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None, index=True)
+    lock_expires_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
     revealed_count: int = Field(default=0, ge=0)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class ContactVerifyJob(SQLModel, table=True):
@@ -653,7 +672,7 @@ class ContactVerifyJob(SQLModel, table=True):
     last_error_message: str | None = Field(default=None, max_length=4000)
 
     lock_token: str | None = Field(default=None, max_length=64)
-    lock_expires_at: datetime | None = Field(default=None, index=True)
+    lock_expires_at: datetime | None = utc_datetime_field(default=None, nullable=True, index=True)
 
     filter_snapshot_json: dict[str, Any] | None = Field(
         default=None,
@@ -668,10 +687,10 @@ class ContactVerifyJob(SQLModel, table=True):
     verified_count: int = Field(default=0, ge=0)
     skipped_count: int = Field(default=0, ge=0)
 
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class Contact(SQLModel, table=True):
@@ -722,10 +741,10 @@ class Contact(SQLModel, table=True):
     # Pipeline stage: fetched | email_revealed | campaign_ready
     pipeline_stage: str = Field(default="fetched", max_length=32, index=True)
 
-    discovered_at: datetime = Field(default_factory=utcnow, index=True)
-    last_seen_at: datetime = Field(default_factory=utcnow, index=True)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    discovered_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    last_seen_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 class TitleMatchRule(SQLModel, table=True):
@@ -755,7 +774,7 @@ class TitleMatchRule(SQLModel, table=True):
     match_type: str = Field(default="keyword", max_length=32)
     # Comma-separated keywords, regex pattern, or seniority preset name
     keywords: str = Field(max_length=255)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
 def coerce_utc_datetime(value: datetime) -> datetime:

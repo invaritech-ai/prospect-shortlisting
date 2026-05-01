@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Column, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models.pipeline import utcnow
+from app.models.pipeline import utc_datetime_field, utcnow
 
 
 class IntegrationProvider(StrEnum):
@@ -37,5 +37,5 @@ class IntegrationSecret(SQLModel, table=True):
     field_name: str = Field(max_length=64, index=True)
     ciphertext: str = Field(sa_column=Column(Text, nullable=False))
     last4: str | None = Field(default=None, max_length=8)
-    created_at: datetime = Field(default_factory=utcnow, index=True)
-    updated_at: datetime = Field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
