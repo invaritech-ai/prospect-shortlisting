@@ -45,7 +45,7 @@ def _seed(session: Session, campaign_id) -> tuple[Company, Contact]:
 
 @pytest.mark.asyncio
 async def test_reveal_endpoint_defers_tasks_for_eligible(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.contacts import reveal_contacts
@@ -59,16 +59,16 @@ async def test_reveal_endpoint_defers_tasks_for_eligible(
 
     monkeypatch.setattr(er_mod.reveal_email, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s4"), session=sqlite_session)
-    _, contact = _seed(sqlite_session, campaign.id)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s4"), session=db_session)
+    _, contact = _seed(db_session, campaign.id)
+    db_session.commit()
 
     result = await reveal_contacts(
         payload=ContactRevealRequest(
             campaign_id=campaign.id,
             discovered_contact_ids=[contact.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.queued_count == 1
@@ -79,7 +79,7 @@ async def test_reveal_endpoint_defers_tasks_for_eligible(
 
 @pytest.mark.asyncio
 async def test_reveal_endpoint_skips_no_title_match(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.contacts import reveal_contacts
@@ -93,18 +93,18 @@ async def test_reveal_endpoint_skips_no_title_match(
 
     monkeypatch.setattr(er_mod.reveal_email, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s4"), session=sqlite_session)
-    _, contact = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s4"), session=db_session)
+    _, contact = _seed(db_session, campaign.id)
     contact.title_match = False
-    sqlite_session.flush()
-    sqlite_session.commit()
+    db_session.flush()
+    db_session.commit()
 
     result = await reveal_contacts(
         payload=ContactRevealRequest(
             campaign_id=campaign.id,
             discovered_contact_ids=[contact.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.queued_count == 0
@@ -114,7 +114,7 @@ async def test_reveal_endpoint_skips_no_title_match(
 
 @pytest.mark.asyncio
 async def test_reveal_endpoint_ignores_out_of_scope_contacts(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.contacts import reveal_contacts
@@ -128,18 +128,18 @@ async def test_reveal_endpoint_ignores_out_of_scope_contacts(
 
     monkeypatch.setattr(er_mod.reveal_email, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s4"), session=sqlite_session)
-    other_campaign = create_campaign(payload=CampaignCreate(name="other"), session=sqlite_session)
-    _, contact = _seed(sqlite_session, campaign.id)
-    _, other_contact = _seed(sqlite_session, other_campaign.id)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s4"), session=db_session)
+    other_campaign = create_campaign(payload=CampaignCreate(name="other"), session=db_session)
+    _, contact = _seed(db_session, campaign.id)
+    _, other_contact = _seed(db_session, other_campaign.id)
+    db_session.commit()
 
     result = await reveal_contacts(
         payload=ContactRevealRequest(
             campaign_id=campaign.id,
             discovered_contact_ids=[contact.id, other_contact.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.queued_count == 1

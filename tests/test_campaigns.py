@@ -16,21 +16,21 @@ from app.models import AiUsageEvent, Upload
 from app.services.upload_service import UploadService
 
 
-def test_create_and_list_campaign(sqlite_session: Session) -> None:
-    before = list_campaigns(session=sqlite_session, limit=200, offset=0)
+def test_create_and_list_campaign(db_session: Session) -> None:
+    before = list_campaigns(session=db_session, limit=200, offset=0)
     created = create_campaign(
         payload=CampaignCreate(name="Q2 Outreach", description="Primary outbound push"),
-        session=sqlite_session,
+        session=db_session,
     )
     assert created.name == "Q2 Outreach"
 
-    listed = list_campaigns(session=sqlite_session, limit=200, offset=0)
+    listed = list_campaigns(session=db_session, limit=200, offset=0)
     assert listed.total == before.total + 1
     assert any(item.id == created.id for item in listed.items)
 
 
-def test_assign_existing_uploads_to_campaign(sqlite_session: Session) -> None:
-    campaign = create_campaign(payload=CampaignCreate(name="Assign Test"), session=sqlite_session)
+def test_assign_existing_uploads_to_campaign(db_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Assign Test"), session=db_session)
     upload = Upload(
         filename="domains.csv",
         checksum=str(uuid4()),
@@ -38,24 +38,24 @@ def test_assign_existing_uploads_to_campaign(sqlite_session: Session) -> None:
         valid_count=1,
         invalid_count=0,
     )
-    sqlite_session.add(upload)
-    sqlite_session.commit()
-    sqlite_session.refresh(upload)
+    db_session.add(upload)
+    db_session.commit()
+    db_session.refresh(upload)
 
     result = assign_uploads_to_campaign(
         campaign_id=campaign.id,
         payload=CampaignAssignUploadsRequest(upload_ids=[upload.id]),
-        session=sqlite_session,
+        session=db_session,
     )
     assert result.upload_count == 1
 
 
-def test_upload_service_respects_campaign_id(sqlite_session: Session) -> None:
-    campaign = create_campaign(payload=CampaignCreate(name="Upload Scope"), session=sqlite_session)
+def test_upload_service_respects_campaign_id(db_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Upload Scope"), session=db_session)
     service = UploadService()
     payload = b"website\nhttps://example.com\n"
     upload, issues, reused = service.create_upload_from_file(
-        session=sqlite_session,
+        session=db_session,
         filename="test.csv",
         raw_bytes=payload,
         campaign_id=campaign.id,
@@ -65,10 +65,10 @@ def test_upload_service_respects_campaign_id(sqlite_session: Session) -> None:
     assert upload.campaign_id == campaign.id
 
 
-def test_campaign_costs_summarize_usage_events(sqlite_session: Session) -> None:
-    campaign = create_campaign(payload=CampaignCreate(name="Campaign Costs"), session=sqlite_session)
-    other = create_campaign(payload=CampaignCreate(name="Other Campaign Costs"), session=sqlite_session)
-    sqlite_session.add(
+def test_campaign_costs_summarize_usage_events(db_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Campaign Costs"), session=db_session)
+    other = create_campaign(payload=CampaignCreate(name="Other Campaign Costs"), session=db_session)
+    db_session.add(
         AiUsageEvent(
             campaign_id=campaign.id,
             stage="analysis",
@@ -77,7 +77,7 @@ def test_campaign_costs_summarize_usage_events(sqlite_session: Session) -> None:
             output_tokens=25,
         )
     )
-    sqlite_session.add(
+    db_session.add(
         AiUsageEvent(
             campaign_id=campaign.id,
             stage="contacts",
@@ -86,10 +86,10 @@ def test_campaign_costs_summarize_usage_events(sqlite_session: Session) -> None:
             output_tokens=5,
         )
     )
-    sqlite_session.add(AiUsageEvent(campaign_id=other.id, stage="analysis", billed_cost_usd=Decimal("9.000000")))
-    sqlite_session.commit()
+    db_session.add(AiUsageEvent(campaign_id=other.id, stage="analysis", billed_cost_usd=Decimal("9.000000")))
+    db_session.commit()
 
-    costs = get_campaign_costs(campaign_id=campaign.id, session=sqlite_session)
+    costs = get_campaign_costs(campaign_id=campaign.id, session=db_session)
 
     assert costs.campaign_id == campaign.id
     assert costs.pipeline_run_id is None

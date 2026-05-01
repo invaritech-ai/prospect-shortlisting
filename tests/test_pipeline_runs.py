@@ -75,19 +75,19 @@ def _seed_scrape(session: Session, *, company: Company) -> None:
 
 @pytest.mark.asyncio
 async def test_start_pipeline_run_only_enqueues_companies_with_scraped_info(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.pipeline_runs import get_pipeline_run_progress, start_pipeline_run
     from app.jobs import ai_decision as ai_decision_mod
 
-    campaign = create_campaign(payload=CampaignCreate(name="S2"), session=sqlite_session)
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
-    eligible = _seed_company(sqlite_session, upload_id=upload.id, domain="eligible.example")
-    skipped = _seed_company(sqlite_session, upload_id=upload.id, domain="skipped.example")
-    prompt = _seed_prompt(sqlite_session)
-    _seed_scrape(sqlite_session, company=eligible)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="S2"), session=db_session)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
+    eligible = _seed_company(db_session, upload_id=upload.id, domain="eligible.example")
+    skipped = _seed_company(db_session, upload_id=upload.id, domain="skipped.example")
+    prompt = _seed_prompt(db_session)
+    _seed_scrape(db_session, company=eligible)
+    db_session.commit()
 
     deferred: list[dict] = []
 
@@ -102,7 +102,7 @@ async def test_start_pipeline_run_only_enqueues_companies_with_scraped_info(
             company_ids=[str(eligible.id), str(skipped.id)],
             analysis_prompt_snapshot={"prompt_id": str(prompt.id)},
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.requested_count == 2
@@ -111,13 +111,13 @@ async def test_start_pipeline_run_only_enqueues_companies_with_scraped_info(
     assert result.failed_count == 0
     assert len(deferred) == 1
 
-    run = sqlite_session.get(PipelineRun, result.pipeline_run_id)
+    run = db_session.get(PipelineRun, result.pipeline_run_id)
     assert run is not None
-    jobs = list(sqlite_session.exec(select(AnalysisJob).where(AnalysisJob.pipeline_run_id == run.id)))
+    jobs = list(db_session.exec(select(AnalysisJob).where(AnalysisJob.pipeline_run_id == run.id)))
     assert len(jobs) == 1
     assert jobs[0].company_id == eligible.id
 
-    progress = get_pipeline_run_progress(run.id, session=sqlite_session)
+    progress = get_pipeline_run_progress(run.id, session=db_session)
     assert progress.pipeline_run_id == run.id
     assert progress.requested_count == 2
     assert progress.queued_count == 1
@@ -128,18 +128,18 @@ async def test_start_pipeline_run_only_enqueues_companies_with_scraped_info(
 
 @pytest.mark.asyncio
 async def test_start_pipeline_run_rejects_disabled_prompt(
-    sqlite_session: Session,
+    db_session: Session,
 ) -> None:
     from fastapi import HTTPException
 
     from app.api.routes.pipeline_runs import start_pipeline_run
 
-    campaign = create_campaign(payload=CampaignCreate(name="S2"), session=sqlite_session)
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
-    company = _seed_company(sqlite_session, upload_id=upload.id, domain="eligible.example")
-    prompt = _seed_prompt(sqlite_session, enabled=False)
-    _seed_scrape(sqlite_session, company=company)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="S2"), session=db_session)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
+    company = _seed_company(db_session, upload_id=upload.id, domain="eligible.example")
+    prompt = _seed_prompt(db_session, enabled=False)
+    _seed_scrape(db_session, company=company)
+    db_session.commit()
 
     with pytest.raises(HTTPException) as exc:
         await start_pipeline_run(
@@ -148,7 +148,7 @@ async def test_start_pipeline_run_rejects_disabled_prompt(
                 company_ids=[str(company.id)],
                 analysis_prompt_snapshot={"prompt_id": str(prompt.id)},
             ),
-            session=sqlite_session,
+            session=db_session,
         )
 
     assert exc.value.status_code == 400

@@ -19,14 +19,14 @@ def _field_status(provider_status, field: str):  # noqa: ANN001
     return next(item for item in provider_status.fields if item.field == field)
 
 
-def test_list_integration_settings_reports_env_fallback(monkeypatch, sqlite_session: Session) -> None:
+def test_list_integration_settings_reports_env_fallback(monkeypatch, db_session: Session) -> None:
     from app.api.routes.settings import list_integration_settings
 
     monkeypatch.setattr("app.core.config.settings.settings_encryption_key", "")
     monkeypatch.setattr("app.core.config.settings.openrouter_api_key", "env-openrouter-1234")
     secret_store.reset_cipher_cache()
 
-    response = list_integration_settings(session=sqlite_session)
+    response = list_integration_settings(session=db_session)
 
     assert response.store_available is False
     openrouter = _status_by_provider(response, "openrouter")
@@ -39,7 +39,7 @@ def test_list_integration_settings_reports_env_fallback(monkeypatch, sqlite_sess
 
 def test_update_integration_provider_persists_encrypted_secret_over_env(
     monkeypatch,
-    sqlite_session: Session,
+    db_session: Session,
 ) -> None:
     from app.api.routes.settings import list_integration_settings, update_integration_provider
 
@@ -52,7 +52,7 @@ def test_update_integration_provider_persists_encrypted_secret_over_env(
         payload=IntegrationProviderUpdateRequest(
             fields=[IntegrationFieldUpdate(field="api_key", value="db-openrouter-9999")]
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     api_key = _field_status(status, "api_key")
@@ -61,7 +61,7 @@ def test_update_integration_provider_persists_encrypted_secret_over_env(
     assert api_key.last4 == "9999"
     assert api_key.updated_at is not None
 
-    row = sqlite_session.exec(
+    row = db_session.exec(
         select(IntegrationSecret)
         .where(IntegrationSecret.provider == "openrouter")
         .where(IntegrationSecret.field_name == "api_key")
@@ -71,33 +71,33 @@ def test_update_integration_provider_persists_encrypted_secret_over_env(
     assert row.ciphertext != "db-openrouter-9999"
     assert "db-openrouter-9999" not in row.ciphertext
 
-    listed = list_integration_settings(session=sqlite_session)
+    listed = list_integration_settings(session=db_session)
     listed_api_key = _field_status(_status_by_provider(listed, "openrouter"), "api_key")
     assert listed_api_key.source == "db"
     assert listed_api_key.last4 == "9999"
 
 
-def test_update_integration_provider_rejects_unknown_provider(sqlite_session: Session) -> None:
+def test_update_integration_provider_rejects_unknown_provider(db_session: Session) -> None:
     from app.api.routes.settings import update_integration_provider
 
     with pytest.raises(HTTPException) as excinfo:
         update_integration_provider(
             "unknown-provider",
             payload=IntegrationProviderUpdateRequest(fields=[]),
-            session=sqlite_session,
+            session=db_session,
         )
 
     assert excinfo.value.status_code == 404
 
 
-def test_test_integration_provider_returns_result_shape(monkeypatch, sqlite_session: Session) -> None:
+def test_test_integration_provider_returns_result_shape(monkeypatch, db_session: Session) -> None:
     from app.api.routes.settings import test_integration_provider
 
     with patch(
         "app.api.routes.settings._run_provider_health_check",
         return_value=(True, "env", "", "Credentials look valid."),
     ) as mock_health:
-        response = test_integration_provider("apollo", session=sqlite_session)
+        response = test_integration_provider("apollo", session=db_session)
 
     mock_health.assert_called_once_with("apollo")
     assert response.provider == "apollo"
@@ -107,7 +107,7 @@ def test_test_integration_provider_returns_result_shape(monkeypatch, sqlite_sess
     assert response.message == "Credentials look valid."
 
 
-def test_update_snov_provider_rejects_mixed_source_pair(monkeypatch, sqlite_session: Session) -> None:
+def test_update_snov_provider_rejects_mixed_source_pair(monkeypatch, db_session: Session) -> None:
     from app.api.routes.settings import update_integration_provider
 
     monkeypatch.setattr("app.core.config.settings.settings_encryption_key", "unit-test-settings-key")
@@ -121,7 +121,7 @@ def test_update_snov_provider_rejects_mixed_source_pair(monkeypatch, sqlite_sess
             payload=IntegrationProviderUpdateRequest(
                 fields=[IntegrationFieldUpdate(field="client_id", value="db-snov-client-id")]
             ),
-            session=sqlite_session,
+            session=db_session,
         )
 
     assert excinfo.value.status_code == 422

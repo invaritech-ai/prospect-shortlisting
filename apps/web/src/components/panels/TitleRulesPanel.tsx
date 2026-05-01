@@ -21,6 +21,7 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   const [rules, setRules] = useState<TitleMatchRuleRead[]>([])
   const [stats, setStats] = useState<TitleRuleStatsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingStats, setIsLoadingStats] = useState(false)
 
   const [testTitleValue, setTestTitleValue] = useState('')
   const [testResult, setTestResult] = useState<TitleTestResult | null>(null)
@@ -37,20 +38,30 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   const [pendingDeleteRuleId, setPendingDeleteRuleId] = useState<string | null>(null)
   const [error, setError] = useState('')
 
+  const loadStats = useCallback(async (id: string) => {
+    setIsLoadingStats(true)
+    try {
+      setStats(await getTitleRuleStats(id))
+    } catch {
+      // stats failure is non-blocking — rules remain usable
+    } finally {
+      setIsLoadingStats(false)
+    }
+  }, [])
+
   const loadAll = useCallback(async () => {
     if (!campaignId) return
     setIsLoading(true)
     try {
-      const [rulesData, statsData] = await Promise.all([listTitleMatchRules(campaignId), getTitleRuleStats(campaignId)])
-      setRules(rulesData)
-      setStats(statsData)
+      setRules(await listTitleMatchRules(campaignId))
       setError('')
     } catch {
       setError('Failed to load rules')
     } finally {
       setIsLoading(false)
     }
-  }, [campaignId])
+    void loadStats(campaignId)
+  }, [campaignId, loadStats])
 
   useEffect(() => {
     if (isOpen) void loadAll()
@@ -144,12 +155,19 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
       <div className="flex h-full flex-col gap-5 overflow-y-auto p-5">
 
         {/* Stats header */}
-        {stats && (
+        {(stats || isLoadingStats) && (
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
-            <span className="font-black text-emerald-800">{stats.total_matched.toLocaleString()}</span>
-            <span className="text-emerald-700">
-              of {stats.total_contacts.toLocaleString()} contacts match current rules
-            </span>
+            {isLoadingStats && !stats ? (
+              <span className="text-emerald-600">Computing stats…</span>
+            ) : stats ? (
+              <>
+                <span className="font-black text-emerald-800">{stats.total_matched.toLocaleString()}</span>
+                <span className="text-emerald-700">
+                  of {stats.total_contacts.toLocaleString()} contacts match current rules
+                </span>
+                {isLoadingStats && <span className="text-[10px] text-emerald-500">updating…</span>}
+              </>
+            ) : null}
           </div>
         )}
 

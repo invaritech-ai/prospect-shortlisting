@@ -226,13 +226,18 @@ class ContactFetchService:
                         total_found += int(attempt.contacts_found or 0)
                         total_matched += int(attempt.title_matched_count or 0)
 
-        final_state = ContactFetchJobState.FAILED if any_failure else ContactFetchJobState.SUCCEEDED
+        final_state = (
+            ContactFetchJobState.FAILED
+            if any_failure and total_found == 0
+            else ContactFetchJobState.SUCCEEDED
+        )
         with Session(engine) as session:
             job = session.get(ContactFetchJob, job_id)
             job.state = final_state
             job.terminal_state = True
             job.contacts_found = total_found
             job.title_matched_count = total_matched
+            job.last_error_code = "partial_provider_failure" if any_failure and total_found > 0 else None
             job.finished_at = _utcnow()
             job.updated_at = _utcnow()
             session.add(job)

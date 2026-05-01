@@ -47,7 +47,7 @@ def _seed(session: Session, campaign_id) -> tuple[Company, Contact]:
 
 @pytest.mark.asyncio
 async def test_verify_endpoint_creates_job_and_defers_task(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.contacts import verify_contacts
@@ -61,16 +61,16 @@ async def test_verify_endpoint_creates_job_and_defers_task(
 
     monkeypatch.setattr(val_mod.verify_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s5"), session=sqlite_session)
-    _, contact = _seed(sqlite_session, campaign.id)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s5"), session=db_session)
+    _, contact = _seed(db_session, campaign.id)
+    db_session.commit()
 
     result = await verify_contacts(
         payload=ContactVerifyRequest(
             campaign_id=campaign.id,
             contact_ids=[contact.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.job_id is not None
@@ -81,7 +81,7 @@ async def test_verify_endpoint_creates_job_and_defers_task(
 
 @pytest.mark.asyncio
 async def test_verify_endpoint_skips_ineligible_contacts(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.contacts import verify_contacts
@@ -95,18 +95,18 @@ async def test_verify_endpoint_skips_ineligible_contacts(
 
     monkeypatch.setattr(val_mod.verify_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s5"), session=sqlite_session)
-    _, contact = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s5"), session=db_session)
+    _, contact = _seed(db_session, campaign.id)
     contact.title_match = False
-    sqlite_session.flush()
-    sqlite_session.commit()
+    db_session.flush()
+    db_session.commit()
 
     result = await verify_contacts(
         payload=ContactVerifyRequest(
             campaign_id=campaign.id,
             contact_ids=[contact.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.job_id is not None

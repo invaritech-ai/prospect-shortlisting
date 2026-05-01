@@ -41,7 +41,7 @@ def _seed(session: Session, campaign_id) -> Company:
 
 @pytest.mark.asyncio
 async def test_fetch_contacts_for_company_creates_job(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.companies import fetch_contacts_for_company
@@ -54,15 +54,15 @@ async def test_fetch_contacts_for_company_creates_job(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
+    db_session.commit()
 
     result = await fetch_contacts_for_company(
         company_id=company.id,
         campaign_id=campaign.id,
         force_refresh=False,
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.queued_count == 1
@@ -72,7 +72,7 @@ async def test_fetch_contacts_for_company_creates_job(
 
 @pytest.mark.asyncio
 async def test_fetch_contacts_selected_queues_eligible_companies(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.companies import fetch_contacts_selected
@@ -86,13 +86,13 @@ async def test_fetch_contacts_selected_queues_eligible_companies(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
+    db_session.commit()
 
     result = await fetch_contacts_selected(
         payload=BulkContactFetchRequest(campaign_id=campaign.id, company_ids=[company.id]),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.queued_count == 1
@@ -101,15 +101,15 @@ async def test_fetch_contacts_selected_queues_eligible_companies(
 
 # ── Task 5: GET /contacts/companies ──────────────────────────────────────────
 
-def test_list_contacts_companies_groups_by_company(sqlite_session: Session) -> None:
+def test_list_contacts_companies_groups_by_company(db_session: Session) -> None:
     from app.api.routes.contacts import list_contacts_companies
     from app.models import Contact
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
-    sqlite_session.add(Contact(company_id=company.id, source_provider="snov", provider_person_id="s1", first_name="A", last_name="B", title_match=True))
-    sqlite_session.add(Contact(company_id=company.id, source_provider="apollo", provider_person_id="a1", first_name="C", last_name="D"))
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
+    db_session.add(Contact(company_id=company.id, source_provider="snov", provider_person_id="s1", first_name="A", last_name="B", title_match=True))
+    db_session.add(Contact(company_id=company.id, source_provider="apollo", provider_person_id="a1", first_name="C", last_name="D"))
+    db_session.commit()
 
     result = list_contacts_companies(
         campaign_id=campaign.id,
@@ -118,7 +118,7 @@ def test_list_contacts_companies_groups_by_company(sqlite_session: Session) -> N
         match_gap_filter="all",
         limit=50,
         offset=0,
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.total == 1
@@ -129,19 +129,19 @@ def test_list_contacts_companies_groups_by_company(sqlite_session: Session) -> N
 
 # ── Task 6: GET /contacts/ids ────────────────────────────────────────────────
 
-def test_list_contact_ids_returns_matching_ids(sqlite_session: Session) -> None:
+def test_list_contact_ids_returns_matching_ids(db_session: Session) -> None:
     from app.api.routes.contacts import list_contact_ids
     from app.models import Contact
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
     c1 = Contact(company_id=company.id, source_provider="snov", provider_person_id="s1", first_name="A", last_name="B", title_match=True)
     c2 = Contact(company_id=company.id, source_provider="apollo", provider_person_id="a1", first_name="C", last_name="D", title_match=False)
-    sqlite_session.add(c1)
-    sqlite_session.add(c2)
-    sqlite_session.commit()
-    sqlite_session.refresh(c1)
-    sqlite_session.refresh(c2)
+    db_session.add(c1)
+    db_session.add(c2)
+    db_session.commit()
+    db_session.refresh(c1)
+    db_session.refresh(c2)
 
     result = list_contact_ids(
         campaign_id=campaign.id,
@@ -149,7 +149,7 @@ def test_list_contact_ids_returns_matching_ids(sqlite_session: Session) -> None:
         search=None,
         stale_days=None,
         letters=None,
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.total == 1
@@ -159,24 +159,24 @@ def test_list_contact_ids_returns_matching_ids(sqlite_session: Session) -> None:
 
 # ── Task 5+: GET /companies/{id}/contacts ─────────────────────────────────────
 
-def test_list_company_contacts_returns_contacts(sqlite_session: Session) -> None:
+def test_list_company_contacts_returns_contacts(db_session: Session) -> None:
     from app.api.routes.companies import list_company_contacts
     from app.models import Contact
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
-    sqlite_session.add(Contact(
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
+    db_session.add(Contact(
         company_id=company.id, source_provider="snov", provider_person_id="snov-1",
         first_name="Alice", last_name="Smith",
     ))
-    sqlite_session.commit()
+    db_session.commit()
 
     result = list_company_contacts(
         company_id=company.id,
         campaign_id=campaign.id,
         limit=50,
         offset=0,
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.total == 1
@@ -187,7 +187,7 @@ def test_list_company_contacts_returns_contacts(sqlite_session: Session) -> None
 
 @pytest.mark.asyncio
 async def test_fetch_contacts_rejects_out_of_scope_company(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import pytest as pt
@@ -200,17 +200,17 @@ async def test_fetch_contacts_rejects_out_of_scope_company(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    other = create_campaign(payload=CampaignCreate(name="other"), session=sqlite_session)
-    company = _seed(sqlite_session, other.id)
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    other = create_campaign(payload=CampaignCreate(name="other"), session=db_session)
+    company = _seed(db_session, other.id)
+    db_session.commit()
 
     with pt.raises(HTTPException) as exc_info:
         await fetch_contacts_for_company(
             company_id=company.id,
             campaign_id=campaign.id,
             force_refresh=False,
-            session=sqlite_session,
+            session=db_session,
         )
     assert exc_info.value.status_code == 400
 
@@ -219,7 +219,7 @@ async def test_fetch_contacts_rejects_out_of_scope_company(
 
 @pytest.mark.asyncio
 async def test_fetch_contacts_selected_skips_uploaded_companies(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.companies import fetch_contacts_selected
@@ -234,20 +234,20 @@ async def test_fetch_contacts_selected_skips_uploaded_companies(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    scraped = _seed(sqlite_session, campaign.id)          # SCRAPED via _seed default
-    uploaded = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    scraped = _seed(db_session, campaign.id)          # SCRAPED via _seed default
+    uploaded = _seed(db_session, campaign.id)
     uploaded.domain = "uploaded.com"
     uploaded.pipeline_stage = CompanyPipelineStage.UPLOADED
-    sqlite_session.flush()
-    sqlite_session.commit()
+    db_session.flush()
+    db_session.commit()
 
     result = await fetch_contacts_selected(
         payload=BulkContactFetchRequest(
             campaign_id=campaign.id,
             company_ids=[uploaded.id, scraped.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     # Only scraped company queued; uploaded one skipped
@@ -258,7 +258,7 @@ async def test_fetch_contacts_selected_skips_uploaded_companies(
 
 @pytest.mark.asyncio
 async def test_fetch_contacts_for_company_rejects_uploaded(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import pytest as pt
@@ -272,25 +272,25 @@ async def test_fetch_contacts_for_company_rejects_uploaded(
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
     from app.models.pipeline import CompanyPipelineStage
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
     company.pipeline_stage = CompanyPipelineStage.UPLOADED
-    sqlite_session.flush()
-    sqlite_session.commit()
+    db_session.flush()
+    db_session.commit()
 
     with pt.raises(HTTPException) as exc_info:
         await fetch_contacts_for_company(
             company_id=company.id,
             campaign_id=campaign.id,
             force_refresh=False,
-            session=sqlite_session,
+            session=db_session,
         )
     assert exc_info.value.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_reset_stuck_contact_fetch_jobs_requeues_running_without_lock(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.companies import reset_stuck_contact_fetch_jobs
@@ -303,8 +303,8 @@ async def test_reset_stuck_contact_fetch_jobs_requeues_running_without_lock(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
     job = ContactFetchJob(
         company_id=company.id,
         provider="snov",
@@ -313,12 +313,12 @@ async def test_reset_stuck_contact_fetch_jobs_requeues_running_without_lock(
         lock_token="stale-lock",
         lock_expires_at=None,
     )
-    sqlite_session.add(job)
-    sqlite_session.commit()
+    db_session.add(job)
+    db_session.commit()
 
-    result = await reset_stuck_contact_fetch_jobs(session=sqlite_session)
+    result = await reset_stuck_contact_fetch_jobs(session=db_session)
 
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     assert result.reset_count == 1
     assert job.state == ContactFetchJobState.QUEUED
     assert job.terminal_state is False
@@ -329,7 +329,7 @@ async def test_reset_stuck_contact_fetch_jobs_requeues_running_without_lock(
 
 @pytest.mark.asyncio
 async def test_reset_stuck_contact_fetch_jobs_ignores_terminal_jobs(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes.companies import reset_stuck_contact_fetch_jobs
@@ -342,20 +342,20 @@ async def test_reset_stuck_contact_fetch_jobs_ignores_terminal_jobs(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
 
-    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
-    company = _seed(sqlite_session, campaign.id)
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=db_session)
+    company = _seed(db_session, campaign.id)
     job = ContactFetchJob(
         company_id=company.id,
         provider="snov",
         state=ContactFetchJobState.FAILED,
         terminal_state=True,
     )
-    sqlite_session.add(job)
-    sqlite_session.commit()
+    db_session.add(job)
+    db_session.commit()
 
-    result = await reset_stuck_contact_fetch_jobs(session=sqlite_session)
+    result = await reset_stuck_contact_fetch_jobs(session=db_session)
 
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     assert result.reset_count == 0
     assert job.state == ContactFetchJobState.FAILED
     assert len(deferred) == 0

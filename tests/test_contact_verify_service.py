@@ -64,20 +64,20 @@ def _seed_contact(
 
 # ── Task 1: enqueue ───────────────────────────────────────────────────────────
 
-def test_enqueue_creates_job_with_eligible_contacts(sqlite_session: Session) -> None:
+def test_enqueue_creates_job_with_eligible_contacts(db_session: Session) -> None:
     from app.services.contact_verify_service import ContactVerifyService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    c1 = _seed_contact(sqlite_session, company)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    c1 = _seed_contact(db_session, company)
+    db_session.commit()
 
     job, skipped = ContactVerifyService().enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         contact_ids=[c1.id],
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert job.state == ContactVerifyJobState.QUEUED
     assert job.selected_count == 1
@@ -86,59 +86,59 @@ def test_enqueue_creates_job_with_eligible_contacts(sqlite_session: Session) -> 
     assert skipped == 0
 
 
-def test_enqueue_skips_no_title_match(sqlite_session: Session) -> None:
+def test_enqueue_skips_no_title_match(db_session: Session) -> None:
     from app.services.contact_verify_service import ContactVerifyService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    c = _seed_contact(sqlite_session, company, title_match=False)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    c = _seed_contact(db_session, company, title_match=False)
+    db_session.commit()
 
     job, skipped = ContactVerifyService().enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         contact_ids=[c.id],
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert job.contact_ids_json == []
     assert job.skipped_count == 1
     assert skipped == 1
 
 
-def test_enqueue_skips_no_email(sqlite_session: Session) -> None:
+def test_enqueue_skips_no_email(db_session: Session) -> None:
     from app.services.contact_verify_service import ContactVerifyService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    c = _seed_contact(sqlite_session, company, email=None)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    c = _seed_contact(db_session, company, email=None)
+    db_session.commit()
 
     job, skipped = ContactVerifyService().enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         contact_ids=[c.id],
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert job.contact_ids_json == []
     assert skipped == 1
 
 
-def test_enqueue_skips_already_verified(sqlite_session: Session) -> None:
+def test_enqueue_skips_already_verified(db_session: Session) -> None:
     from app.services.contact_verify_service import ContactVerifyService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    c = _seed_contact(sqlite_session, company, verification_status="valid")
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    c = _seed_contact(db_session, company, verification_status="valid")
+    db_session.commit()
 
     job, skipped = ContactVerifyService().enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         contact_ids=[c.id],
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert job.contact_ids_json == []
     assert skipped == 1
@@ -158,7 +158,7 @@ def _make_job(session: Session, campaign: Campaign, company: Company) -> tuple[C
     return contact, job
 
 
-def test_run_verify_writes_valid_status(sqlite_session: Session, monkeypatch) -> None:
+def test_run_verify_writes_valid_status(db_session: Session, monkeypatch) -> None:
     from app.services.contact_verify_service import ContactVerifyService
     from app.services import zerobounce_client as zb_mod
 
@@ -168,26 +168,26 @@ def test_run_verify_writes_valid_status(sqlite_session: Session, monkeypatch) ->
         lambda self, emails, **kw: ([{"address": "alice@acme.com", "status": "valid"}], ""),
     )
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    contact, job = _make_job(sqlite_session, campaign, company)
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    contact, job = _make_job(db_session, campaign, company)
 
-    ContactVerifyService().run_verify(engine=sqlite_session.bind, job_id=str(job.id))
+    ContactVerifyService().run_verify(engine=db_session.bind, job_id=str(job.id))
 
-    sqlite_session.refresh(contact)
+    db_session.refresh(contact)
     assert contact.verification_status == "valid"
     assert contact.verification_provider == "zerobounce"
     assert contact.pipeline_stage == "campaign_ready"
     assert contact.zerobounce_raw is not None
 
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     assert job.state == ContactVerifyJobState.SUCCEEDED
     assert job.verified_count == 1
     assert job.terminal_state is True
     assert job.finished_at is not None
 
 
-def test_run_verify_invalid_does_not_set_campaign_ready(sqlite_session: Session, monkeypatch) -> None:
+def test_run_verify_invalid_does_not_set_campaign_ready(db_session: Session, monkeypatch) -> None:
     from app.services.contact_verify_service import ContactVerifyService
     from app.services import zerobounce_client as zb_mod
 
@@ -197,18 +197,18 @@ def test_run_verify_invalid_does_not_set_campaign_ready(sqlite_session: Session,
         lambda self, emails, **kw: ([{"address": "alice@acme.com", "status": "invalid"}], ""),
     )
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    contact, job = _make_job(sqlite_session, campaign, company)
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    contact, job = _make_job(db_session, campaign, company)
 
-    ContactVerifyService().run_verify(engine=sqlite_session.bind, job_id=str(job.id))
+    ContactVerifyService().run_verify(engine=db_session.bind, job_id=str(job.id))
 
-    sqlite_session.refresh(contact)
+    db_session.refresh(contact)
     assert contact.verification_status == "invalid"
     assert contact.pipeline_stage == "email_revealed"
 
 
-def test_run_verify_api_error_leaves_contacts_untouched(sqlite_session: Session, monkeypatch) -> None:
+def test_run_verify_api_error_leaves_contacts_untouched(db_session: Session, monkeypatch) -> None:
     from app.services.contact_verify_service import ContactVerifyService
     from app.services import zerobounce_client as zb_mod
 
@@ -218,22 +218,22 @@ def test_run_verify_api_error_leaves_contacts_untouched(sqlite_session: Session,
         lambda self, emails, **kw: ([], "zerobounce_failed"),
     )
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    contact, job = _make_job(sqlite_session, campaign, company)
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    contact, job = _make_job(db_session, campaign, company)
 
-    ContactVerifyService().run_verify(engine=sqlite_session.bind, job_id=str(job.id))
+    ContactVerifyService().run_verify(engine=db_session.bind, job_id=str(job.id))
 
-    sqlite_session.refresh(contact)
+    db_session.refresh(contact)
     assert contact.verification_status == "unverified"
 
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     # Transient error: job re-queued for Procrastinate retry (not terminal yet)
     assert job.state in (ContactVerifyJobState.FAILED, ContactVerifyJobState.QUEUED)
     assert job.last_error_code == "zerobounce_failed"
 
 
-def test_run_verify_empty_job_succeeds_without_api_call(sqlite_session: Session, monkeypatch) -> None:
+def test_run_verify_empty_job_succeeds_without_api_call(db_session: Session, monkeypatch) -> None:
     from app.services.contact_verify_service import ContactVerifyService
     from app.services import zerobounce_client as zb_mod
 
@@ -244,20 +244,20 @@ def test_run_verify_empty_job_succeeds_without_api_call(sqlite_session: Session,
         lambda self, emails, **kw: called.append(emails) or ([], ""),
     )
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
     # ineligible contact → empty job
-    contact = _seed_contact(sqlite_session, company, title_match=False)
-    sqlite_session.commit()
+    contact = _seed_contact(db_session, company, title_match=False)
+    db_session.commit()
     job, _ = ContactVerifyService().enqueue(
-        session=sqlite_session, campaign_id=campaign.id, contact_ids=[contact.id]
+        session=db_session, campaign_id=campaign.id, contact_ids=[contact.id]
     )
-    sqlite_session.commit()
+    db_session.commit()
 
-    ContactVerifyService().run_verify(engine=sqlite_session.bind, job_id=str(job.id))
+    ContactVerifyService().run_verify(engine=db_session.bind, job_id=str(job.id))
 
     assert called == []
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     assert job.state == ContactVerifyJobState.SUCCEEDED
 
 

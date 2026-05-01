@@ -40,20 +40,20 @@ def _clear_analysis_usage_rows(session: Session) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_analysis_usage_tables(sqlite_session: Session):
-    _clear_analysis_usage_rows(sqlite_session)
+def _reset_analysis_usage_tables(db_session: Session):
+    _clear_analysis_usage_rows(db_session)
     yield
-    _clear_analysis_usage_rows(sqlite_session)
+    _clear_analysis_usage_rows(db_session)
 
 
 def test_run_analysis_job_records_ai_usage_event_on_success(
-    sqlite_engine,
-    sqlite_session: Session,
+    db_engine,
+    db_session: Session,
     monkeypatch,
 ) -> None:
     campaign = Campaign(name="Campaign")
-    sqlite_session.add(campaign)
-    sqlite_session.flush()
+    db_session.add(campaign)
+    db_session.flush()
 
     upload = Upload(
         filename="companies.csv",
@@ -63,8 +63,8 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         invalid_count=0,
         campaign_id=campaign.id,
     )
-    sqlite_session.add(upload)
-    sqlite_session.flush()
+    db_session.add(upload)
+    db_session.flush()
 
     company = Company(
         upload_id=upload.id,
@@ -72,20 +72,20 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         normalized_url="https://example.com",
         domain="example.com",
     )
-    sqlite_session.add(company)
-    sqlite_session.flush()
+    db_session.add(company)
+    db_session.flush()
 
     prompt = Prompt(name="p1", enabled=True, prompt_text="Classify {domain}\n{context}")
-    sqlite_session.add(prompt)
-    sqlite_session.flush()
+    db_session.add(prompt)
+    db_session.flush()
 
     pipeline_run = PipelineRun(
         campaign_id=campaign.id,
         state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
     )
-    sqlite_session.add(pipeline_run)
-    sqlite_session.flush()
+    db_session.add(pipeline_run)
+    db_session.flush()
 
     crawl_job = CrawlJob(
         upload_id=upload.id,
@@ -93,12 +93,12 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         state=CrawlJobState.SUCCEEDED,
         terminal_state=True,
     )
-    sqlite_session.add(crawl_job)
-    sqlite_session.flush()
+    db_session.add(crawl_job)
+    db_session.flush()
 
     artifact = CrawlArtifact(company_id=company.id, crawl_job_id=crawl_job.id)
-    sqlite_session.add(artifact)
-    sqlite_session.flush()
+    db_session.add(artifact)
+    db_session.flush()
 
     analysis_job = AnalysisJob(
         upload_id=upload.id,
@@ -112,8 +112,8 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         prompt_hash="hash-1",
         pipeline_run_id=pipeline_run.id,
     )
-    sqlite_session.add(analysis_job)
-    sqlite_session.flush()
+    db_session.add(analysis_job)
+    db_session.flush()
 
     scrape_job = ScrapeJob(
         website_url=company.normalized_url,
@@ -124,8 +124,8 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         pipeline_run_id=pipeline_run.id,
         pages_fetched_count=1,
     )
-    sqlite_session.add(scrape_job)
-    sqlite_session.flush()
+    db_session.add(scrape_job)
+    db_session.flush()
 
     scrape_page = ScrapePage(
         job_id=scrape_job.id,
@@ -134,8 +134,8 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         page_kind="home",
         markdown_content="# Example page",
     )
-    sqlite_session.add(scrape_page)
-    sqlite_session.commit()
+    db_session.add(scrape_page)
+    db_session.commit()
 
     class _DummyRunService:
         @staticmethod
@@ -167,10 +167,10 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
 
     service = AnalysisService()
     service._run_service = _DummyRunService()  # noqa: SLF001
-    result = service.run_analysis_job(engine=sqlite_engine, analysis_job_id=analysis_job.id)
+    result = service.run_analysis_job(engine=db_engine, analysis_job_id=analysis_job.id)
     assert result is not None
 
-    usage_events = list(sqlite_session.exec(select(AiUsageEvent)))
+    usage_events = list(db_session.exec(select(AiUsageEvent)))
     assert len(usage_events) == 1
     usage = usage_events[0]
     assert usage.pipeline_run_id == pipeline_run.id
@@ -188,13 +188,13 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
 
 
 def test_run_analysis_job_completes_without_s3_enqueue_hook(
-    sqlite_engine,
-    sqlite_session: Session,
+    db_engine,
+    db_session: Session,
     monkeypatch,
 ) -> None:
     campaign = Campaign(name="Campaign")
-    sqlite_session.add(campaign)
-    sqlite_session.flush()
+    db_session.add(campaign)
+    db_session.flush()
 
     upload = Upload(
         filename="companies.csv",
@@ -204,8 +204,8 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
         invalid_count=0,
         campaign_id=campaign.id,
     )
-    sqlite_session.add(upload)
-    sqlite_session.flush()
+    db_session.add(upload)
+    db_session.flush()
 
     company = Company(
         upload_id=upload.id,
@@ -213,20 +213,20 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
         normalized_url="https://example.com",
         domain="example.com",
     )
-    sqlite_session.add(company)
-    sqlite_session.flush()
+    db_session.add(company)
+    db_session.flush()
 
     prompt = Prompt(name="p1", enabled=True, prompt_text="Classify {domain}\n{context}")
-    sqlite_session.add(prompt)
-    sqlite_session.flush()
+    db_session.add(prompt)
+    db_session.flush()
 
     pipeline_run = PipelineRun(
         campaign_id=campaign.id,
         state=PipelineRunStatus.RUNNING,
         company_ids_snapshot=[str(company.id)],
     )
-    sqlite_session.add(pipeline_run)
-    sqlite_session.flush()
+    db_session.add(pipeline_run)
+    db_session.flush()
 
     crawl_job = CrawlJob(
         upload_id=upload.id,
@@ -234,12 +234,12 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
         state=CrawlJobState.SUCCEEDED,
         terminal_state=True,
     )
-    sqlite_session.add(crawl_job)
-    sqlite_session.flush()
+    db_session.add(crawl_job)
+    db_session.flush()
 
     artifact = CrawlArtifact(company_id=company.id, crawl_job_id=crawl_job.id)
-    sqlite_session.add(artifact)
-    sqlite_session.flush()
+    db_session.add(artifact)
+    db_session.flush()
 
     analysis_job = AnalysisJob(
         upload_id=upload.id,
@@ -253,8 +253,8 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
         prompt_hash="hash-1",
         pipeline_run_id=pipeline_run.id,
     )
-    sqlite_session.add(analysis_job)
-    sqlite_session.flush()
+    db_session.add(analysis_job)
+    db_session.flush()
 
     scrape_job = ScrapeJob(
         website_url=company.normalized_url,
@@ -266,10 +266,10 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
         pages_fetched_count=1,
         markdown_pages_count=1,
     )
-    sqlite_session.add(scrape_job)
-    sqlite_session.flush()
+    db_session.add(scrape_job)
+    db_session.flush()
 
-    sqlite_session.add(
+    db_session.add(
         ScrapePage(
             job_id=scrape_job.id,
             url=company.normalized_url,
@@ -278,7 +278,7 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
             markdown_content="# Example page",
         )
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     class _DummyLlm:
         @staticmethod
@@ -304,7 +304,7 @@ def test_run_analysis_job_completes_without_s3_enqueue_hook(
     )
 
     service = AnalysisService()
-    result = service.run_analysis_job(engine=sqlite_engine, analysis_job_id=analysis_job.id)
+    result = service.run_analysis_job(engine=db_engine, analysis_job_id=analysis_job.id)
 
     assert result is not None
     assert result.state == AnalysisJobState.SUCCEEDED

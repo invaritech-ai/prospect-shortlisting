@@ -54,7 +54,7 @@ def _count_scrape_jobs(session: Session) -> int:
 
 @pytest.mark.asyncio
 async def test_scrape_selected_returns_immediately(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes import companies as companies_route
@@ -68,15 +68,15 @@ async def test_scrape_selected_returns_immediately(
     monkeypatch.setattr(scrape_mod.dispatch_scrape_run, "defer_async", fake_dispatch)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Scrape Run Immediate"), session=sqlite_session
+        payload=CampaignCreate(name="Scrape Run Immediate"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
     companies = [
-        _seed_company(sqlite_session, upload_id=upload.id, domain=f"r{i}.example")
+        _seed_company(db_session, upload_id=upload.id, domain=f"r{i}.example")
         for i in range(5)
     ]
-    sqlite_session.commit()
-    before_jobs = _count_scrape_jobs(sqlite_session)
+    db_session.commit()
+    before_jobs = _count_scrape_jobs(db_session)
 
     result = await companies_route.scrape_selected_companies(
         payload=CompanyScrapeRequest(
@@ -84,21 +84,21 @@ async def test_scrape_selected_returns_immediately(
             upload_id=upload.id,
             company_ids=[c.id for c in companies],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.status == "accepted"
     assert result.requested_count == 5
-    assert _count_scrape_jobs(sqlite_session) == before_jobs
+    assert _count_scrape_jobs(db_session) == before_jobs
     assert len(dispatched) == 1
-    assert len(list(sqlite_session.exec(
+    assert len(list(db_session.exec(
         select(ScrapeRunItem).where(ScrapeRunItem.run_id == result.id)
     ))) == 5
 
 
 @pytest.mark.asyncio
 async def test_scrape_selected_rejects_out_of_scope_ids(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Company IDs from a different campaign → 400 with invalid_ids list."""
@@ -110,13 +110,13 @@ async def test_scrape_selected_rejects_out_of_scope_ids(
 
     monkeypatch.setattr(scrape_mod.dispatch_scrape_run, "defer_async", fake_dispatch)
 
-    campaign_a = create_campaign(payload=CampaignCreate(name="Camp A"), session=sqlite_session)
-    campaign_b = create_campaign(payload=CampaignCreate(name="Camp B"), session=sqlite_session)
-    upload_a = _seed_upload(sqlite_session, campaign_id=campaign_a.id)
-    upload_b = _seed_upload(sqlite_session, campaign_id=campaign_b.id)
-    company_a = _seed_company(sqlite_session, upload_id=upload_a.id, domain="a.example")
-    company_b = _seed_company(sqlite_session, upload_id=upload_b.id, domain="b.example")
-    sqlite_session.commit()
+    campaign_a = create_campaign(payload=CampaignCreate(name="Camp A"), session=db_session)
+    campaign_b = create_campaign(payload=CampaignCreate(name="Camp B"), session=db_session)
+    upload_a = _seed_upload(db_session, campaign_id=campaign_a.id)
+    upload_b = _seed_upload(db_session, campaign_id=campaign_b.id)
+    company_a = _seed_company(db_session, upload_id=upload_a.id, domain="a.example")
+    company_b = _seed_company(db_session, upload_id=upload_b.id, domain="b.example")
+    db_session.commit()
 
     with pytest.raises(HTTPException) as exc_info:
         await companies_route.scrape_selected_companies(
@@ -124,7 +124,7 @@ async def test_scrape_selected_rejects_out_of_scope_ids(
                 campaign_id=campaign_a.id,
                 company_ids=[company_a.id, company_b.id],
             ),
-            session=sqlite_session,
+            session=db_session,
         )
 
     assert exc_info.value.status_code == 400
@@ -136,12 +136,12 @@ async def test_scrape_selected_rejects_out_of_scope_ids(
 
 @pytest.mark.asyncio
 async def test_dispatcher_creates_jobs_in_batches(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.jobs import scrape as scrape_mod
 
-    monkeypatch.setattr(scrape_mod, "get_engine", lambda: sqlite_session.get_bind())
+    monkeypatch.setattr(scrape_mod, "get_engine", lambda: db_session.get_bind())
     monkeypatch.setattr(scrape_mod, "DISPATCH_BATCH_SIZE", 25)
     monkeypatch.setattr(scrape_mod, "available_slots", lambda _e, _q, requested: requested)
 
@@ -153,26 +153,26 @@ async def test_dispatcher_creates_jobs_in_batches(
     monkeypatch.setattr(scrape_mod, "defer_scrape_website_bulk", fake_bulk)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Scrape Run Batches"), session=sqlite_session
+        payload=CampaignCreate(name="Scrape Run Batches"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
     companies = [
-        _seed_company(sqlite_session, upload_id=upload.id, domain=f"b{i}.example")
+        _seed_company(db_session, upload_id=upload.id, domain=f"b{i}.example")
         for i in range(60)
     ]
     run = ScrapeRun(campaign_id=campaign.id, requested_count=60)
-    sqlite_session.add(run)
-    sqlite_session.flush()
-    sqlite_session.add_all(
+    db_session.add(run)
+    db_session.flush()
+    db_session.add_all(
         [ScrapeRunItem(run_id=run.id, company_id=c.id) for c in companies],
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     await scrape_mod.dispatch_scrape_run(str(run.id))
 
     assert bulk_sizes == [25, 25, 10]
-    sqlite_session.expire_all()
-    run_r = sqlite_session.get(ScrapeRun, run.id)
+    db_session.expire_all()
+    run_r = db_session.get(ScrapeRun, run.id)
     assert run_r is not None
     assert run_r.status == "completed"
     assert run_r.queued_count == 60
@@ -180,13 +180,13 @@ async def test_dispatcher_creates_jobs_in_batches(
 
 @pytest.mark.asyncio
 async def test_dispatcher_is_resumable(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Items already QUEUED are skipped; only PENDING items get new jobs."""
     from app.jobs import scrape as scrape_mod
 
-    monkeypatch.setattr(scrape_mod, "get_engine", lambda: sqlite_session.get_bind())
+    monkeypatch.setattr(scrape_mod, "get_engine", lambda: db_session.get_bind())
     monkeypatch.setattr(scrape_mod, "DISPATCH_BATCH_SIZE", 100)
     monkeypatch.setattr(scrape_mod, "available_slots", lambda _e, _q, requested: requested)
 
@@ -196,38 +196,38 @@ async def test_dispatcher_is_resumable(
     monkeypatch.setattr(scrape_mod, "defer_scrape_website_bulk", noop_bulk)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Scrape Run Resume"), session=sqlite_session
+        payload=CampaignCreate(name="Scrape Run Resume"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
     companies = [
-        _seed_company(sqlite_session, upload_id=upload.id, domain=f"s{i}.example")
+        _seed_company(db_session, upload_id=upload.id, domain=f"s{i}.example")
         for i in range(50)
     ]
     run = ScrapeRun(campaign_id=campaign.id, requested_count=50)
-    sqlite_session.add(run)
-    sqlite_session.flush()
+    db_session.add(run)
+    db_session.flush()
     items = [ScrapeRunItem(run_id=run.id, company_id=c.id) for c in companies]
-    sqlite_session.add_all(items)
-    sqlite_session.flush()
+    db_session.add_all(items)
+    db_session.flush()
     for item in items[:20]:
         item.status = ScrapeRunItemStatus.QUEUED
-        sqlite_session.add(item)
-    sqlite_session.commit()
+        db_session.add(item)
+    db_session.commit()
 
-    before = _count_scrape_jobs(sqlite_session)
+    before = _count_scrape_jobs(db_session)
     await scrape_mod.dispatch_scrape_run(str(run.id))
-    assert _count_scrape_jobs(sqlite_session) - before == 30
+    assert _count_scrape_jobs(db_session) - before == 30
 
 
 @pytest.mark.asyncio
 async def test_dispatcher_resumes_job_created_items(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """JOB_CREATED items (job exists, prior defer failed) are re-deferred without creating new jobs."""
     from app.jobs import scrape as scrape_mod
 
-    monkeypatch.setattr(scrape_mod, "get_engine", lambda: sqlite_session.get_bind())
+    monkeypatch.setattr(scrape_mod, "get_engine", lambda: db_session.get_bind())
     monkeypatch.setattr(scrape_mod, "available_slots", lambda _e, _q, r: r)
 
     deferred_job_ids: list[str] = []
@@ -238,51 +238,51 @@ async def test_dispatcher_resumes_job_created_items(
     monkeypatch.setattr(scrape_mod, "defer_scrape_website_bulk", fake_bulk)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Resume JOB_CREATED"), session=sqlite_session
+        payload=CampaignCreate(name="Resume JOB_CREATED"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
-    c = _seed_company(sqlite_session, upload_id=upload.id, domain="jc.example")
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
+    c = _seed_company(db_session, upload_id=upload.id, domain="jc.example")
 
     existing_job = ScrapeJob(
         website_url="https://jc.example",
         normalized_url="https://jc.example",
         domain="jc.example",
     )
-    sqlite_session.add(existing_job)
-    sqlite_session.flush()
+    db_session.add(existing_job)
+    db_session.flush()
 
     run = ScrapeRun(campaign_id=campaign.id, requested_count=1)
-    sqlite_session.add(run)
-    sqlite_session.flush()
+    db_session.add(run)
+    db_session.flush()
     item = ScrapeRunItem(
         run_id=run.id,
         company_id=c.id,
         scrape_job_id=existing_job.id,
         status=ScrapeRunItemStatus.JOB_CREATED,
     )
-    sqlite_session.add(item)
-    sqlite_session.commit()
+    db_session.add(item)
+    db_session.commit()
 
-    before_jobs = _count_scrape_jobs(sqlite_session)
+    before_jobs = _count_scrape_jobs(db_session)
     await scrape_mod.dispatch_scrape_run(str(run.id))
 
     # No new ScrapeJob rows — only the existing one was deferred
-    assert _count_scrape_jobs(sqlite_session) == before_jobs
+    assert _count_scrape_jobs(db_session) == before_jobs
     assert str(existing_job.id) in deferred_job_ids
 
-    sqlite_session.expire_all()
-    updated_item = sqlite_session.get(ScrapeRunItem, item.id)
+    db_session.expire_all()
+    updated_item = db_session.get(ScrapeRunItem, item.id)
     assert updated_item.status == ScrapeRunItemStatus.QUEUED
 
 
 @pytest.mark.asyncio
 async def test_dispatcher_respects_backpressure(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.jobs import scrape as scrape_mod
 
-    monkeypatch.setattr(scrape_mod, "get_engine", lambda: sqlite_session.get_bind())
+    monkeypatch.setattr(scrape_mod, "get_engine", lambda: db_session.get_bind())
     bulk_calls: list[int] = []
     configure_kwargs: list[dict] = []
     defer_kwargs: list[dict] = []
@@ -304,15 +304,15 @@ async def test_dispatcher_respects_backpressure(
     monkeypatch.setattr(scrape_mod, "available_slots", lambda *_a, **_k: 0)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Scrape Run Backpressure"), session=sqlite_session
+        payload=CampaignCreate(name="Scrape Run Backpressure"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
-    c = _seed_company(sqlite_session, upload_id=upload.id, domain="bp.example")
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
+    c = _seed_company(db_session, upload_id=upload.id, domain="bp.example")
     run = ScrapeRun(campaign_id=campaign.id, requested_count=1)
-    sqlite_session.add(run)
-    sqlite_session.flush()
-    sqlite_session.add(ScrapeRunItem(run_id=run.id, company_id=c.id))
-    sqlite_session.commit()
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(ScrapeRunItem(run_id=run.id, company_id=c.id))
+    db_session.commit()
 
     await scrape_mod.dispatch_scrape_run(str(run.id))
 
@@ -323,23 +323,23 @@ async def test_dispatcher_respects_backpressure(
     assert defer_kwargs[0] == {"run_id": str(run.id)}
 
 
-def test_scrape_run_status_endpoint(sqlite_session: Session) -> None:
-    campaign = create_campaign(payload=CampaignCreate(name="Run Status"), session=sqlite_session)
+def test_scrape_run_status_endpoint(db_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Run Status"), session=db_session)
     run = ScrapeRun(campaign_id=campaign.id, requested_count=3)
-    sqlite_session.add(run)
-    sqlite_session.commit()
+    db_session.add(run)
+    db_session.commit()
 
-    read = get_scrape_run(run.id, session=sqlite_session)
+    read = get_scrape_run(run.id, session=db_session)
     assert read.id == run.id
     assert read.status == "accepted"
     assert read.requested_count == 3
 
 
-def test_scrape_run_unknown_returns_404(sqlite_session: Session) -> None:
+def test_scrape_run_unknown_returns_404(db_session: Session) -> None:
     import uuid
 
     with pytest.raises(HTTPException) as excinfo:
-        get_scrape_run(uuid.uuid4(), session=sqlite_session)
+        get_scrape_run(uuid.uuid4(), session=db_session)
     assert excinfo.value.status_code == 404
 
 
@@ -350,7 +350,7 @@ def test_scrape_run_unknown_returns_404(sqlite_session: Session) -> None:
 
 @pytest.mark.asyncio
 async def test_scrape_all_returns_scrape_run(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes import companies as companies_route
@@ -364,26 +364,26 @@ async def test_scrape_all_returns_scrape_run(
     monkeypatch.setattr(scrape_mod.dispatch_scrape_run, "defer_async", fake_dispatch)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Scrape All Run"), session=sqlite_session
+        payload=CampaignCreate(name="Scrape All Run"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
     companies = [
-        _seed_company(sqlite_session, upload_id=upload.id, domain=f"sa{i}.example")
+        _seed_company(db_session, upload_id=upload.id, domain=f"sa{i}.example")
         for i in range(4)
     ]
-    sqlite_session.commit()
-    before_jobs = _count_scrape_jobs(sqlite_session)
+    db_session.commit()
+    before_jobs = _count_scrape_jobs(db_session)
 
     result = await companies_route.scrape_all_companies(
         campaign_id=campaign.id,
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.status == "accepted"
     assert result.requested_count == 4
-    assert _count_scrape_jobs(sqlite_session) == before_jobs
+    assert _count_scrape_jobs(db_session) == before_jobs
     assert len(dispatched) == 1
-    items = list(sqlite_session.exec(
+    items = list(db_session.exec(
         select(ScrapeRunItem).where(ScrapeRunItem.run_id == result.id)
     ))
     assert len(items) == 4
@@ -396,7 +396,7 @@ async def test_scrape_all_returns_scrape_run(
 
 @pytest.mark.asyncio
 async def test_scrape_matching_creates_run_from_filters(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes import companies as companies_route
@@ -411,26 +411,26 @@ async def test_scrape_matching_creates_run_from_filters(
     monkeypatch.setattr(scrape_mod.dispatch_scrape_run, "defer_async", fake_dispatch)
 
     campaign = create_campaign(
-        payload=CampaignCreate(name="Scrape Matching"), session=sqlite_session
+        payload=CampaignCreate(name="Scrape Matching"), session=db_session
     )
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
     [
-        _seed_company(sqlite_session, upload_id=upload.id, domain=f"fm{i}.example")
+        _seed_company(db_session, upload_id=upload.id, domain=f"fm{i}.example")
         for i in range(7)
     ]
-    sqlite_session.commit()
-    before_jobs = _count_scrape_jobs(sqlite_session)
+    db_session.commit()
+    before_jobs = _count_scrape_jobs(db_session)
 
     result = await companies_route.scrape_matching_companies(
         payload=CompanyScrapeByFiltersRequest(campaign_id=campaign.id),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.status == "accepted"
     assert result.requested_count == 7
-    assert _count_scrape_jobs(sqlite_session) == before_jobs
+    assert _count_scrape_jobs(db_session) == before_jobs
     assert len(dispatched) == 1
-    items = list(sqlite_session.exec(
+    items = list(db_session.exec(
         select(ScrapeRunItem).where(ScrapeRunItem.run_id == result.id)
     ))
     assert len(items) == 7

@@ -210,7 +210,7 @@ def compute_title_rule_stats(session: Session, *, campaign_id: UUID) -> dict[str
             .order_by(col(TitleMatchRule.rule_type), col(TitleMatchRule.created_at))
         )
     )
-    titles = [
+    raw_titles = [
         title
         for title in session.exec(
             select(Contact.title)
@@ -224,49 +224,32 @@ def compute_title_rule_stats(session: Session, *, campaign_id: UUID) -> dict[str
         ).all()
         if title
     ]
+
+    # Normalize all titles once — avoids O(N×R) re-normalization inside rule loops
+    normalized_titles = [normalize_title(t) for t in raw_titles]
+
     include_rules, exclude_words = load_title_rules(session, campaign_id=campaign_id)
-    total_matched = sum(1 for title in titles if match_title(title, include_rules, exclude_words))
+    total_matched = sum(1 for t in raw_titles if match_title(t, include_rules, exclude_words))
 
     rule_stats: list[dict[str, Any]] = []
     for rule in rules:
         match_type = (rule.match_type or "keyword").strip().lower()
         if rule.rule_type == "include":
             if match_type == "regex":
-                count = sum(
-                    1
-                    for title in titles
-                    if re.search(rule.keywords.strip(), normalize_title(title), re.IGNORECASE)
-                )
+                pattern = re.compile(rule.keywords.strip(), re.IGNORECASE)
+                count = sum(1 for nt in normalized_titles if pattern.search(nt))
             elif match_type == "seniority":
-                preset_keywords = [normalize_title(value) for value in SENIORITY_PRESETS.get(rule.keywords.strip(), [])]
-                count = sum(
-                    1
-                    for title in titles
-                    if any(
-                        re.search(r"\b" + re.escape(keyword) + r"\b", normalize_title(title))
-                        for keyword in preset_keywords
-                    )
-                )
+                preset_kws = [normalize_title(v) for v in SENIORITY_PRESETS.get(rule.keywords.strip(), [])]
+                patterns = [re.compile(r"\b" + re.escape(k) + r"\b") for k in preset_kws if k]
+                count = sum(1 for nt in normalized_titles if any(p.search(nt) for p in patterns))
             else:
-                keywords = [normalize_title(part.strip()) for part in rule.keywords.split(",") if part.strip()]
-                count = sum(
-                    1
-                    for title in titles
-                    if keywords and all(
-                        re.search(r"\b" + re.escape(keyword) + r"\b", normalize_title(title))
-                        for keyword in keywords
-                    )
-                )
+                kws = [normalize_title(p.strip()) for p in rule.keywords.split(",") if p.strip()]
+                patterns = [re.compile(r"\b" + re.escape(k) + r"\b") for k in kws]
+                count = sum(1 for nt in normalized_titles if kws and all(p.search(nt) for p in patterns))
         else:
-            keywords = [normalize_title(part.strip()) for part in rule.keywords.split(",") if part.strip()]
-            count = sum(
-                1
-                for title in titles
-                if any(
-                    re.search(r"\b" + re.escape(keyword) + r"\b", normalize_title(title))
-                    for keyword in keywords
-                )
-            )
+            kws = [normalize_title(p.strip()) for p in rule.keywords.split(",") if p.strip()]
+            patterns = [re.compile(r"\b" + re.escape(k) + r"\b") for k in kws]
+            count = sum(1 for nt in normalized_titles if any(p.search(nt) for p in patterns))
         rule_stats.append(
             {
                 "rule_id": rule.id,
@@ -278,7 +261,7 @@ def compute_title_rule_stats(session: Session, *, campaign_id: UUID) -> dict[str
 
     return {
         "rules": rule_stats,
-        "total_contacts": len(titles),
+        "total_contacts": len(raw_titles),
         "total_matched": total_matched,
     }
 

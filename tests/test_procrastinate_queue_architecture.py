@@ -94,17 +94,17 @@ def test_scrape_page_content_read_contains_page_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_scrape_selected_accepts_run_and_defers_single_dispatch(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes import companies as companies_route
     from app.jobs import scrape as scrape_mod
 
-    campaign = create_campaign(payload=CampaignCreate(name="Scrape Queue"), session=sqlite_session)
-    upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
-    first = _seed_company(sqlite_session, upload_id=upload.id, domain="alpha.example")
-    second = _seed_company(sqlite_session, upload_id=upload.id, domain="beta.example")
-    sqlite_session.commit()
+    campaign = create_campaign(payload=CampaignCreate(name="Scrape Queue"), session=db_session)
+    upload = _seed_upload(db_session, campaign_id=campaign.id)
+    first = _seed_company(db_session, upload_id=upload.id, domain="alpha.example")
+    second = _seed_company(db_session, upload_id=upload.id, domain="beta.example")
+    db_session.commit()
 
     dispatched: list[dict] = []
 
@@ -119,14 +119,14 @@ async def test_scrape_selected_accepts_run_and_defers_single_dispatch(
             upload_id=upload.id,
             company_ids=[first.id, second.id],
         ),
-        session=sqlite_session,
+        session=db_session,
     )
 
     assert result.requested_count == 2
     assert result.status == "accepted"
     assert len(dispatched) == 1
     items = list(
-        sqlite_session.exec(
+        db_session.exec(
             select(ScrapeRunItem).where(ScrapeRunItem.run_id == result.id),
         ),
     )

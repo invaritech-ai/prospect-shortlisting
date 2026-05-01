@@ -54,21 +54,21 @@ def test_fetch_contacts_task_accepts_job_id() -> None:
 
 # ── Task 2: enqueue service ───────────────────────────────────────────────────
 
-def test_enqueue_creates_batch_and_job(sqlite_session: Session) -> None:
+def test_enqueue_creates_batch_and_job(db_session: Session) -> None:
     from app.services.contact_fetch_service import ContactFetchService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    db_session.commit()
 
     svc = ContactFetchService()
     batch, jobs, reused = svc.enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         company_ids=[company.id],
         force_refresh=False,
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert batch.id is not None
     assert batch.campaign_id == campaign.id
@@ -78,29 +78,29 @@ def test_enqueue_creates_batch_and_job(sqlite_session: Session) -> None:
     assert reused == 0
 
 
-def test_enqueue_reuses_active_job(sqlite_session: Session) -> None:
+def test_enqueue_reuses_active_job(db_session: Session) -> None:
     from app.services.contact_fetch_service import ContactFetchService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    db_session.commit()
 
     svc = ContactFetchService()
     _, jobs1, _ = svc.enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         company_ids=[company.id],
         force_refresh=False,
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     _, jobs2, reused = svc.enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         company_ids=[company.id],
         force_refresh=False,
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert reused == 1
     assert len(jobs2) == 1
@@ -126,7 +126,7 @@ def _seed_job(
     return company, jobs[0]
 
 
-def test_run_job_snov_upserts_contacts(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_snov_upserts_contacts(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -141,19 +141,19 @@ def test_run_job_snov_upserts_contacts(sqlite_session: Session, monkeypatch) -> 
     )
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
 
-    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
-    contacts = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
     assert len(contacts) == 1
     assert contacts[0].source_provider == "snov"
     assert contacts[0].first_name == "Alice"
     assert contacts[0].title == "CMO"
 
 
-def test_run_job_apollo_upserts_contacts(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_apollo_upserts_contacts(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -164,18 +164,18 @@ def test_run_job_apollo_upserts_contacts(sqlite_session: Session, monkeypatch) -
         lambda self, domain, **kw: [{"id": "apollo-1", "first_name": "Bob", "last_name": "Jones", "title": "CTO", "linkedin_url": "https://li/bob"}],
     )
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
 
-    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
-    contacts = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
     assert len(contacts) == 1
     assert contacts[0].source_provider == "apollo"
     assert contacts[0].linkedin_url == "https://li/bob"
 
 
-def test_run_job_both_providers_kept(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_both_providers_kept(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -189,15 +189,63 @@ def test_run_job_both_providers_kept(sqlite_session: Session, monkeypatch) -> No
         lambda self, domain, **kw: [{"id": "apollo-1", "first_name": "Bob", "last_name": "Jones", "title": "CTO"}],
     )
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
-    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
-    contacts = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
     assert {c.source_provider for c in contacts} == {"snov", "apollo"}
 
 
-def test_run_job_repeated_run_upserts_not_duplicates(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_succeeds_when_one_provider_finds_contacts_and_other_fails(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(
+        snov_mod.SnovClient,
+        "search_prospects",
+        lambda self, domain, page=1: (
+            [{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO"}],
+            1,
+            "",
+        ),
+    )
+
+    def _apollo_auth_failed(self, domain, **kw):
+        self.last_error_code = "apollo_auth_failed"
+        return []
+
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", _apollo_auth_failed)
+
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(
+        engine=db_session.bind,
+        contact_fetch_job_id=str(job.id),
+    )
+
+    db_session.refresh(job)
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    apollo_attempt = db_session.exec(
+        select(ContactProviderAttempt).where(
+            col(ContactProviderAttempt.contact_fetch_job_id) == job.id,
+            col(ContactProviderAttempt.provider) == "apollo",
+        )
+    ).one()
+
+    assert job.state == ContactFetchJobState.SUCCEEDED
+    assert job.contacts_found == 1
+    assert len(contacts) == 1
+    assert apollo_attempt.state == ContactProviderAttemptState.FAILED
+    assert apollo_attempt.last_error_code == "apollo_auth_failed"
+
+
+def test_run_job_repeated_run_upserts_not_duplicates(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -208,21 +256,21 @@ def test_run_job_repeated_run_upserts_not_duplicates(sqlite_session: Session, mo
     )
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job1 = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company, job1 = _seed_job(db_session, campaign)
     svc = ContactFetchService()
-    svc.run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job1.id))
+    svc.run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job1.id))
 
-    _, job2 = _seed_job(sqlite_session, campaign)
-    svc.run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job2.id))
+    _, job2 = _seed_job(db_session, campaign)
+    svc.run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job2.id))
 
-    contacts = list(sqlite_session.exec(
+    contacts = list(db_session.exec(
         select(Contact).where(col(Contact.company_id) == company.id, col(Contact.source_provider) == "snov")
     ))
     assert len(contacts) == 1
 
 
-def test_run_job_title_match_applied(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_title_match_applied(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -234,19 +282,19 @@ def test_run_job_title_match_applied(sqlite_session: Session, monkeypatch) -> No
     )
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    sqlite_session.add(TitleMatchRule(campaign_id=campaign.id, rule_type="include", keywords="marketing, director", match_type="keyword"))
-    sqlite_session.flush()
-    company, job = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    db_session.add(TitleMatchRule(campaign_id=campaign.id, rule_type="include", keywords="marketing, director", match_type="keyword"))
+    db_session.flush()
+    company, job = _seed_job(db_session, campaign)
 
-    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
-    contact = sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)).first()
+    contact = db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)).first()
     assert contact is not None
     assert contact.title_match is True
 
 
-def test_run_job_sets_succeeded_state(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_sets_succeeded_state(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -254,16 +302,16 @@ def test_run_job_sets_succeeded_state(sqlite_session: Session, monkeypatch) -> N
     monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
-    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     assert job.state == ContactFetchJobState.SUCCEEDED
     assert job.terminal_state is True
 
 
-def test_run_job_reuses_existing_provider_attempt_on_retry(sqlite_session: Session, monkeypatch) -> None:
+def test_run_job_reuses_existing_provider_attempt_on_retry(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -275,9 +323,9 @@ def test_run_job_reuses_existing_provider_attempt_on_retry(sqlite_session: Sessi
     )
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
-    sqlite_session.add(
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+    db_session.add(
         ContactProviderAttempt(
             contact_fetch_job_id=job.id,
             provider="snov",
@@ -286,12 +334,12 @@ def test_run_job_reuses_existing_provider_attempt_on_retry(sqlite_session: Sessi
             terminal_state=True,
         )
     )
-    sqlite_session.commit()
+    db_session.commit()
 
-    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
     attempts = list(
-        sqlite_session.exec(
+        db_session.exec(
             select(ContactProviderAttempt).where(col(ContactProviderAttempt.contact_fetch_job_id) == job.id)
         )
     )
@@ -302,29 +350,29 @@ def test_run_job_reuses_existing_provider_attempt_on_retry(sqlite_session: Sessi
 
 # ── Task 2 (cont.) ───────────────────────────────────────────────��────────────
 
-def test_force_refresh_creates_new_job(sqlite_session: Session) -> None:
+def test_force_refresh_creates_new_job(db_session: Session) -> None:
     from app.services.contact_fetch_service import ContactFetchService
 
-    campaign = _seed_campaign(sqlite_session)
-    company = _seed_company(sqlite_session, campaign)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    db_session.commit()
 
     svc = ContactFetchService()
     _, jobs1, _ = svc.enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         company_ids=[company.id],
         force_refresh=False,
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     _, jobs2, reused = svc.enqueue(
-        session=sqlite_session,
+        session=db_session,
         campaign_id=campaign.id,
         company_ids=[company.id],
         force_refresh=True,
     )
-    sqlite_session.commit()
+    db_session.commit()
 
     assert reused == 0
     assert jobs2[0].id != jobs1[0].id
@@ -332,7 +380,7 @@ def test_force_refresh_creates_new_job(sqlite_session: Session) -> None:
 
 # ── Gap 2: batch finalization ─────────────────────────────────────────────────
 
-def test_batch_finalized_when_all_jobs_terminal(sqlite_session: Session, monkeypatch) -> None:
+def test_batch_finalized_when_all_jobs_terminal(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -341,21 +389,21 @@ def test_batch_finalized_when_all_jobs_terminal(sqlite_session: Session, monkeyp
     monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
     batch_id = job.contact_fetch_batch_id
 
     ContactFetchService().run_contact_fetch_job(
-        engine=sqlite_session.bind,
+        engine=db_session.bind,
         contact_fetch_job_id=str(job.id),
     )
 
-    batch = sqlite_session.get(ContactFetchBatch, batch_id)
+    batch = db_session.get(ContactFetchBatch, batch_id)
     assert batch.state == ContactFetchBatchState.SUCCEEDED
     assert batch.finished_at is not None
 
 
-def test_batch_marked_failed_when_any_job_fails(sqlite_session: Session, monkeypatch) -> None:
+def test_batch_marked_failed_when_any_job_fails(db_session: Session, monkeypatch) -> None:
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -364,23 +412,23 @@ def test_batch_marked_failed_when_any_job_fails(sqlite_session: Session, monkeyp
     monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, "snov_failed"))
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
     batch_id = job.contact_fetch_batch_id
 
     ContactFetchService().run_contact_fetch_job(
-        engine=sqlite_session.bind,
+        engine=db_session.bind,
         contact_fetch_job_id=str(job.id),
     )
 
-    batch = sqlite_session.get(ContactFetchBatch, batch_id)
+    batch = db_session.get(ContactFetchBatch, batch_id)
     assert batch.state == ContactFetchBatchState.FAILED
     assert batch.finished_at is not None
 
 
 # ── lock_expires_at ───────────────────────────────────────────────────────────
 
-def test_cas_claim_sets_lock_expires_at(sqlite_session: Session, monkeypatch) -> None:
+def test_cas_claim_sets_lock_expires_at(db_session: Session, monkeypatch) -> None:
     """Active jobs must have lock_expires_at set so reset-stuck won't touch them."""
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
@@ -390,9 +438,9 @@ def test_cas_claim_sets_lock_expires_at(sqlite_session: Session, monkeypatch) ->
     monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
     monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
-    sqlite_session.commit()
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+    db_session.commit()
 
     # Capture state mid-run by patching finalization
     lock_expires_at_during_run: list = []
@@ -408,7 +456,7 @@ def test_cas_claim_sets_lock_expires_at(sqlite_session: Session, monkeypatch) ->
     monkeypatch.setattr(ContactFetchService, "_run_provider", patched_run_provider)
 
     ContactFetchService().run_contact_fetch_job(
-        engine=sqlite_session.bind,
+        engine=db_session.bind,
         contact_fetch_job_id=str(job.id),
     )
 
@@ -419,7 +467,7 @@ def test_cas_claim_sets_lock_expires_at(sqlite_session: Session, monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_reset_stuck_skips_active_job_with_future_lock(
-    sqlite_session: Session,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """reset-stuck must not reset a job whose lock hasn't expired yet."""
@@ -431,19 +479,19 @@ async def test_reset_stuck_skips_active_job_with_future_lock(
 
     monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", lambda **kw: None)
 
-    campaign = _seed_campaign(sqlite_session)
-    company, job = _seed_job(sqlite_session, campaign)
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
     # Simulate active run: RUNNING + future lock
     future = utcnow() + timedelta(hours=1)
-    sqlite_session.execute(
+    db_session.execute(
         _update(ContactFetchJob)
         .where(col(ContactFetchJob.id) == job.id)
         .values(state=ContactFetchJobState.RUNNING, lock_expires_at=future, terminal_state=False)
     )
-    sqlite_session.commit()
+    db_session.commit()
 
-    result = await reset_stuck_contact_fetch_jobs(session=sqlite_session)
+    result = await reset_stuck_contact_fetch_jobs(session=db_session)
 
     assert result.reset_count == 0
-    sqlite_session.refresh(job)
+    db_session.refresh(job)
     assert job.state == ContactFetchJobState.RUNNING  # untouched

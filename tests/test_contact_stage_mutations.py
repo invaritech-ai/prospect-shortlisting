@@ -59,20 +59,20 @@ def _make_verify_job(session: Session, contact: Contact) -> ContactVerifyJob:
     return job
 
 
-def test_invalid_verification_keeps_contact_at_email_revealed(sqlite_engine, sqlite_session: Session) -> None:
-    contact = _make_contact_for_verify(sqlite_session, email="alice@stage.example")
-    verify_job = _make_verify_job(sqlite_session, contact)
+def test_invalid_verification_keeps_contact_at_email_revealed(db_engine, db_session: Session) -> None:
+    contact = _make_contact_for_verify(db_session, email="alice@stage.example")
+    verify_job = _make_verify_job(db_session, contact)
 
     with patch("app.services.contact_verify_service._zerobounce") as mock_zb:
         mock_zb.validate_batch.return_value = (
             [{"address": "alice@stage.example", "status": "not_valid"}],
             None,
         )
-        result = ContactVerifyService().run_verify_job(engine=sqlite_engine, job_id=verify_job.id)
+        result = ContactVerifyService().run_verify_job(engine=db_engine, job_id=verify_job.id)
 
     assert result is not None
     assert result.state == ContactVerifyJobState.SUCCEEDED
 
-    sqlite_session.refresh(contact)
+    db_session.refresh(contact)
     assert contact.verification_status == "invalid"
     assert contact.pipeline_stage == "email_revealed"

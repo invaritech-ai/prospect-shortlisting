@@ -4,9 +4,10 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
 # Import all models so SQLModel metadata is populated before create_all.
 from app.models import (  # noqa: F401
@@ -40,33 +41,25 @@ from app.models import (  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
-# Lightweight SQLite fixtures — no containers needed, fast
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="function")
-def sqlite_engine():
-    """In-memory SQLite engine with all tables created from SQLModel metadata."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    SQLModel.metadata.create_all(engine)
-    yield engine
-    engine.dispose()
-
-
-@pytest.fixture
-def sqlite_session(sqlite_engine) -> Generator[Session, None, None]:
-    """Yield a plain session; each test manages its own commits (SQLite in-memory)."""
-    with Session(sqlite_engine) as sess:
-        yield sess
-
-
-# ---------------------------------------------------------------------------
-# Full Postgres fixtures — requires Docker, used for integration tests
+# Postgres fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")
 def postgres_url() -> Generator[str, None, None]:
+    local_url = os.environ.get("PS_TEST_DATABASE_URL") or os.environ.get("TEST_DATABASE_URL")
+    if local_url:
+        yield local_url
+        return
+
+    if os.environ.get("PS_TEST_USE_TESTCONTAINERS") != "1":
+        pytest.fail(
+            "Postgres tests require PS_TEST_DATABASE_URL or TEST_DATABASE_URL. "
+            "Create a dedicated local test database and run, for example: "
+            "PS_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/prospect_shortlisting_test "
+            "uv run pytest"
+        )
+
     from testcontainers.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine") as pg:
@@ -76,30 +69,57 @@ def postgres_url() -> Generator[str, None, None]:
 
 
 @pytest.fixture(scope="session")
-def db_engine(postgres_url: str):
+def _postgres_engine(postgres_url: str):
     engine = create_engine(postgres_url, echo=False)
 
-    env = {**os.environ, "DATABASE_URL": postgres_url}
+    env = {**os.environ, "DATABASE_URL": postgres_url, "PS_DATABASE_URL": postgres_url}
     subprocess.run(
         ["uv", "run", "alembic", "upgrade", "head"],
         check=True,
         env=env,
-        cwd=str(__import__("pathlib").Path(__file__).parent.parent),
+        cwd=str(Path(__file__).parent.parent),
     )
+
+    with engine.begin() as connection:
+        tables = list(
+            connection.exec_driver_sql(
+                """
+                SELECT tablename
+                FROM pg_tables
+                WHERE schemaname = 'public'
+                  AND tablename != 'alembic_version'
+                """
+            ).scalars()
+        )
+        if tables:
+            preparer = engine.dialect.identifier_preparer
+            table_list = ", ".join(preparer.quote(table) for table in tables)
+            connection.exec_driver_sql(f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE")
 
     yield engine
     engine.dispose()
 
 
 @pytest.fixture
-def session(db_engine) -> Generator[Session, None, None]:
-    """Yield a session that rolls back after each test (Postgres)."""
-    connection = db_engine.connect()
+def db_engine(_postgres_engine):
+    """Yield a transaction-bound Postgres connection for service-level tests."""
+    connection = _postgres_engine.connect()
     transaction = connection.begin()
-    sess = Session(bind=connection)
     try:
-        yield sess
+        yield connection
     finally:
-        sess.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def db_session(db_engine) -> Generator[Session, None, None]:
+    """Yield a Postgres session; each test runs inside a rolled-back transaction."""
+    with Session(bind=db_engine) as sess:
+        yield sess
+
+
+@pytest.fixture
+def session(db_session: Session) -> Generator[Session, None, None]:
+    """Compatibility alias for tests that use the generic session fixture."""
+    yield db_session

@@ -55,8 +55,8 @@ def test_scrape_and_pipeline_run_use_state_not_status() -> None:
     assert not hasattr(PipelineRun, "status")
 
 
-def test_failure_reason_columns_exist(sqlite_engine) -> None:
-    inspector = inspect(sqlite_engine)
+def test_failure_reason_columns_exist(db_engine) -> None:
+    inspector = inspect(db_engine)
     expected = {
         "scrapejob": "failure_reason",
         "crawl_jobs": "failure_reason",

@@ -5,16 +5,16 @@ from sqlmodel import Session
 from app.services import secret_store
 
 
-def test_resolve_with_source_prefers_db_over_env(monkeypatch, sqlite_engine, sqlite_session: Session) -> None:
+def test_resolve_with_source_prefers_db_over_env(monkeypatch, db_engine, db_session: Session) -> None:
     from app.services import credentials_resolver
 
     monkeypatch.setattr("app.core.config.settings.settings_encryption_key", "unit-test-settings-key")
     monkeypatch.setattr("app.core.config.settings.openrouter_api_key", "env-openrouter-1111")
-    monkeypatch.setattr(credentials_resolver, "engine", sqlite_engine)
+    monkeypatch.setattr(credentials_resolver, "engine", db_engine)
     secret_store.reset_cipher_cache()
 
     secret_store.set_secret(
-        sqlite_session,
+        db_session,
         provider="openrouter",
         field_name="api_key",
         value="db-openrouter-9999",
@@ -26,12 +26,12 @@ def test_resolve_with_source_prefers_db_over_env(monkeypatch, sqlite_engine, sql
     assert source == "db"
 
 
-def test_resolve_with_source_falls_back_to_env_when_db_missing(monkeypatch, sqlite_engine) -> None:
+def test_resolve_with_source_falls_back_to_env_when_db_missing(monkeypatch, db_engine) -> None:
     from app.services import credentials_resolver
 
     monkeypatch.setattr("app.core.config.settings.settings_encryption_key", "unit-test-settings-key")
     monkeypatch.setattr("app.core.config.settings.apollo_api_key", "env-apollo-2222")
-    monkeypatch.setattr(credentials_resolver, "engine", sqlite_engine)
+    monkeypatch.setattr(credentials_resolver, "engine", db_engine)
     secret_store.reset_cipher_cache()
 
     value, source = credentials_resolver.resolve_with_source("apollo", "api_key")
@@ -42,17 +42,17 @@ def test_resolve_with_source_falls_back_to_env_when_db_missing(monkeypatch, sqli
 
 def test_resolve_with_source_uses_env_when_db_row_exists_but_store_is_unavailable(
     monkeypatch,
-    sqlite_engine,
-    sqlite_session: Session,
+    db_engine,
+    db_session: Session,
 ) -> None:
     from app.services import credentials_resolver
 
     monkeypatch.setattr("app.core.config.settings.settings_encryption_key", "unit-test-settings-key")
-    monkeypatch.setattr(credentials_resolver, "engine", sqlite_engine)
+    monkeypatch.setattr(credentials_resolver, "engine", db_engine)
     secret_store.reset_cipher_cache()
 
     secret_store.set_secret(
-        sqlite_session,
+        db_session,
         provider="zerobounce",
         field_name="api_key",
         value="db-zerobounce-9999",

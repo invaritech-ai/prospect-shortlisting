@@ -146,7 +146,7 @@ class EmailRevealService:
 
         if err:
             logger.warning("reveal_email: provider error %r for contact %s", err, cid)
-            return
+            raise RuntimeError(f"email_reveal_provider_error:{err}")
 
         if not email:
             return

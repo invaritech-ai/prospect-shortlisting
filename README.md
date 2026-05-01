@@ -175,7 +175,14 @@ Or run the frontend on the host directly (`npm run dev`) pointing at `http://loc
 
 ## Running tests
 
+Tests use PostgreSQL only. They do not create SQLite schemas or run against
+SQLite fallbacks. Set `PS_TEST_DATABASE_URL` or `TEST_DATABASE_URL` to a
+dedicated disposable Postgres database before running DB-backed tests.
+
 ```bash
+# Example local test DB URL
+export PS_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/prospect_shortlisting_test
+
 # Full suite
 uv run pytest -q tests/
 
