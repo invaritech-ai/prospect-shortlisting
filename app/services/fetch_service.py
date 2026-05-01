@@ -637,16 +637,10 @@ async def _recover_https_tls_error(url: str, *, use_js: bool = False) -> FetchRe
 # ── Stealth fetch (single page, kept for backward compat) ────────────────────
 
 async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
-    """Run StealthyFetcher via Browserless CDP *or* local Chromium.
-
-    The mode is deterministic — based solely on whether PS_BROWSERLESS_URL is
-    set.  Workers are split by environment: browserless workers set the URL,
-    local workers leave it blank.  No cross-fallback between the two.
-    """
-    _timeout_ms: int = settings.scrape_stealth_timeout_ms
+    """Fetch a single URL using local Scrapling StealthyFetcher (headless Chromium, no CDP)."""
     fetch_kwargs: dict = {
         "headless": True,
-        "timeout": _timeout_ms,
+        "timeout": settings.scrape_stealth_timeout_ms,
         "network_idle": True,
         "solve_cloudflare": True,
         "block_webrtc": True,

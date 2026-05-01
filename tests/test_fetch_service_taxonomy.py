@@ -264,13 +264,13 @@ def test_static_headers_do_not_advertise_unsupported_brotli() -> None:
 
 
 def test_stealth_session_kwargs_are_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fetch_service.settings, "browserless_url", "wss://example.invalid/stealth")
-    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_max_pages", 2, raising=False)
-    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_block_images", True, raising=False)
-    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_disable_resources", True, raising=False)
-    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_humanize", True, raising=False)
-    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_os_randomize", True, raising=False)
-    monkeypatch.setattr(fetch_service.settings, "scrape_proxy_url", "", raising=False)
+    monkeypatch.setattr(fetch_service.settings, "browserless_url", "wss://example.invalid/stealth", raising=False)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_max_pages", 2)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_block_images", True)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_disable_resources", True)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_humanize", True)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_os_randomize", True)
+    monkeypatch.setattr(fetch_service.settings, "scrape_proxy_url", "")
 
     kwargs = fetch_service._stealth_session_kwargs()
 
@@ -281,3 +281,7 @@ def test_stealth_session_kwargs_are_local_only(monkeypatch: pytest.MonkeyPatch) 
     assert kwargs["humanize"] is True
     assert kwargs["os_randomize"] is True
     assert "proxy" not in kwargs
+
+    monkeypatch.setattr(fetch_service.settings, "scrape_proxy_url", "http://proxy.example.com:8080")
+    kwargs_with_proxy = fetch_service._stealth_session_kwargs()
+    assert kwargs_with_proxy.get("proxy") == "http://proxy.example.com:8080"
