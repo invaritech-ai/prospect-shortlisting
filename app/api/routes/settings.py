@@ -227,30 +227,50 @@ def _check_apollo() -> tuple[bool, str, str, str]:
     api_key, source = credentials_resolver.resolve_with_source("apollo", "api_key")
     if not api_key:
         return False, source, ERR_APOLLO_CREDENTIALS_MISSING, "Apollo API key is missing."
+
+    headers = {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "X-Api-Key": api_key,
+    }
+
+    # Step 1: auth health (confirms key is accepted)
     try:
-        response = httpx.get(
+        auth_resp = httpx.get(
             "https://api.apollo.io/v1/auth/health",
-            headers={
-                "Content-Type": "application/json",
-                "Cache-Control": "no-cache",
-                "X-Api-Key": api_key,
-            },
+            headers=headers,
             timeout=20.0,
         )
     except Exception as exc:  # noqa: BLE001
         return False, source, ERR_APOLLO_FAILED, f"Apollo test request failed: {exc}"
-    if response.status_code in {401, 403}:
+    if auth_resp.status_code in {401, 403}:
         return False, source, ERR_APOLLO_AUTH_FAILED, "Apollo rejected the API key."
-    if response.status_code >= 400:
-        return False, source, ERR_APOLLO_FAILED, f"Apollo returned HTTP {response.status_code}."
+    if auth_resp.status_code >= 400:
+        return False, source, ERR_APOLLO_FAILED, f"Apollo returned HTTP {auth_resp.status_code}."
+
+    # Step 2: probe enrichment permission via /people/match with an empty body.
+    # A 200 (even with no match) means the plan allows enrichment.
+    # A 403 means the plan does not include enrichment — S4 reveal will fail.
     try:
-        payload = response.json()
-    except Exception:  # noqa: BLE001
-        payload = {}
-    bool_values = [value for value in payload.values() if isinstance(value, bool)] if isinstance(payload, dict) else []
-    if bool_values and not all(bool_values):
-        return False, source, ERR_APOLLO_AUTH_FAILED, "Apollo reported an unhealthy auth response."
-    return True, source, "", "Credentials look valid."
+        enrich_resp = httpx.post(
+            "https://api.apollo.io/api/v1/people/match",
+            headers=headers,
+            params={"reveal_personal_emails": "false"},
+            json={},
+            timeout=20.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, source, ERR_APOLLO_FAILED, f"Apollo enrichment probe failed: {exc}"
+    if enrich_resp.status_code == 403:
+        return False, source, ERR_APOLLO_AUTH_FAILED, (
+            "Apollo key is valid for search but lacks enrichment permission "
+            "(people/match returned 403). S4 email reveal will not work. "
+            "Upgrade to an Apollo plan that includes enrichment credits."
+        )
+    if enrich_resp.status_code in {401}:
+        return False, source, ERR_APOLLO_AUTH_FAILED, "Apollo rejected the API key on enrichment probe."
+
+    return True, source, "", "Credentials look valid (auth + enrichment permission confirmed)."
 
 
 def _check_zerobounce() -> tuple[bool, str, str, str]:

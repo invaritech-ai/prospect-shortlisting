@@ -185,26 +185,26 @@ class ApolloClient:
         return self._extract_people(data)
 
     def reveal_email(self, person_id: str) -> dict | None:
-        """Enrich a single person record to reveal an email address."""
+        """Enrich a single person via /people/match (single-person enrichment endpoint).
+
+        /people/bulk_match is for batches; /people/match is the correct single-person
+        path and avoids plan-level permission splits on the bulk endpoint.
+        """
         if not self._resolved_api_key():
             self.last_error_code = ERR_APOLLO_CREDENTIALS_MISSING
             return None
 
         data, err = self._post_json(
-            "/people/bulk_match",
+            "/people/match",
             query_params={
                 "reveal_personal_emails": "true",
                 "reveal_phone_number": "false",
             },
-            payload={"details": [{"id": person_id}]},
+            payload={"id": person_id},
         )
         if err:
             return None
         self.last_error_code = ""
-
-        matches = self._extract_people(data)
-        if matches:
-            return matches[0]
 
         person = data.get("person")
         if isinstance(person, dict):
