@@ -4,7 +4,7 @@ import pytest
 
 from app.services import fetch_service
 from app.services.fetch_service import FetchResult
-from app.services.url_utils import canonical_internal_url, normalize_url
+from app.services.url_utils import canonical_internal_url, normalize_url, rewrite_to_working_origin
 
 
 def test_normalize_url_still_coalesces_www_for_job_identity() -> None:
@@ -122,3 +122,25 @@ async def test_fetch_with_fallback_skips_stealth_for_not_found(
     result = await fetch_service.fetch_with_fallback("https://example.com/missing", use_js=True)
 
     assert result.error_code == "not_found"
+
+
+def test_rewrite_to_working_origin_allows_apex_to_www() -> None:
+    assert (
+        rewrite_to_working_origin(
+            "https://actusa.net/about",
+            "https://www.actusa.net/",
+            "actusa.net",
+        )
+        == "https://www.actusa.net/about"
+    )
+
+
+def test_rewrite_to_working_origin_rejects_unrelated_domain() -> None:
+    assert (
+        rewrite_to_working_origin(
+            "https://actuant.com/about",
+            "https://www.enerpactoolgroup.com/",
+            "actuant.com",
+        )
+        == ""
+    )

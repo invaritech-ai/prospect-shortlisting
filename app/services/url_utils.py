@@ -134,5 +134,33 @@ def canonical_internal_url(url: str, domain: str) -> str:
     return urlunparse(canonical)
 
 
+def same_company_host(host: str, domain: str) -> bool:
+    normalized_host = (host or "").lower().split("@")[-1].split(":")[0]
+    normalized_domain = (domain or "").lower()
+    if normalized_host.startswith("www."):
+        normalized_host = normalized_host[4:]
+    if normalized_domain.startswith("www."):
+        normalized_domain = normalized_domain[4:]
+    return normalized_host == normalized_domain
+
+
+def rewrite_to_working_origin(url: str, working_origin_url: str, domain: str) -> str:
+    """Rewrite `url` onto a known-good apex/www origin for the same company domain."""
+    parsed_url = urlparse(url)
+    parsed_origin = urlparse(working_origin_url)
+    if not parsed_url.netloc or not parsed_origin.netloc:
+        return ""
+    if not same_company_host(parsed_url.netloc, domain):
+        return ""
+    if not same_company_host(parsed_origin.netloc, domain):
+        return ""
+
+    rewritten = parsed_url._replace(
+        scheme=(parsed_origin.scheme or parsed_url.scheme or "https").lower(),
+        netloc=parsed_origin.netloc.lower(),
+    )
+    return canonical_internal_url(urlunparse(rewritten), domain)
+
+
 def absolute_url(base_url: str, href: str) -> str:
     return urljoin(base_url, href)
