@@ -18,73 +18,98 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def upgrade() -> None:
-    op.create_table(
-        "scrape_runs",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("campaign_id", sa.Uuid(), nullable=False),
-        sa.Column(
-            "status",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=False,
-        ),
-        sa.Column("requested_count", sa.Integer(), nullable=False),
-        sa.Column("queued_count", sa.Integer(), nullable=False),
-        sa.Column("skipped_count", sa.Integer(), nullable=False),
-        sa.Column("failed_count", sa.Integer(), nullable=False),
-        sa.Column("scrape_rules", sa.JSON(), nullable=True),
-        sa.Column(
-            "error_message",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=True,
-        ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["campaign_id"], ["campaigns.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_scrape_runs_campaign_id"), "scrape_runs", ["campaign_id"], unique=False)
-    op.create_index(op.f("ix_scrape_runs_status"), "scrape_runs", ["status"], unique=False)
+def _table_exists(bind, table_name: str) -> bool:
+    """Reliable existence check — Inspector.has_table can miss edges; PG uses information_schema."""
+    if bind.dialect.name == "postgresql":
+        return bool(
+            bind.execute(
+                sa.text(
+                    "SELECT EXISTS ("
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = :t"
+                    ")"
+                ),
+                {"t": table_name},
+            ).scalar_one()
+        )
+    return sa.inspect(bind).has_table(table_name)
 
-    op.create_table(
-        "scrape_run_items",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("run_id", sa.Uuid(), nullable=False),
-        sa.Column("company_id", sa.Uuid(), nullable=False),
-        sa.Column("scrape_job_id", sa.Uuid(), nullable=True),
-        sa.Column(
-            "status",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=False,
-        ),
-        sa.Column(
-            "error_code",
-            sqlmodel.sql.sqltypes.AutoString(),
-            nullable=True,
-        ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["run_id"], ["scrape_runs.id"]),
-        sa.ForeignKeyConstraint(["company_id"], ["companies.id"]),
-        sa.ForeignKeyConstraint(["scrape_job_id"], ["scrapejob.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        op.f("ix_scrape_run_items_run_id"), "scrape_run_items", ["run_id"], unique=False
-    )
-    op.create_index(
-        op.f("ix_scrape_run_items_company_id"), "scrape_run_items", ["company_id"], unique=False
-    )
-    op.create_index(
-        op.f("ix_scrape_run_items_scrape_job_id"),
-        "scrape_run_items",
-        ["scrape_job_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_scrape_run_items_status"), "scrape_run_items", ["status"], unique=False
-    )
+
+def upgrade() -> None:
+    bind = op.get_bind()
+
+    # Table may already exist if a prior run partially applied / schema drift (DuplicateTable).
+    if not _table_exists(bind, "scrape_runs"):
+        op.create_table(
+            "scrape_runs",
+            sa.Column("id", sa.Uuid(), nullable=False),
+            sa.Column("campaign_id", sa.Uuid(), nullable=False),
+            sa.Column(
+                "status",
+                sqlmodel.sql.sqltypes.AutoString(),
+                nullable=False,
+            ),
+            sa.Column("requested_count", sa.Integer(), nullable=False),
+            sa.Column("queued_count", sa.Integer(), nullable=False),
+            sa.Column("skipped_count", sa.Integer(), nullable=False),
+            sa.Column("failed_count", sa.Integer(), nullable=False),
+            sa.Column("scrape_rules", sa.JSON(), nullable=True),
+            sa.Column(
+                "error_message",
+                sqlmodel.sql.sqltypes.AutoString(),
+                nullable=True,
+            ),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["campaign_id"], ["campaigns.id"]),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        op.create_index(op.f("ix_scrape_runs_campaign_id"), "scrape_runs", ["campaign_id"], unique=False)
+        op.create_index(op.f("ix_scrape_runs_status"), "scrape_runs", ["status"], unique=False)
+
+    if not _table_exists(bind, "scrape_run_items"):
+        op.create_table(
+            "scrape_run_items",
+            sa.Column("id", sa.Uuid(), nullable=False),
+            sa.Column("run_id", sa.Uuid(), nullable=False),
+            sa.Column("company_id", sa.Uuid(), nullable=False),
+            sa.Column("scrape_job_id", sa.Uuid(), nullable=True),
+            sa.Column(
+                "status",
+                sqlmodel.sql.sqltypes.AutoString(),
+                nullable=False,
+            ),
+            sa.Column(
+                "error_code",
+                sqlmodel.sql.sqltypes.AutoString(),
+                nullable=True,
+            ),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(["run_id"], ["scrape_runs.id"]),
+            sa.ForeignKeyConstraint(["company_id"], ["companies.id"]),
+            sa.ForeignKeyConstraint(["scrape_job_id"], ["scrapejob.id"]),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        op.create_index(
+            op.f("ix_scrape_run_items_run_id"), "scrape_run_items", ["run_id"], unique=False
+        )
+        op.create_index(
+            op.f("ix_scrape_run_items_company_id"),
+            "scrape_run_items",
+            ["company_id"],
+            unique=False,
+        )
+        op.create_index(
+            op.f("ix_scrape_run_items_scrape_job_id"),
+            "scrape_run_items",
+            ["scrape_job_id"],
+            unique=False,
+        )
+        op.create_index(
+            op.f("ix_scrape_run_items_status"), "scrape_run_items", ["status"], unique=False
+        )
 
 
 def downgrade() -> None:
