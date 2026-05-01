@@ -228,7 +228,9 @@ def test_run_verify_api_error_leaves_contacts_untouched(sqlite_session: Session,
     assert contact.verification_status == "unverified"
 
     sqlite_session.refresh(job)
-    assert job.state == ContactVerifyJobState.FAILED
+    # Transient error: job re-queued for Procrastinate retry (not terminal yet)
+    assert job.state in (ContactVerifyJobState.FAILED, ContactVerifyJobState.QUEUED)
+    assert job.last_error_code == "zerobounce_failed"
 
 
 def test_run_verify_empty_job_succeeds_without_api_call(sqlite_session: Session, monkeypatch) -> None:

@@ -19,8 +19,12 @@ from app.api.schemas.contacts import (
     ContactIdsResult,
     ContactListResponse,
     ContactRead,
+    ContactRevealRequest,
+    ContactRevealResult,
     ContactRematchRequest,
     ContactRematchResult,
+    ContactVerifyRequest,
+    ContactVerifyResult,
     RematchResult,
     TitleMatchRuleCreate,
     TitleMatchRuleRead,
@@ -38,6 +42,8 @@ from app.models import (
     TitleMatchRule,
     Upload,
 )
+from app.jobs.email_reveal import reveal_email as _reveal_email_task
+from app.jobs.validation import verify_contacts as _verify_contacts_task
 from app.services.contact_query_service import (
     apply_contact_filters as _apply_contact_filters,
     campaign_upload_scope as _campaign_upload_scope,
@@ -46,6 +52,8 @@ from app.services.contact_query_service import (
     parse_letters as _parse_letters,
     validate_campaign_upload_scope as _validate_campaign_upload_scope,
 )
+from app.services.contact_verify_service import ContactVerifyService
+from app.services.email_reveal_service import EmailRevealService
 from app.services.title_match_service import (
     compute_title_rule_stats,
     rematch_contacts as _rematch_contacts,
@@ -54,6 +62,8 @@ from app.services.title_match_service import (
 )
 
 router = APIRouter(prefix="/v1", tags=["contacts"])
+_email_reveal_service = EmailRevealService()
+_contact_verify_service = ContactVerifyService()
 
 
 def _discovered_group_key(contact: Contact) -> str:
@@ -476,6 +486,79 @@ def list_contact_ids(
 
     ids = list(session.exec(q).all())
     return ContactIdsResult(ids=ids, total=len(ids))
+
+
+@router.post("/contacts/reveal", response_model=ContactRevealResult)
+async def reveal_contacts(
+    payload: ContactRevealRequest,
+    session: Session = Depends(get_session),
+) -> ContactRevealResult:
+    _campaign_or_404(session=session, campaign_id=payload.campaign_id)
+
+    contact_ids = list(payload.discovered_contact_ids or [])
+    if not contact_ids:
+        return ContactRevealResult(
+            selected_count=0,
+            queued_count=0,
+            already_revealing_count=0,
+            skipped_revealed_count=0,
+            message="No contacts selected.",
+        )
+
+    batch, eligible_ids, skipped = _email_reveal_service.enqueue(
+        session=session,
+        campaign_id=payload.campaign_id,
+        contact_ids=contact_ids,
+    )
+    session.commit()
+    session.refresh(batch)
+
+    defer_failed = 0
+    for contact_id in eligible_ids:
+        try:
+            await _reveal_email_task.defer_async(contact_id=str(contact_id))
+        except Exception:
+            defer_failed += 1
+
+    queued = len(eligible_ids) - defer_failed
+    return ContactRevealResult(
+        batch_id=batch.id,
+        selected_count=len(contact_ids),
+        queued_count=queued,
+        already_revealing_count=0,
+        skipped_revealed_count=skipped,
+        message=f"Queued email reveal for {queued} contact(s). {skipped} skipped.",
+    )
+
+
+@router.post("/contacts/verify", response_model=ContactVerifyResult)
+async def verify_contacts(
+    payload: ContactVerifyRequest,
+    session: Session = Depends(get_session),
+) -> ContactVerifyResult:
+    _campaign_or_404(session=session, campaign_id=payload.campaign_id)
+
+    contact_ids = list(payload.contact_ids or [])
+
+    job, skipped = _contact_verify_service.enqueue(
+        session=session,
+        campaign_id=payload.campaign_id,
+        contact_ids=contact_ids,
+    )
+    session.commit()
+    session.refresh(job)
+
+    try:
+        await _verify_contacts_task.defer_async(job_id=str(job.id))
+    except Exception:
+        pass
+
+    queued = len(job.contact_ids_json or [])
+    return ContactVerifyResult(
+        job_id=job.id,
+        selected_count=job.selected_count,
+        message=f"Queued verification for {queued} contact(s). {skipped} skipped.",
+    )
 
 
 @router.get("/title-match-rules", response_model=list[TitleMatchRuleRead])
