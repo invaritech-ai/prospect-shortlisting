@@ -5,6 +5,7 @@ import {
   deleteTitleMatchRule,
   getTitleRuleStats,
   listTitleMatchRules,
+  rematchContacts,
   seedTitleMatchRules,
   testTitleMatch,
 } from '../../lib/api'
@@ -30,6 +31,8 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   const [newKeywords, setNewKeywords] = useState('')
   const [isAdding, setIsAdding] = useState(false)
   const [isSeeding, setIsSeeding] = useState(false)
+  const [isRematching, setIsRematching] = useState(false)
+  const [rematchResult, setRematchResult] = useState<string | null>(null)
   const [deletingIds, setDeletingIds] = useState(new Set<string>())
   const [pendingDeleteRuleId, setPendingDeleteRuleId] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -116,7 +119,23 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   }
 
 
-  const isBusy = isAdding || isSeeding || isTesting || deletingIds.size > 0
+  const onReapply = async () => {
+    if (!campaignId) return
+    setIsRematching(true)
+    setRematchResult(null)
+    setError('')
+    try {
+      const res = await rematchContacts(campaignId)
+      setRematchResult(`Re-applied — ${res.updated} contact flag(s) updated.`)
+      await loadAll()
+    } catch {
+      setError('Failed to re-apply rules')
+    } finally {
+      setIsRematching(false)
+    }
+  }
+
+  const isBusy = isAdding || isSeeding || isTesting || isRematching || deletingIds.size > 0
   const includeRules = rules.filter((r) => r.rule_type === 'include')
   const excludeRules = rules.filter((r) => r.rule_type === 'exclude')
 
@@ -355,14 +374,27 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
           </p>
         </section>
 
-        <button
-          type="button"
-          onClick={() => void onSeedRules()}
-          disabled={isLoading || isBusy}
-          className="self-start rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isSeeding ? 'Seeding…' : 'Seed default rules'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void onReapply()}
+            disabled={isLoading || isBusy}
+            className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isRematching ? 'Re-applying…' : 'Re-apply to contacts'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onSeedRules()}
+            disabled={isLoading || isBusy}
+            className="rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSeeding ? 'Seeding…' : 'Seed default rules'}
+          </button>
+        </div>
+        {rematchResult && (
+          <p className="text-xs text-emerald-700">{rematchResult}</p>
+        )}
       </div>
     </Drawer>
   )

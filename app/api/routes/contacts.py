@@ -635,6 +635,7 @@ def seed_rules(
 ) -> TitleRuleSeedResult:
     _campaign_or_404(session=session, campaign_id=campaign_id)
     inserted = seed_title_rules(session, campaign_id=campaign_id)
+    _rematch_contacts(session, campaign_id=campaign_id)
     return TitleRuleSeedResult(
         inserted=inserted,
         message=f"Inserted {inserted} new rules (duplicates skipped).",

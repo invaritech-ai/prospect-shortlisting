@@ -835,6 +835,10 @@ export async function getTitleRuleStats(campaignId: string): Promise<TitleRuleSt
   return request<TitleRuleStatsResponse>(`/v1/title-match-rules/stats?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
+export async function rematchContacts(campaignId: string): Promise<{ updated: number; message: string }> {
+  return request(`/v1/title-match-rules/rematch?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
+}
+
 
 export async function getIntegrationSettings(): Promise<IntegrationsStatusResponse> {
   return request<IntegrationsStatusResponse>('/v1/settings/integrations')
