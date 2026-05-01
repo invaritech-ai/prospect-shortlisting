@@ -444,6 +444,13 @@ def list_company_contacts(
 ) -> ContactListResponse:
     from sqlalchemy import func as _func
 
+    if not isinstance(title_match, bool):
+        title_match = getattr(title_match, "default", None)
+    if not isinstance(verification_status, str):
+        verification_status = getattr(verification_status, "default", None)
+    if not isinstance(stage_filter, str):
+        stage_filter = getattr(stage_filter, "default", "all")
+
     company = session.get(Company, company_id)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found.")
