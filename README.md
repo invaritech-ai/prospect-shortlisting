@@ -15,7 +15,7 @@ Five named queues, three worker processes:
 
 | Queue | Worker | Concurrency | Rate-limited by |
 |---|---|---|---|
-| `scrape` | `worker-scrape` | 4 | Browserless sessions |
+| `scrape` | `worker-scrape` | 2 | Local browser resources |
 | `ai_decision` | `worker-ai` | 2 | OpenRouter RPM |
 | `contact_fetch` | `worker-provider` | 2 | Apollo / Snov req/min |
 | `email_reveal` | `worker-provider` | 2 | Snov reveal credits |
@@ -38,7 +38,6 @@ cp .env.example .env
 # Required keys in .env:
 # DATABASE_URL=postgresql://prospect:prospect@localhost:5432/prospect
 # OPENROUTER_API_KEY=...
-# BROWSERLESS_API_KEY=...   (for actual scraping)
 # SNOV_CLIENT_ID / SNOV_CLIENT_SECRET
 # APOLLO_API_KEY
 # ZEROBOUNCE_API_KEY
@@ -80,8 +79,10 @@ cd apps/web && npm run dev
 **S1 — Scraping:**
 ```bash
 PS_WORKER_PROCESS=1 PROCRASTINATE_CONNECTION_STRING=$DATABASE_URL \
-  uv run python -m procrastinate --app=app.queue.app worker -q scrape -c 4
+  uv run python -m procrastinate --app=app.queue.app worker -q scrape -c 2
 ```
+
+The scrape worker uses static fetches first, then curl_cffi impersonation, then local Scrapling browser fallback. The browser fallback is local-only; `PS_BROWSERLESS_URL` is not used by the scraper.
 
 **S2 — AI Decision:**
 ```bash
@@ -143,7 +144,7 @@ This starts:
 |---|---|
 | `postgres` | Database (port 5432, internal only) |
 | `api` | FastAPI on port 8000. Runs `alembic upgrade head` and `procrastinate schema --apply` on startup. |
-| `worker-scrape` | Procrastinate worker, queue=`scrape`, concurrency=4 |
+| `worker-scrape` | Procrastinate worker, queue=`scrape`, concurrency=2 |
 | `worker-ai` | Procrastinate worker, queue=`ai_decision`, concurrency=2 |
 | `worker-provider` | Procrastinate worker, queues=`contact_fetch,email_reveal,validation`, concurrency=5 |
 
@@ -194,7 +195,6 @@ uv run pytest tests/test_procrastinate_queue_architecture.py -q
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `OPENROUTER_API_KEY` | Yes | AI classification (S2) |
-| `BROWSERLESS_API_KEY` | For S1 | Headless browser scraping |
 | `SNOV_CLIENT_ID` / `SNOV_CLIENT_SECRET` | For S3/S4 | Contact discovery + email reveal |
 | `APOLLO_API_KEY` | For S3 | Contact discovery |
 | `ZEROBOUNCE_API_KEY` | For S5 | Email validation |

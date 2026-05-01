@@ -8,9 +8,7 @@ Fetch strategy (three tiers):
   3. Stealth (StealthyFetcher) — Playwright + Cloudflare bypass. For JS-heavy /
                                  protected pages. Reserved for policy-driven escalation.
 
-Stealth mode is **deterministic per worker** — no cross-fallback between modes:
-  - Workers with PS_BROWSERLESS_URL set → Browserless CDP only.
-  - Workers without PS_BROWSERLESS_URL  → local headless Chromium only.
+Stealth mode uses local headless Chromium (Scrapling). No remote Browserless CDP.
 
 For multi-page fetches on the same domain, use `stealth_fetch_many()` which keeps
 a single browser session alive across all pages (faster + looks more natural to
