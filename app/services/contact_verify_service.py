@@ -8,8 +8,12 @@ from sqlalchemy import or_
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
-from app.models import ContactVerifyJob, Contact
+from app.models import Company, Contact, ContactVerifyJob
 from app.models.pipeline import ContactVerifyJobState
+from app.services.contact_query_service import (
+    campaign_upload_scope,
+    verification_eligible_condition,
+)
 from app.services.zerobounce_client import (
     ERR_ZEROBOUNCE_AUTH_FAILED,
     ERR_ZEROBOUNCE_KEY_MISSING,
@@ -45,6 +49,52 @@ def is_contact_verification_eligible(contact: Contact) -> bool:
 
 
 class ContactVerifyService:
+    def enqueue(
+        self,
+        *,
+        session: Session,
+        campaign_id: UUID,
+        contact_ids: list[UUID],
+    ) -> tuple[ContactVerifyJob, int]:
+        """Filter contact_ids to eligible, create ContactVerifyJob.
+
+        Returns (job, skipped_count). Caller defers verify_contacts(job_id) after commit.
+        """
+        eligible_ids: list[str] = []
+        skipped = 0
+
+        if contact_ids:
+            rows = list(
+                session.exec(
+                    select(Contact.id)
+                    .join(Company, col(Contact.company_id) == col(Company.id))
+                    .where(
+                        col(Contact.id).in_(contact_ids),
+                        campaign_upload_scope(campaign_id),
+                        *verification_eligible_condition(),
+                    )
+                )
+            )
+            eligible_set = {r for r in rows}
+            eligible_ids = [str(cid) for cid in contact_ids if cid in eligible_set]
+            skipped = len(contact_ids) - len(eligible_ids)
+
+        job = ContactVerifyJob(
+            state=ContactVerifyJobState.QUEUED,
+            contact_ids_json=eligible_ids,
+            selected_count=len(contact_ids),
+            verified_count=0,
+            skipped_count=skipped,
+        )
+        session.add(job)
+        session.flush()
+
+        return job, skipped
+
+    def run_verify(self, *, engine: Any, job_id: str) -> None:
+        """Thin wrapper for the task stub — accepts str job_id."""
+        self.run_verify_job(engine=engine, job_id=UUID(job_id))
+
     def run_verify_job(self, *, engine: Any, job_id: UUID) -> ContactVerifyJob | None:
         now = utcnow()
         lock_token = str(uuid4())
@@ -163,6 +213,7 @@ class ContactVerifyService:
                     skipped_count += 1
                     continue
                 contact.verification_status = normalize_zerobounce_status(str(payload.get("status") or "unknown"))
+                contact.verification_provider = "zerobounce"
                 contact.zerobounce_raw = payload
                 has_email = bool((contact.email or "").strip())
                 if has_email and contact.title_match and contact.verification_status == "valid":
