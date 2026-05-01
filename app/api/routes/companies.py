@@ -28,7 +28,13 @@ from app.jobs._priority import BULK_PIPELINE
 from app.jobs.scrape import defer_scrape_website_bulk, dispatch_scrape_run
 from app.jobs.contact_fetch import fetch_contacts as _fetch_contacts_task
 from app.models import Company, CompanyFeedback, Contact, ScrapeJob, Upload
-from app.models.pipeline import ContactFetchJobState
+from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
+
+_S3_ELIGIBLE_STAGES = frozenset({
+    CompanyPipelineStage.SCRAPED,
+    CompanyPipelineStage.CLASSIFIED,
+    CompanyPipelineStage.CONTACT_READY,
+})
 from app.services.contact_fetch_service import ContactFetchService
 from app.services.contact_query_service import (
     apply_contact_filters as _apply_contact_filters,
@@ -361,10 +367,13 @@ async def fetch_contacts_selected(
     if {c.id for c in companies} != set(payload.company_ids):
         raise HTTPException(status_code=400, detail="One or more company_ids are outside campaign scope.")
 
+    eligible_ids = [c.id for c in companies if c.pipeline_stage in _S3_ELIGIBLE_STAGES]
+    skipped_ineligible = len(payload.company_ids) - len(eligible_ids)
+
     batch, jobs, reused = _contact_fetch_service.enqueue(
         session=session,
         campaign_id=payload.campaign_id,
-        company_ids=payload.company_ids,
+        company_ids=eligible_ids,
         force_refresh=payload.force_refresh,
     )
     session.commit()
@@ -401,6 +410,8 @@ async def fetch_contacts_for_company(
     upload = session.get(Upload, company.upload_id)
     if upload is None or upload.campaign_id != campaign_id:
         raise HTTPException(status_code=400, detail="Company is not in the selected campaign.")
+    if company.pipeline_stage not in _S3_ELIGIBLE_STAGES:
+        raise HTTPException(status_code=400, detail="Company has not been scraped yet and is not eligible for contact discovery.")
 
     batch, jobs, reused = _contact_fetch_service.enqueue(
         session=session,

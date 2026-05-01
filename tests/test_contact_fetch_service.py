@@ -291,3 +291,51 @@ def test_force_refresh_creates_new_job(sqlite_session: Session) -> None:
 
     assert reused == 0
     assert jobs2[0].id != jobs1[0].id
+
+
+# ── Gap 2: batch finalization ─────────────────────────────────────────────────
+
+def test_batch_finalized_when_all_jobs_terminal(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+    from app.models.pipeline import ContactFetchBatchState
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    batch_id = job.contact_fetch_batch_id
+
+    ContactFetchService().run_contact_fetch_job(
+        engine=sqlite_session.bind,
+        contact_fetch_job_id=str(job.id),
+    )
+
+    batch = sqlite_session.get(ContactFetchBatch, batch_id)
+    assert batch.state == ContactFetchBatchState.SUCCEEDED
+    assert batch.finished_at is not None
+
+
+def test_batch_marked_failed_when_any_job_fails(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+    from app.models.pipeline import ContactFetchBatchState
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, "snov_failed"))
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    batch_id = job.contact_fetch_batch_id
+
+    ContactFetchService().run_contact_fetch_job(
+        engine=sqlite_session.bind,
+        contact_fetch_job_id=str(job.id),
+    )
+
+    batch = sqlite_session.get(ContactFetchBatch, batch_id)
+    assert batch.state == ContactFetchBatchState.FAILED
+    assert batch.finished_at is not None

@@ -221,6 +221,10 @@ class ContactFetchService:
             job.updated_at = _utcnow()
             session.add(job)
             session.commit()
+            batch_id = job.contact_fetch_batch_id
+
+        if batch_id:
+            self._maybe_finalize_batch(engine=engine, batch_id=batch_id)
 
     def _run_provider(
         self,
@@ -332,3 +336,38 @@ class ContactFetchService:
             session.commit()
 
         return err
+
+    def _maybe_finalize_batch(self, *, engine: Any, batch_id: UUID) -> None:
+        """If every job in this batch is terminal, mark the batch succeeded/failed."""
+        from sqlalchemy import func as _func
+
+        with Session(engine) as session:
+            pending = session.exec(
+                select(_func.count(ContactFetchJob.id))
+                .where(
+                    col(ContactFetchJob.contact_fetch_batch_id) == batch_id,
+                    col(ContactFetchJob.terminal_state).is_(False),
+                )
+            ).one()
+
+            if pending > 0:
+                return
+
+            any_failed = session.exec(
+                select(_func.count(ContactFetchJob.id))
+                .where(
+                    col(ContactFetchJob.contact_fetch_batch_id) == batch_id,
+                    col(ContactFetchJob.state) == ContactFetchJobState.FAILED,
+                )
+            ).one()
+
+            batch = session.get(ContactFetchBatch, batch_id)
+            if batch is None:
+                return
+            batch.state = (
+                ContactFetchBatchState.FAILED if any_failed else ContactFetchBatchState.SUCCEEDED
+            )
+            batch.finished_at = _utcnow()
+            batch.updated_at = _utcnow()
+            session.add(batch)
+            session.commit()
