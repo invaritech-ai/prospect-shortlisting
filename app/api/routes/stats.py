@@ -348,20 +348,20 @@ def _analysis_stats(session: Session, campaign_id: UUID, upload_id: UUID | None 
     else:
         latest_stmt = latest_stmt.where(col(AnalysisJob.upload_id).in_(_campaign_upload_ids_subquery(campaign_id)))
     latest = latest_stmt.subquery("latest_analysis")
-    latest_only = select(latest).where(literal_column("rn") == 1).subquery("la")
+    latest_only = select(latest).where(latest.c.rn == 1).subquery("la")
 
     row = session.exec(
         select(
             func.count().label("total"),
-            func.count(case((literal_column("la.state") == "succeeded", 1))).label("succeeded"),
-            func.count(case((literal_column("la.state").in_(["failed", "dead"]), 1))).label("failed"),
-            func.count(case((literal_column("la.state") == "running", 1))).label("running"),
-            func.count(case((literal_column("la.state") == "queued", 1))).label("queued"),
+            func.count(case((latest_only.c.state == AnalysisJobState.SUCCEEDED, 1))).label("succeeded"),
+            func.count(case((latest_only.c.state.in_([AnalysisJobState.FAILED, AnalysisJobState.DEAD]), 1))).label("failed"),
+            func.count(case((latest_only.c.state == AnalysisJobState.RUNNING, 1))).label("running"),
+            func.count(case((latest_only.c.state == AnalysisJobState.QUEUED, 1))).label("queued"),
             func.count(case((
-                literal_column("la.terminal_state").is_(False)
-                & (literal_column("la.state") == "running")
-                & literal_column("la.lock_expires_at").is_not(None)
-                & (literal_column("la.lock_expires_at") < now),
+                latest_only.c.terminal_state.is_(False)
+                & (latest_only.c.state == AnalysisJobState.RUNNING)
+                & latest_only.c.lock_expires_at.is_not(None)
+                & (latest_only.c.lock_expires_at < now),
                 1,
             ))).label("stuck_count"),
         ).select_from(latest_only)

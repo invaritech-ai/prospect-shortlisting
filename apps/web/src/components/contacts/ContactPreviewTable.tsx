@@ -44,6 +44,14 @@ function providerStatusMeta(status: string | null): { label: string; cls: string
   }
 }
 
+function sourceProviderMeta(provider: string | null | undefined): { label: string; cls: string } | null {
+  const normalized = (provider ?? '').trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'snov') return { label: 'SNOV', cls: 'bg-sky-100 text-sky-700' }
+  if (normalized === 'apollo') return { label: 'APOLLO', cls: 'bg-violet-100 text-violet-700' }
+  return { label: normalized.toUpperCase(), cls: 'bg-slate-100 text-slate-700' }
+}
+
 function StatusBadge({ label, cls }: { label: string; cls: string }) {
   return (
     <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${cls}`}>
@@ -57,6 +65,7 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
   const stage = contactStageMeta(contact.pipeline_stage)
   const verification = verificationMeta(contact.verification_status)
   const provider = providerStatusMeta(contact.provider_email_status)
+  const sourceProvider = sourceProviderMeta(contact.source_provider)
   const emailList = (contact.emails && contact.emails.length > 0 ? contact.emails : contact.email ? [contact.email] : []) as string[]
 
   return (
@@ -66,6 +75,11 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
         {isMatch ? (
           <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
             Match
+          </span>
+        ) : null}
+        {sourceProvider ? (
+          <span className={`ml-1.5 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${sourceProvider.cls}`}>
+            {sourceProvider.label}
           </span>
         ) : null}
       </td>

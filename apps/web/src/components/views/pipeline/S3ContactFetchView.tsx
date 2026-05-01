@@ -120,6 +120,16 @@ const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
   { value: 'unlabeled', label: 'Unlabeled' },
 ]
 
+function discoveryStatusLabel(company: CompanyListItem): string | null {
+  const status = (company.contact_fetch_status ?? '').toLowerCase()
+  const discovered = company.discovered_contact_count ?? 0
+  if (status === 'running' || status === 'queued') return 'In progress'
+  if (status === 'succeeded' && discovered === 0) return 'Done · no contacts'
+  if (status === 'succeeded' && discovered > 0) return 'Done'
+  if (status === 'failed' || status === 'dead') return 'Failed'
+  return null
+}
+
 
 export function S3ContactFetchView({
   campaignId,
@@ -641,6 +651,11 @@ export function S3ContactFetchView({
                       Discover
                     </button>
                   </div>
+                  {discoveryStatusLabel(c) && (
+                    <div className="mt-1 text-[10px] text-(--oc-muted)">
+                      {discoveryStatusLabel(c)}
+                    </div>
+                  )}
                 </td>
               </PipelineStageCompanyTableRow>
             ))}

@@ -263,3 +263,76 @@ def test_stats_analysis_counts_one_company_once_when_requeued(sqlite_session: Se
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()
+
+
+def test_analysis_stats_does_not_compare_latest_state_via_literal_column() -> None:
+    import inspect
+
+    from app.api.routes import stats as stats_mod
+
+    source = inspect.getsource(stats_mod._analysis_stats)
+
+    assert 'literal_column("la.state")' not in source
+    assert 'literal_column("la.terminal_state")' not in source
+    assert 'literal_column("la.lock_expires_at")' not in source
+
+
+def test_stats_analysis_counts_all_terminal_and_active_states(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Stats Analysis States"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "stats-analysis-states.csv", campaign_id=campaign.id)
+    try:
+        prompt = Prompt(name="Prompt", prompt_text="Classify {context}", enabled=True)
+        sqlite_session.add(prompt)
+        sqlite_session.flush()
+
+        states = [
+            ("queued.example", AnalysisJobState.QUEUED, False, None),
+            ("running.example", AnalysisJobState.RUNNING, False, None),
+            ("stuck.example", AnalysisJobState.RUNNING, False, utcnow() - timedelta(minutes=1)),
+            ("succeeded.example", AnalysisJobState.SUCCEEDED, True, None),
+            ("failed.example", AnalysisJobState.FAILED, True, None),
+            ("dead.example", AnalysisJobState.DEAD, True, None),
+        ]
+
+        for domain, state, terminal_state, expired_lock in states:
+            company = _seed_company(sqlite_session, upload_id=upload.id, domain=domain)
+            run = PipelineRun(
+                campaign_id=campaign.id,
+                state=PipelineRunStatus.RUNNING,
+                company_ids_snapshot=[str(company.id)],
+            )
+            sqlite_session.add(run)
+            sqlite_session.flush()
+            sqlite_session.add(
+                AnalysisJob(
+                    pipeline_run_id=run.id,
+                    upload_id=upload.id,
+                    company_id=company.id,
+                    crawl_artifact_id=uuid4(),
+                    prompt_id=prompt.id,
+                    general_model="gpt-4o",
+                    classify_model="gpt-4o",
+                    state=state,
+                    terminal_state=terminal_state,
+                    prompt_hash=f"hash-{domain}",
+                    lock_expires_at=expired_lock,
+                )
+            )
+
+        sqlite_session.commit()
+
+        stats = get_stats(session=sqlite_session, campaign_id=campaign.id, upload_id=upload.id)
+
+        assert stats.analysis.total == 6
+        assert stats.analysis.queued == 1
+        assert stats.analysis.running == 2
+        assert stats.analysis.succeeded == 1
+        assert stats.analysis.failed == 2
+        assert stats.analysis.stuck_count == 1
+    finally:
+        sqlite_session.exec(delete(AnalysisJob))
+        sqlite_session.exec(delete(PipelineRun))
+        sqlite_session.exec(delete(Prompt))
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()

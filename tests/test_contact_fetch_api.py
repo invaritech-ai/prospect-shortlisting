@@ -7,7 +7,8 @@ from sqlmodel import Session
 
 from app.api.routes.campaigns import create_campaign
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, Upload
+from app.models import Company, ContactFetchJob, Upload
+from app.models.pipeline import ContactFetchJobState
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -285,3 +286,76 @@ async def test_fetch_contacts_for_company_rejects_uploaded(
             session=sqlite_session,
         )
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reset_stuck_contact_fetch_jobs_requeues_running_without_lock(
+    sqlite_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.routes.companies import reset_stuck_contact_fetch_jobs
+    from app.jobs import contact_fetch as cf_mod
+
+    deferred: list[dict] = []
+
+    async def fake_defer(**kwargs):
+        deferred.append(kwargs)
+
+    monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
+
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
+    company = _seed(sqlite_session, campaign.id)
+    job = ContactFetchJob(
+        company_id=company.id,
+        provider="snov",
+        state=ContactFetchJobState.RUNNING,
+        terminal_state=False,
+        lock_token="stale-lock",
+        lock_expires_at=None,
+    )
+    sqlite_session.add(job)
+    sqlite_session.commit()
+
+    result = await reset_stuck_contact_fetch_jobs(session=sqlite_session)
+
+    sqlite_session.refresh(job)
+    assert result.reset_count == 1
+    assert job.state == ContactFetchJobState.QUEUED
+    assert job.terminal_state is False
+    assert job.lock_token is None
+    assert len(deferred) == 1
+    assert deferred[0]["contact_fetch_job_id"] == str(job.id)
+
+
+@pytest.mark.asyncio
+async def test_reset_stuck_contact_fetch_jobs_ignores_terminal_jobs(
+    sqlite_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.routes.companies import reset_stuck_contact_fetch_jobs
+    from app.jobs import contact_fetch as cf_mod
+
+    deferred: list[dict] = []
+
+    async def fake_defer(**kwargs):
+        deferred.append(kwargs)
+
+    monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", fake_defer)
+
+    campaign = create_campaign(payload=CampaignCreate(name="s3"), session=sqlite_session)
+    company = _seed(sqlite_session, campaign.id)
+    job = ContactFetchJob(
+        company_id=company.id,
+        provider="snov",
+        state=ContactFetchJobState.FAILED,
+        terminal_state=True,
+    )
+    sqlite_session.add(job)
+    sqlite_session.commit()
+
+    result = await reset_stuck_contact_fetch_jobs(session=sqlite_session)
+
+    sqlite_session.refresh(job)
+    assert result.reset_count == 0
+    assert job.state == ContactFetchJobState.FAILED
+    assert len(deferred) == 0

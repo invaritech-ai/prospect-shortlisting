@@ -3,7 +3,8 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
@@ -27,7 +28,7 @@ from app.jobs._defaults import DEFAULT_CLASSIFY_MODEL, DEFAULT_GENERAL_MODEL
 from app.jobs._priority import BULK_PIPELINE
 from app.jobs.scrape import defer_scrape_website_bulk, dispatch_scrape_run
 from app.jobs.contact_fetch import fetch_contacts as _fetch_contacts_task
-from app.models import Company, CompanyFeedback, Contact, ScrapeJob, Upload
+from app.models import Company, CompanyFeedback, Contact, ContactFetchJob, ScrapeJob, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 
 _S3_ELIGIBLE_STAGES = frozenset({
@@ -64,6 +65,10 @@ from app.services.scrape_service import (
 
 router = APIRouter(prefix="/v1", tags=["companies"])
 _scrape_manager = ScrapeJobManager()
+
+
+class ResetStuckResult(BaseModel):
+    reset_count: int
 
 
 @router.get("/companies", response_model=CompanyList)
@@ -347,6 +352,60 @@ async def scrape_all_companies(
         queued_job_ids=queued_job_ids,
         failed_company_ids=failed_company_ids,
     )
+
+
+@router.post("/contact-fetch-jobs/reset-stuck", response_model=ResetStuckResult)
+async def reset_stuck_contact_fetch_jobs(
+    session: Session = Depends(get_session),
+) -> ResetStuckResult:
+    """Reset stuck S3 app-level jobs and requeue their Procrastinate tasks."""
+    now = utcnow()
+    jobs = list(
+        session.exec(
+            select(ContactFetchJob)
+            .where(
+                col(ContactFetchJob.terminal_state).is_(False),
+                col(ContactFetchJob.state) == ContactFetchJobState.RUNNING,
+                or_(
+                    col(ContactFetchJob.lock_expires_at).is_(None),
+                    col(ContactFetchJob.lock_expires_at) < now,
+                ),
+            )
+            .order_by(col(ContactFetchJob.updated_at).asc())
+        )
+    )
+
+    if not jobs:
+        return ResetStuckResult(reset_count=0)
+
+    for job in jobs:
+        job.state = ContactFetchJobState.QUEUED
+        job.lock_token = None
+        job.lock_expires_at = None
+        job.updated_at = now
+        session.add(job)
+    session.commit()
+
+    reset_count = 0
+    failed_ids: list[UUID] = []
+    for job in jobs:
+        try:
+            await _fetch_contacts_task.defer_async(contact_fetch_job_id=str(job.id))
+            reset_count += 1
+        except Exception:
+            failed_ids.append(job.id)
+
+    if failed_ids:
+        failed_jobs = list(
+            session.exec(select(ContactFetchJob).where(col(ContactFetchJob.id).in_(failed_ids)))
+        )
+        for job in failed_jobs:
+            job.state = ContactFetchJobState.RUNNING
+            job.updated_at = utcnow()
+            session.add(job)
+        session.commit()
+
+    return ResetStuckResult(reset_count=reset_count)
 
 
 @router.post("/companies/fetch-contacts-selected", response_model=ContactFetchResult)

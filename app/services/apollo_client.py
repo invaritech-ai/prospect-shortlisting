@@ -66,8 +66,20 @@ class ApolloClient:
                 return data, ""
             except HTTPError as exc:
                 last_exc = exc
+                err_body = ""
+                try:
+                    err_body = exc.read().decode("utf-8", errors="ignore")
+                except Exception:  # noqa: BLE001
+                    pass
                 if exc.code in (401, 403):
-                    log_event(logger, "apollo_auth_failed", status=exc.code, url=req.full_url)
+                    preview = (err_body[:800] + "…") if len(err_body) > 800 else err_body
+                    log_event(
+                        logger,
+                        "apollo_auth_failed",
+                        status=exc.code,
+                        url=req.full_url,
+                        response_body_preview=preview or None,
+                    )
                     self.last_error_code = ERR_APOLLO_AUTH_FAILED
                     return {}, ERR_APOLLO_AUTH_FAILED
                 if exc.code == 429 and attempt < self._max_retries:
