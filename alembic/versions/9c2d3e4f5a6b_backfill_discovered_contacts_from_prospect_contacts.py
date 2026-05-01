@@ -145,7 +145,7 @@ def upgrade() -> None:
         CREATE TEMPORARY TABLE _dc_backfill_scopes AS
         SELECT DISTINCT
             company_id,
-            provider
+            lower(trim(source)) AS provider
         FROM prospect_contacts
         WHERE lower(trim(source)) IN ('snov', 'apollo')
         """

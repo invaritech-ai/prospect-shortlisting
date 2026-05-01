@@ -41,11 +41,15 @@ def _active_prompt(session: Session) -> ScrapePrompt | None:
 
 
 def _set_active_prompt(session: Session, prompt: ScrapePrompt) -> None:
+    changed_existing = False
     for row in session.exec(select(ScrapePrompt).where(col(ScrapePrompt.is_active).is_(True))).all():
         if row.id != prompt.id:
             row.is_active = False
             row.updated_at = _utcnow()
             session.add(row)
+            changed_existing = True
+    if changed_existing:
+        session.flush()
     prompt.is_active = True
     prompt.updated_at = _utcnow()
     session.add(prompt)

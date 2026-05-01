@@ -205,6 +205,8 @@ async def dispatch_scrape_run(run_id: str) -> None:
             job_ids=job_ids,
             scrape_rules=scrape_rules_val,
         )
+        if results is None:
+            results = [None] * len(job_ids)
 
         queued_inc = defer_failed_count = 0
         with Session(engine) as session:

@@ -80,6 +80,11 @@ def _postgres_engine(postgres_url: str):
         cwd=str(Path(__file__).parent.parent),
     )
 
+    yield engine
+    engine.dispose()
+
+
+def _truncate_all(engine) -> None:
     with engine.begin() as connection:
         tables = list(
             connection.exec_driver_sql(
@@ -93,29 +98,27 @@ def _postgres_engine(postgres_url: str):
         )
         if tables:
             preparer = engine.dialect.identifier_preparer
-            table_list = ", ".join(preparer.quote(table) for table in tables)
+            table_list = ", ".join(preparer.quote(t) for t in tables)
             connection.exec_driver_sql(f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE")
 
-    yield engine
-    engine.dispose()
+
+@pytest.fixture(autouse=True)
+def _clean_db(_postgres_engine) -> Generator[None, None, None]:
+    """Truncate all tables before each test for full isolation."""
+    _truncate_all(_postgres_engine)
+    yield
 
 
 @pytest.fixture
 def db_engine(_postgres_engine):
-    """Yield a transaction-bound Postgres connection for service-level tests."""
-    connection = _postgres_engine.connect()
-    transaction = connection.begin()
-    try:
-        yield connection
-    finally:
-        transaction.rollback()
-        connection.close()
+    """Yield the Postgres engine for service-level tests."""
+    return _postgres_engine
 
 
 @pytest.fixture
 def db_session(db_engine) -> Generator[Session, None, None]:
-    """Yield a Postgres session; each test runs inside a rolled-back transaction."""
-    with Session(bind=db_engine) as sess:
+    """Yield a Postgres session backed by the real engine."""
+    with Session(db_engine) as sess:
         yield sess
 
 

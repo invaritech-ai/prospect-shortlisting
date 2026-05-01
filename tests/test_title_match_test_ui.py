@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from app.api.routes.contacts import get_title_rule_stats, run_title_test
 from app.api.schemas.contacts import TitleTestRequest
-from app.models import Company, ContactFetchJob, Contact, TitleMatchRule, Upload
+from app.models import Campaign, Company, ContactFetchJob, Contact, TitleMatchRule, Upload
 from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState
 
 
@@ -15,14 +15,18 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _add_rules(session: Session) -> None:
-    session.add(TitleMatchRule(rule_type="include", keywords="marketing, director"))
-    session.add(TitleMatchRule(rule_type="exclude", keywords="assistant"))
+def _add_rules(session: Session) -> Campaign:
+    campaign = Campaign(name=f"Title Rules {uuid4()}")
+    session.add(campaign)
+    session.flush()
+    session.add(TitleMatchRule(campaign_id=campaign.id, rule_type="include", keywords="marketing, director"))
+    session.add(TitleMatchRule(campaign_id=campaign.id, rule_type="exclude", keywords="assistant"))
     session.commit()
+    return campaign
 
 
-def _make_contact(session: Session, *, title: str, title_match: bool = False) -> Contact:
-    upload = Upload(filename="t.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0)
+def _make_contact(session: Session, *, campaign_id, title: str, title_match: bool = False) -> Contact:
+    upload = Upload(campaign_id=campaign_id, filename="t.csv", checksum=str(uuid4()), valid_count=1, invalid_count=0)
     session.add(upload)
     session.flush()
     company = Company(
@@ -60,32 +64,32 @@ def _make_contact(session: Session, *, title: str, title_match: bool = False) ->
 
 
 def test_title_test_matched(db_session: Session) -> None:
-    _add_rules(db_session)
-    result = run_title_test(TitleTestRequest(title="Director of Marketing"), session=db_session)
+    campaign = _add_rules(db_session)
+    result = run_title_test(TitleTestRequest(campaign_id=campaign.id, title="Director of Marketing"), session=db_session)
     assert result.matched is True
     assert len(result.matching_rules) > 0
     assert "marketing, director" in result.matching_rules
 
 
 def test_title_test_excluded(db_session: Session) -> None:
-    _add_rules(db_session)
-    result = run_title_test(TitleTestRequest(title="Marketing Assistant"), session=db_session)
+    campaign = _add_rules(db_session)
+    result = run_title_test(TitleTestRequest(campaign_id=campaign.id, title="Marketing Assistant"), session=db_session)
     assert result.matched is False
     assert "assistant" in result.excluded_by
 
 
 def test_title_test_no_match(db_session: Session) -> None:
-    _add_rules(db_session)
-    result = run_title_test(TitleTestRequest(title="Software Engineer"), session=db_session)
+    campaign = _add_rules(db_session)
+    result = run_title_test(TitleTestRequest(campaign_id=campaign.id, title="Software Engineer"), session=db_session)
     assert result.matched is False
     assert result.excluded_by == []
     assert result.matching_rules == []
 
 
 def test_stats_returns_counts(db_session: Session) -> None:
-    _add_rules(db_session)
-    _make_contact(db_session, title="Director of Marketing", title_match=True)
-    result = get_title_rule_stats(session=db_session)
+    campaign = _add_rules(db_session)
+    _make_contact(db_session, campaign_id=campaign.id, title="Director of Marketing", title_match=True)
+    result = get_title_rule_stats(session=db_session, campaign_id=campaign.id)
     assert result.total_contacts >= 1
     assert result.total_matched >= 1
     include_stat = next(r for r in result.rules if r.rule_type == "include" and r.keywords == "marketing, director")

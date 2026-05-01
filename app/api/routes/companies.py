@@ -134,10 +134,10 @@ def list_companies(
             latest_scrape_failure_reason=str(row[21]) if row[21] is not None else None,
             contact_count=int(row[22]) if row[22] is not None else 0,
             revealed_contact_count=int(row[22]) if row[22] is not None else 0,
-            discovered_contact_count=int(row[22]) if row[22] is not None else 0,
-            discovered_title_matched_count=int(row[23]) if row[23] is not None else 0,
-            contact_fetch_status=str(row[24]) if row[24] is not None else None,
-            last_activity=row[25],
+            discovered_contact_count=int(row[23]) if row[23] is not None else 0,
+            discovered_title_matched_count=int(row[24]) if row[24] is not None else 0,
+            contact_fetch_status=str(row[25]) if row[25] is not None else None,
+            last_activity=row[26],
         )
         for row in page_rows
     ]

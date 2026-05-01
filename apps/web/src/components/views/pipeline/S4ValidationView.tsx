@@ -185,17 +185,17 @@ export function S4ValidationView({
       {contactCounts && (
         <div className="flex flex-wrap gap-2">
           {[
-            { label: 'Valid', value: contactCounts.verified, color: '#15803d', bg: '#dcfce7' },
-            { label: 'Eligible', value: contactCounts.eligible_verify, color: '#d97706', bg: '#fef3c7' },
-            { label: 'Unverified', value: contactCounts.total - contactCounts.verified, color: '#334155', bg: '#f1f5f9' },
-            { label: 'Campaign ready', value: contactCounts.campaign_ready, color: '#6b21a8', bg: '#f3e8ff' },
+            { label: 'Matched', value: contactCounts.matched, color: '#15803d', bg: '#dcfce7' },
+            { label: 'Fresh', value: contactCounts.fresh, color: '#0f766e', bg: '#ccfbf1' },
+            { label: 'Stale', value: contactCounts.stale, color: '#b45309', bg: '#fef3c7' },
+            { label: 'Already revealed', value: contactCounts.already_revealed, color: '#6b21a8', bg: '#f3e8ff' },
           ].map(({ label, value, color, bg }) => (
             <div
               key={label}
               className="rounded-xl border px-3 py-1.5 text-xs"
               style={{ borderColor: color + '33', backgroundColor: bg }}
             >
-              <span className="font-black tabular-nums" style={{ color }}>{value.toLocaleString()}</span>
+              <span className="font-black tabular-nums" style={{ color }}>{(value ?? 0).toLocaleString()}</span>
               <span className="ml-1.5" style={{ color: color + 'bb' }}>{label}</span>
             </div>
           ))}

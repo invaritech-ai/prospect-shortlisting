@@ -229,14 +229,23 @@ def _latest_analysis_subquery() -> Any:
 
 
 def _contact_count_subquery() -> Any:
+    has_email = func.coalesce(col(Contact.email), "") != ""
+    discovered_only = func.coalesce(col(Contact.email), "") == ""
     return (
         select(
             col(Contact.company_id).label("company_id"),
-            func.count().label("contact_count"),
             func.coalesce(
-                func.sum(case((col(Contact.title_match).is_(True), 1), else_=0)),
+                func.sum(case((has_email, 1), else_=0)),
                 0,
-            ).label("title_matched_count"),
+            ).label("revealed_contact_count"),
+            func.coalesce(
+                func.sum(case((discovered_only, 1), else_=0)),
+                0,
+            ).label("discovered_contact_count"),
+            func.coalesce(
+                func.sum(case((and_(discovered_only, col(Contact.title_match).is_(True)), 1), else_=0)),
+                0,
+            ).label("discovered_title_matched_count"),
         )
         .where(col(Contact.is_active).is_(True))
         .group_by(col(Contact.company_id))
@@ -292,7 +301,7 @@ def _apply_scrape_filter(stmt: Any, latest_scrape: Any, normalized_scrape_filter
     if normalized_scrape_filter == "soft":
         return stmt.where(
             latest_scrape.c.state.in_(["failed", "dead"]),
-            latest_scrape.c.failure_reason != "site_unavailable",
+            latest_scrape.c.failure_reason.is_distinct_from("site_unavailable"),
         )
     return stmt
 
@@ -341,11 +350,16 @@ def _apply_pipeline_status_filter(
     if normalized_status_filter == "permanent-failures":
         return stmt.where(latest_scrape.c.failure_reason == "site_unavailable")
     if normalized_status_filter == "soft-failures":
-        return stmt.where(or_(
-            scrape_status.in_(["failed", "dead"]),
-            analysis_status.in_(["failed", "dead"]),
-            contact_status == "failed",
-        ))
+        return stmt.where(
+            or_(
+                and_(
+                    scrape_status.in_(["failed", "dead"]),
+                    latest_scrape.c.failure_reason.is_distinct_from("site_unavailable"),
+                ),
+                analysis_status.in_(["failed", "dead"]),
+                contact_status == "failed",
+            )
+        )
     return stmt
 
 
@@ -419,8 +433,9 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             col(CompanyFeedback.thumbs), col(CompanyFeedback.comment), col(CompanyFeedback.manual_label),
             ctx.latest_scrape.c.last_error_code,
             ctx.latest_scrape.c.failure_reason,
-            func.coalesce(ctx.contact_counts.c.contact_count, 0),
-            func.coalesce(ctx.contact_counts.c.title_matched_count, 0),
+            func.coalesce(ctx.contact_counts.c.revealed_contact_count, 0),
+            func.coalesce(ctx.contact_counts.c.discovered_contact_count, 0),
+            func.coalesce(ctx.contact_counts.c.discovered_title_matched_count, 0),
             ctx.latest_contact_fetch.c.state,
             ctx.last_activity.label("last_activity"),
         )
@@ -483,8 +498,8 @@ def apply_company_sort(stmt: Any, filters: CompanyFilters, ctx: CompanyQueryCont
         "decision": ctx.decision_rank,
         "confidence": ctx.latest_confidence,
         "scrape_status": ctx.latest_scrape.c.state,
-        "contact_count": func.coalesce(ctx.contact_counts.c.contact_count, 0),
-        "discovered_contact_count": func.coalesce(ctx.contact_counts.c.contact_count, 0),
+        "contact_count": func.coalesce(ctx.contact_counts.c.revealed_contact_count, 0),
+        "discovered_contact_count": func.coalesce(ctx.contact_counts.c.discovered_contact_count, 0),
         "scrape_updated_at": func.coalesce(ctx.latest_scrape.c.scrape_updated_at, _ACTIVITY_EPOCH),
         "analysis_updated_at": func.coalesce(ctx.latest_analysis.c.analysis_updated_at, _ACTIVITY_EPOCH),
         "contact_fetch_updated_at": func.coalesce(ctx.latest_contact_fetch.c.contact_fetch_updated_at, _ACTIVITY_EPOCH),

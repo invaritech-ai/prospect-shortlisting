@@ -7,8 +7,8 @@ from sqlmodel import Session
 
 from app.api.routes.prompts import create_prompt, delete_prompt, list_prompts, update_prompt
 from app.api.schemas.prompt import PromptCreate, PromptUpdate
-from app.models import AnalysisJob, Prompt
-from app.models.pipeline import AnalysisJobState
+from app.models import AnalysisJob, Campaign, Company, CrawlArtifact, CrawlJob, Prompt, Upload
+from app.models.pipeline import AnalysisJobState, CompanyPipelineStage
 
 
 def _prompt(session: Session, *, name: str = "Test") -> Prompt:
@@ -16,6 +16,37 @@ def _prompt(session: Session, *, name: str = "Test") -> Prompt:
     session.add(p)
     session.flush()
     return p
+
+
+def _analysis_dependencies(session: Session) -> tuple[Upload, Company, CrawlArtifact]:
+    campaign = Campaign(name=f"Prompt Runs {uuid4()}")
+    session.add(campaign)
+    session.flush()
+    upload = Upload(
+        campaign_id=campaign.id,
+        filename=f"{uuid4()}.csv",
+        checksum=str(uuid4()),
+        valid_count=1,
+        invalid_count=0,
+    )
+    session.add(upload)
+    session.flush()
+    company = Company(
+        upload_id=upload.id,
+        raw_url="https://prompt-runs.example",
+        normalized_url=f"https://prompt-runs-{uuid4()}.example",
+        domain=f"prompt-runs-{uuid4()}.example",
+        pipeline_stage=CompanyPipelineStage.SCRAPED,
+    )
+    session.add(company)
+    session.flush()
+    crawl_job = CrawlJob(upload_id=upload.id, company_id=company.id)
+    session.add(crawl_job)
+    session.flush()
+    artifact = CrawlArtifact(company_id=company.id, crawl_job_id=crawl_job.id)
+    session.add(artifact)
+    session.flush()
+    return upload, company, artifact
 
 
 def test_list_prompts_includes_run_count(db_session: Session) -> None:
@@ -38,10 +69,11 @@ def test_delete_prompt_with_runs_raises_409(db_session: Session) -> None:
     from fastapi import HTTPException
 
     p = _prompt(db_session)
+    upload, company, artifact = _analysis_dependencies(db_session)
     job = AnalysisJob(
-        upload_id=uuid4(),
-        company_id=uuid4(),
-        crawl_artifact_id=uuid4(),
+        upload_id=upload.id,
+        company_id=company.id,
+        crawl_artifact_id=artifact.id,
         prompt_id=p.id,
         general_model="gpt-4o",
         classify_model="gpt-4o",
@@ -57,10 +89,11 @@ def test_delete_prompt_with_runs_raises_409(db_session: Session) -> None:
 
 def test_run_count_reflects_actual_runs(db_session: Session) -> None:
     p = _prompt(db_session, name="WithRuns")
+    upload, company, artifact = _analysis_dependencies(db_session)
     job = AnalysisJob(
-        upload_id=uuid4(),
-        company_id=uuid4(),
-        crawl_artifact_id=uuid4(),
+        upload_id=upload.id,
+        company_id=company.id,
+        crawl_artifact_id=artifact.id,
         prompt_id=p.id,
         general_model="gpt-4o",
         classify_model="gpt-4o",

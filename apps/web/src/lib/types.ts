@@ -586,10 +586,10 @@ export type ContactCompanyListResponse = {
 
 export type ContactCountsResponse = {
   total: number
-  fetched: number
-  verified: number
-  campaign_ready: number
-  eligible_verify: number
+  matched: number
+  stale: number
+  fresh: number
+  already_revealed: number
 }
 
 export type ContactVerifyRequest = {

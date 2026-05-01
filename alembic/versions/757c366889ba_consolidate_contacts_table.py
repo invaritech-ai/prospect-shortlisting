@@ -58,10 +58,10 @@ def upgrade() -> None:
     op.create_index("ix_contacts_pipeline_stage", "contacts", ["pipeline_stage"])
 
     # 6. Drop prospect_contact_emails first (FK → prospect_contacts)
-    op.drop_table("prospect_contact_emails")
+    op.execute("DROP TABLE IF EXISTS prospect_contact_emails")
 
     # 7. Drop prospect_contacts
-    op.drop_table("prospect_contacts")
+    op.execute("DROP TABLE IF EXISTS prospect_contacts")
 
 
 def downgrade() -> None:

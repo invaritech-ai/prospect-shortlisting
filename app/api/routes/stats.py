@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import case, literal_column
+from sqlalchemy import and_, case, literal_column
 from sqlmodel import Session, col, func, select
 
 from app.db.session import get_session
@@ -875,7 +875,18 @@ def get_company_counts(
             func.sum(case((scrape_status.in_(["created", "running"]), 1), else_=0)).label("scrape_in_progress"),
             func.sum(case((scrape_status == "cancelled", 1), else_=0)).label("scrape_cancelled"),
             func.sum(case((latest_scrape.c.failure_reason == "site_unavailable", 1), else_=0)).label("scrape_permanent_fail"),
-            func.sum(case((scrape_status.in_(["failed", "dead"]), 1), else_=0)).label("scrape_soft_fail"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            scrape_status.in_(["failed", "dead"]),
+                            latest_scrape.c.failure_reason.is_distinct_from("site_unavailable"),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("scrape_soft_fail"),
             func.sum(case((decision_lower == "", 1), else_=0)).label("unlabeled"),
             func.sum(case((decision_lower == "possible", 1), else_=0)).label("possible"),
             func.sum(case((decision_lower == "unknown", 1), else_=0)).label("unknown"),

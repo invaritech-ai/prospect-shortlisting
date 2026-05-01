@@ -43,7 +43,6 @@ def _clear_analysis_usage_rows(session: Session) -> None:
 def _reset_analysis_usage_tables(db_session: Session):
     _clear_analysis_usage_rows(db_session)
     yield
-    _clear_analysis_usage_rows(db_session)
 
 
 def test_run_analysis_job_records_ai_usage_event_on_success(
@@ -119,7 +118,7 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
         website_url=company.normalized_url,
         normalized_url=company.normalized_url,
         domain=company.domain,
-        status="completed",
+        state="succeeded",
         terminal_state=True,
         pipeline_run_id=pipeline_run.id,
         pages_fetched_count=1,
@@ -176,7 +175,7 @@ def test_run_analysis_job_records_ai_usage_event_on_success(
     assert usage.pipeline_run_id == pipeline_run.id
     assert usage.campaign_id == campaign.id
     assert usage.company_id == company.id
-    assert usage.stage == "s2_analysis"
+    assert usage.stage == "analysis"
     assert usage.attempt_number == 1
     assert usage.provider == "openrouter"
     assert usage.model == "openai/gpt-4o-mini"
