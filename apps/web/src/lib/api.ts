@@ -52,8 +52,9 @@ import type {
   ScrapeFilter,
   ScrapeJobCreate,
   ScrapeJobRead,
-  ScrapeRules,
   ScrapePageContentRead,
+  ScrapeRules,
+  ScrapeRunRead,
   StatsResponse,
   TitleMatchRuleCreate,
   TitleMatchRuleRead,
@@ -276,8 +277,8 @@ export async function scrapeSelectedCompanies(
   campaignId: string,
   companyIds: string[],
   options: { scrapeRules?: ScrapeRules; uploadId?: string; idempotencyKey?: string } = {},
-): Promise<CompanyScrapeResult> {
-  return request<CompanyScrapeResult>('/v1/companies/scrape-selected', {
+): Promise<ScrapeRunRead> {
+  return request<ScrapeRunRead>('/v1/companies/scrape-selected', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -290,6 +291,10 @@ export async function scrapeSelectedCompanies(
       upload_id: options.uploadId,
     }),
   })
+}
+
+export async function getScrapeRun(runId: string): Promise<ScrapeRunRead> {
+  return request<ScrapeRunRead>(`/v1/scrape-runs/${runId}`)
 }
 
 export async function scrapeAllCompanies(
@@ -385,11 +390,29 @@ export async function createRuns(payload: RunCreateRequest): Promise<RunCreateRe
     company_ids: payload.company_ids,
     analysis_prompt_snapshot: { prompt_id: payload.prompt_id },
   })
+  const totalJobs = Math.max(0, response.queued_count + response.failed_count)
+  const status =
+    response.queued_count > 0 ? 'running' : response.failed_count > 0 ? 'failed' : 'completed'
+  const createdAt = new Date().toISOString()
   return {
     requested_count: response.requested_count,
     queued_count: response.queued_count,
     skipped_company_ids: [],
-    runs: [],
+    runs: [{
+      id: response.pipeline_run_id,
+      upload_id: '',
+      prompt_id: payload.prompt_id,
+      prompt_name: 'Manual S2',
+      general_model: payload.general_model ?? '',
+      classify_model: payload.classify_model ?? '',
+      status,
+      total_jobs: totalJobs,
+      completed_jobs: 0,
+      failed_jobs: response.failed_count,
+      created_at: createdAt,
+      started_at: status === 'running' ? createdAt : null,
+      finished_at: status === 'completed' || status === 'failed' ? createdAt : null,
+    }],
   }
 }
 

@@ -126,3 +126,15 @@ class JobEnqueueResult(BaseModel):
     message: str
     idempotency_key: str | None = None
     idempotency_replayed: bool = False
+
+
+class ScrapeRunRead(UTCReadModel):
+    id: UUID
+    status: str
+    requested_count: int
+    queued_count: int
+    skipped_count: int
+    failed_count: int
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None

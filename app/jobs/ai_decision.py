@@ -1,14 +1,18 @@
-"""Procrastinate task stub: AI classification. Body implemented in S2 phase."""
+"""Procrastinate task: execute one AnalysisJob."""
 from __future__ import annotations
 
-import logging
+from uuid import UUID
 
+from app.db.session import get_engine
 from app.jobs._priority import BULK_PIPELINE  # noqa: F401
 from app.queue import app
+from app.services.analysis_service import AnalysisService
 
-logger = logging.getLogger(__name__)
-
+_service = AnalysisService()
 
 @app.task(name="run_ai_decision", queue="ai_decision")
 async def run_ai_decision(analysis_job_id: str) -> None:
-    logger.warning("run_ai_decision: not yet implemented (job %s)", analysis_job_id)
+    _service.run_analysis_job(
+        engine=get_engine(),
+        analysis_job_id=UUID(analysis_job_id),
+    )

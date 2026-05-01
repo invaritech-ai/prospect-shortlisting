@@ -1,10 +1,11 @@
 """API schema modules."""
 
 from app.api.schemas.scrape import (
-    JobEnqueueResult,
     JobActionResult,
+    JobEnqueueResult,
     ScrapeJobCreate,
     ScrapeJobRead,
+    ScrapeRunRead,
     ScrapePageContentRead,
     ScrapePageRead,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "ScrapePageContentRead",
     "JobActionResult",
     "JobEnqueueResult",
+    "ScrapeRunRead",
     "PromptCreate",
     "PromptRead",
     "PromptUpdate",

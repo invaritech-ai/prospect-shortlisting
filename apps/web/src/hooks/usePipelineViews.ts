@@ -882,7 +882,9 @@ export function usePipelineViews(
       const result = await scrapeSelectedCompanies(selectedCampaignId, pipelineSelectedIds, {
         scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
       })
-      setNotice(`Queued ${result.queued_count} scrape job${result.queued_count === 1 ? '' : 's'}.`)
+      setNotice(
+        `Accepted ${result.requested_count.toLocaleString()} compan${result.requested_count === 1 ? 'y' : 'ies'} for scraping.`,
+      )
       setPipelineSelectedIds([])
     } catch (err) {
       setError(parseApiError(err))
@@ -1393,7 +1395,9 @@ export function usePipelineViews(
         const result = await scrapeSelectedCompanies(selectedCampaignId, [company.id], {
           scrapeRules: selectedScrapePrompt?.scrape_rules_structured ?? undefined,
         })
-        setNotice(`Resumed S1 for ${company.domain}. Queued ${result.queued_count} scrape job(s).`)
+        setNotice(
+          `Resumed S1 for ${company.domain}. Accepted ${result.requested_count} compan${result.requested_count === 1 ? 'y' : 'ies'} for scraping.`,
+        )
         return
       }
       if (resumeStage === 'S2') {

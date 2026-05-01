@@ -3,12 +3,13 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.routes.campaigns import create_campaign
 from app.api.schemas.campaign import CampaignCreate
 from app.api.schemas.scrape import ScrapePageContentRead
 from app.api.schemas.upload import CompanyScrapeRequest, CompanyScrapeResult
+from app.models.scrape import ScrapeRunItem
 from app.models import Company, ScrapePage, Upload
 from app.models.pipeline import CompanyPipelineStage
 
@@ -92,11 +93,12 @@ def test_scrape_page_content_read_contains_page_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scrape_selected_respects_available_queue_slots(
+async def test_scrape_selected_accepts_run_and_defers_single_dispatch(
     sqlite_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.routes import companies as companies_route
+    from app.jobs import scrape as scrape_mod
 
     campaign = create_campaign(payload=CampaignCreate(name="Scrape Queue"), session=sqlite_session)
     upload = _seed_upload(sqlite_session, campaign_id=campaign.id)
@@ -104,15 +106,12 @@ async def test_scrape_selected_respects_available_queue_slots(
     second = _seed_company(sqlite_session, upload_id=upload.id, domain="beta.example")
     sqlite_session.commit()
 
-    deferred: list[dict] = []
+    dispatched: list[dict] = []
 
-    async def fake_defer_async(**kwargs):
-        deferred.append(kwargs)
+    async def fake_dispatch_defer(*_a, **kw):
+        dispatched.append(kw)
 
-    monkeypatch.setattr(companies_route, "get_engine", lambda: sqlite_session.get_bind())
-    monkeypatch.setattr(companies_route, "available_slots", lambda _engine, _queue, _requested: 1)
-    monkeypatch.setattr(companies_route, "current_depth", lambda _engine, _queue: 299)
-    monkeypatch.setattr(companies_route.scrape_website, "defer_async", fake_defer_async)
+    monkeypatch.setattr(scrape_mod.dispatch_scrape_run, "defer_async", fake_dispatch_defer)
 
     result = await companies_route.scrape_selected_companies(
         payload=CompanyScrapeRequest(
@@ -124,8 +123,30 @@ async def test_scrape_selected_respects_available_queue_slots(
     )
 
     assert result.requested_count == 2
-    assert result.queued_count == 1
-    assert result.skipped_count == 1
-    assert result.queue_depth == 299
-    assert result.failed_company_ids == [second.id]
-    assert deferred[0]["priority"] == 75
+    assert result.status == "accepted"
+    assert len(dispatched) == 1
+    items = list(
+        sqlite_session.exec(
+            select(ScrapeRunItem).where(ScrapeRunItem.run_id == result.id),
+        ),
+    )
+    assert len(items) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_ai_decision_calls_analysis_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.jobs.ai_decision import run_ai_decision
+
+    calls: list[str] = []
+
+    class _DummyService:
+        def run_analysis_job(self, *, engine, analysis_job_id):  # noqa: ANN001
+            calls.append(str(analysis_job_id))
+            assert engine is not None
+            return None
+
+    monkeypatch.setattr("app.jobs.ai_decision._service", _DummyService())
+
+    await run_ai_decision("11111111-1111-1111-1111-111111111111")
+
+    assert calls == ["11111111-1111-1111-1111-111111111111"]

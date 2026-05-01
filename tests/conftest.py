@@ -31,6 +31,8 @@ from app.models import (  # noqa: F401
     Prompt,
     ScrapeJob,
     ScrapePrompt,
+    ScrapeRun,
+    ScrapeRunItem,
     ScrapePage,
     TitleMatchRule,
     Upload,
@@ -42,7 +44,7 @@ from app.models import (  # noqa: F401
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def sqlite_engine():
     """In-memory SQLite engine with all tables created from SQLModel metadata."""
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})

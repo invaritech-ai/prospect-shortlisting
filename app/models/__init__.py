@@ -1,4 +1,11 @@
-from app.models.scrape import ScrapeJob, ScrapePage
+from app.models.scrape import (
+    ScrapeJob,
+    ScrapePage,
+    ScrapeRun,
+    ScrapeRunItem,
+    ScrapeRunItemStatus,
+    ScrapeRunStatus,
+)
 from app.models.settings import IntegrationProvider, IntegrationSecret
 from app.models.pipeline import (
     AiUsageEvent,
@@ -30,6 +37,10 @@ from app.models.pipeline import (
 __all__ = [
     "ScrapeJob",
     "ScrapePage",
+    "ScrapeRun",
+    "ScrapeRunItem",
+    "ScrapeRunStatus",
+    "ScrapeRunItemStatus",
     "Campaign",
     "PipelineRun",
     "PipelineRunEvent",

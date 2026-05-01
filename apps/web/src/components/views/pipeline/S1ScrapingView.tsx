@@ -1,4 +1,5 @@
 import type { CompanyCounts, CompanyList, CompanyListItem, ScrapePromptRead, ScrapeSubFilter, StatsResponse } from '../../../lib/types'
+import { getDisplayedScrapeFailedCount } from '../../../lib/scrapeCounts'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
 import { Badge } from '../../ui/Badge'
@@ -145,9 +146,11 @@ export function S1ScrapingView({
     scrape_done: scrape.succeeded ?? 0,
     scrape_cancelled: 0,
     scrape_permanent_fail: scrape.site_unavailable ?? 0,
-    scrape_soft_fail: scrape.failed ?? 0,
+    scrape_soft_fail: Math.max(0, (scrape.failed ?? 0) - (scrape.site_unavailable ?? 0)),
+    scrape_failed: scrape.failed ?? 0,
   } : null
   const summaryCounts = counts ?? fallbackCounts
+  const failedCount = getDisplayedScrapeFailedCount(summaryCounts)
   const hasActivity = (scrape?.running ?? 0) > 0 || (scrape?.queued ?? 0) > 0
 
   return (
@@ -191,13 +194,13 @@ export function S1ScrapingView({
               </button>
             </div>
           </div>
-          {scrape && (hasActivity || (summaryCounts?.scrape_done ?? 0) > 0 || (summaryCounts?.scrape_soft_fail ?? 0) + (summaryCounts?.scrape_permanent_fail ?? 0) > 0) && (
+          {scrape && (hasActivity || (summaryCounts?.scrape_done ?? 0) > 0 || failedCount > 0) && (
             <div className="mt-2 flex items-center gap-3 border-t border-(--oc-border) pt-1.5 text-xs text-(--oc-muted)">
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${hasActivity ? 'animate-pulse bg-amber-400' : 'bg-(--oc-border)'}`} />
               <span className="flex items-center gap-1">
                 {(summaryCounts?.scrape_in_progress ?? 0) > 0 && <span className="text-amber-600"><strong>{summaryCounts!.scrape_in_progress.toLocaleString()}</strong> in progress ·</span>}
                 {(summaryCounts?.scrape_done ?? 0) > 0 && <span className="text-emerald-600"><strong>{summaryCounts!.scrape_done.toLocaleString()}</strong> done</span>}
-                {(summaryCounts?.scrape_soft_fail ?? 0) + (summaryCounts?.scrape_permanent_fail ?? 0) > 0 && <span className="text-red-500"> · <strong>{((summaryCounts?.scrape_soft_fail ?? 0) + (summaryCounts?.scrape_permanent_fail ?? 0)).toLocaleString()}</strong> failed</span>}
+                {failedCount > 0 && <span className="text-red-500"> · <strong>{failedCount.toLocaleString()}</strong> failed</span>}
                 {scrape.stuck_count > 0 && (
                   <button type="button" onClick={onResetStuck} disabled={isLoading || isResettingStuck}
                     className="ml-2 text-rose-500 underline underline-offset-2 transition hover:text-rose-700 disabled:opacity-50">

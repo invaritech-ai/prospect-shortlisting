@@ -8,11 +8,11 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, delete
 
 from app.api.routes.campaigns import create_campaign
-from app.api.routes.companies import get_letter_counts, list_companies
+from app.api.routes.companies import get_company_ids, get_letter_counts, list_companies
 from app.api.routes.stats import get_company_counts
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, CompanyFeedback, ContactFetchJob, Contact, ScrapeJob, Upload
-from app.models.pipeline import CompanyPipelineStage, ContactFetchJobState, utcnow
+from app.models import AnalysisJob, ClassificationResult, Company, CompanyFeedback, ContactFetchJob, Contact, PipelineRun, Prompt, ScrapeJob, Upload
+from app.models.pipeline import AnalysisJobState, CompanyPipelineStage, ContactFetchJobState, PipelineRunStatus, PredictedLabel, utcnow
 
 
 def _list_companies(session: Session, *, campaign_id, **overrides):
@@ -39,6 +39,23 @@ def _list_companies(session: Session, *, campaign_id, **overrides):
 
 def _get_company_counts(session: Session, *, campaign_id, upload_id=None):
     return get_company_counts(session=session, campaign_id=campaign_id, upload_id=upload_id)
+
+
+def _get_company_ids(session: Session, *, campaign_id, **overrides):
+    params = {
+        "session": session,
+        "campaign_id": campaign_id,
+        "decision_filter": "all",
+        "scrape_filter": "all",
+        "letter": None,
+        "letters": None,
+        "stage_filter": "all",
+        "status_filter": "all",
+        "search": None,
+        "upload_id": None,
+    }
+    params.update(overrides)
+    return get_company_ids(**params)
 
 
 def _seed_upload(session: Session, filename: str, *, campaign_id) -> Upload:
@@ -121,6 +138,31 @@ def test_list_companies_search_is_server_filtered(sqlite_session: Session) -> No
         assert response.total == 2
         assert {item.domain for item in response.items} == {"alpha-search.example", "beta-search.example"}
 
+    finally:
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_company_ids_honor_search_and_multi_letter_filters(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Select All Matching Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "select-all.csv", campaign_id=campaign.id)
+    try:
+        wolf = _seed_company(sqlite_session, upload_id=upload.id, domain="wolf-match.example")
+        xeno = _seed_company(sqlite_session, upload_id=upload.id, domain="xeno-match.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="apple-match.example")
+        _seed_company(sqlite_session, upload_id=upload.id, domain="wolf-other.example")
+        sqlite_session.commit()
+
+        response = _get_company_ids(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            letters="w,x",
+            search="match",
+        )
+
+        assert response.total == 2
+        assert set(response.ids) == {wolf.id, xeno.id}
     finally:
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
@@ -494,6 +536,92 @@ def test_company_counts_stage_buckets_are_exact(sqlite_session: Session) -> None
         assert counts.classified == 1
         assert counts.contact_ready == 1
     finally:
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
+        sqlite_session.commit()
+
+
+def test_list_companies_review_job_id_tracks_displayed_decision(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Review Detail Scope"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "review-detail.csv", campaign_id=campaign.id)
+    try:
+        company = _seed_company(sqlite_session, upload_id=upload.id, domain="review-detail.example")
+        prompt = Prompt(name="Prompt", prompt_text="Classify {context}", enabled=True)
+        sqlite_session.add(prompt)
+        sqlite_session.flush()
+
+        prior_run = PipelineRun(
+            campaign_id=campaign.id,
+            state=PipelineRunStatus.SUCCEEDED,
+            company_ids_snapshot=[str(company.id)],
+        )
+        rerun = PipelineRun(
+            campaign_id=campaign.id,
+            state=PipelineRunStatus.RUNNING,
+            company_ids_snapshot=[str(company.id)],
+        )
+        sqlite_session.add_all([prior_run, rerun])
+        sqlite_session.flush()
+
+        completed_job = AnalysisJob(
+            pipeline_run_id=prior_run.id,
+            upload_id=upload.id,
+            company_id=company.id,
+            crawl_artifact_id=uuid4(),
+            prompt_id=prompt.id,
+            general_model="gpt-4o",
+            classify_model="gpt-4o",
+            state=AnalysisJobState.SUCCEEDED,
+            terminal_state=True,
+            prompt_hash="hash-complete",
+        )
+        queued_job = AnalysisJob(
+            pipeline_run_id=rerun.id,
+            upload_id=upload.id,
+            company_id=company.id,
+            crawl_artifact_id=uuid4(),
+            prompt_id=prompt.id,
+            general_model="gpt-4o",
+            classify_model="gpt-4o",
+            state=AnalysisJobState.QUEUED,
+            terminal_state=False,
+            prompt_hash="hash-queued",
+        )
+        sqlite_session.add_all([completed_job, queued_job])
+        sqlite_session.flush()
+
+        sqlite_session.add(
+            ClassificationResult(
+                analysis_job_id=completed_job.id,
+                predicted_label=PredictedLabel.CRAP,
+                confidence=0.91,
+                reasoning_json={"signals": {"fit": False}},
+                evidence_json={"evidence": ["not relevant"]},
+                input_hash="input-1",
+                from_cache=False,
+            )
+        )
+        sqlite_session.commit()
+
+        response = _list_companies(
+            session=sqlite_session,
+            campaign_id=campaign.id,
+            upload_id=upload.id,
+            include_total=True,
+            limit=25,
+            offset=0,
+        )
+
+        item = next(item for item in response.items if item.domain == company.domain)
+        assert item.latest_decision == "crap"
+        assert item.latest_analysis_job_id == completed_job.id
+        assert item.latest_analysis_pipeline_run_id == prior_run.id
+        assert item.latest_analysis_status == "queued"
+    finally:
+        sqlite_session.exec(delete(ClassificationResult))
+        sqlite_session.exec(delete(AnalysisJob))
+        sqlite_session.exec(delete(PipelineRun))
+        sqlite_session.exec(delete(Prompt))
         sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
         sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()

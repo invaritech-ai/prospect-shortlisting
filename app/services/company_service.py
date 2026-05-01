@@ -181,6 +181,8 @@ def latest_classification_subquery() -> Any:
     return (
         select(  # type: ignore[call-overload]
             col(AnalysisJob.company_id).label("company_id"),
+            col(AnalysisJob.id).label("analysis_job_id"),
+            col(AnalysisJob.pipeline_run_id).label("pipeline_run_id"),
             cast(col(ClassificationResult.predicted_label), String()).label("predicted_label"),
             col(ClassificationResult.confidence).label("confidence"),
         )
@@ -410,8 +412,10 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             col(Company.pipeline_stage), col(Company.created_at),
             ctx.latest_decision_text, ctx.latest_confidence,
             ctx.latest_scrape.c.job_id, ctx.latest_scrape.c.state, ctx.latest_scrape.c.terminal_state,
-            ctx.latest_analysis.c.pipeline_run_id, ctx.latest_analysis.c.state,
-            ctx.latest_analysis.c.terminal_state, ctx.latest_analysis.c.analysis_job_id,
+            func.coalesce(ctx.latest_classification.c.pipeline_run_id, ctx.latest_analysis.c.pipeline_run_id),
+            ctx.latest_analysis.c.state,
+            ctx.latest_analysis.c.terminal_state,
+            func.coalesce(ctx.latest_classification.c.analysis_job_id, ctx.latest_analysis.c.analysis_job_id),
             col(CompanyFeedback.thumbs), col(CompanyFeedback.comment), col(CompanyFeedback.manual_label),
             ctx.latest_scrape.c.last_error_code,
             ctx.latest_scrape.c.failure_reason,

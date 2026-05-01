@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Optional
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
+from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
 from app.models.pipeline import utc_datetime_field
@@ -68,6 +70,51 @@ class ScrapeJob(SQLModel, table=True):
     updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
     started_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
     finished_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
+
+
+class ScrapeRunStatus(StrEnum):
+    ACCEPTED = "accepted"
+    DISPATCHING = "dispatching"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ScrapeRunItemStatus(StrEnum):
+    PENDING     = "pending"
+    JOB_CREATED = "job_created"   # ScrapeJob row exists; defer not yet attempted
+    QUEUED      = "queued"
+    SKIPPED     = "skipped"
+    FAILED      = "failed"
+
+
+class ScrapeRun(SQLModel, table=True):
+    __tablename__ = "scrape_runs"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    campaign_id: UUID = Field(foreign_key="campaigns.id", index=True)
+    status: str = Field(default=ScrapeRunStatus.ACCEPTED, index=True)
+    requested_count: int = Field(default=0)
+    queued_count: int = Field(default=0)
+    skipped_count: int = Field(default=0)
+    failed_count: int = Field(default=0)
+    scrape_rules: dict | None = Field(default=None, sa_column=Column(JSON))
+    error_message: str | None = Field(default=None)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow)
+    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+
+
+class ScrapeRunItem(SQLModel, table=True):
+    __tablename__ = "scrape_run_items"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    run_id: UUID = Field(foreign_key="scrape_runs.id", index=True)
+    company_id: UUID = Field(foreign_key="companies.id", index=True)
+    scrape_job_id: UUID | None = Field(default=None, foreign_key="scrapejob.id")
+    status: str = Field(default=ScrapeRunItemStatus.PENDING, index=True)
+    error_code: str | None = Field(default=None)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow)
 
 
 class ScrapePage(SQLModel, table=True):

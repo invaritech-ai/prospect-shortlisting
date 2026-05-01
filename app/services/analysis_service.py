@@ -320,7 +320,6 @@ class AnalysisService:
             recompute_company_stages(session, company_ids=[analysis_job.company_id])
             session.commit()
             session.refresh(analysis_job)
-            enqueue_s3_for_analysis_success(engine=engine, analysis_job_id=analysis_job.id)
             return analysis_job
 
     def _fail_job(

@@ -76,26 +76,28 @@ cd apps/web && npm run dev
 
 ### 6. Start the Procrastinate workers (in separate terminals)
 
+Use the restart wrapper so a transient DB blip doesn't leave the worker permanently dead:
+
 **S1 — Scraping:**
 ```bash
-PS_WORKER_PROCESS=1 uv run python -m procrastinate --app=app.queue.app worker -q scrape -c 2
+./scripts/run_worker.sh scrape 2
 ```
-
-The scrape worker uses static fetches first, then curl_cffi impersonation, then local Scrapling browser fallback. The browser fallback is local-only; `PS_BROWSERLESS_URL` is not used by the scraper.
 
 **S2 — AI Decision:**
 ```bash
-PS_WORKER_PROCESS=1 uv run python -m procrastinate --app=app.queue.app worker -q ai_decision -c 2
+./scripts/run_worker.sh ai_decision 2
 ```
 
 **S3/S4/S5 — Provider (contact fetch, reveal, validation):**
 ```bash
-PS_WORKER_PROCESS=1 uv run python -m procrastinate --app=app.queue.app worker \
-  -q contact_fetch,email_reveal,validation -c 5
+./scripts/run_worker.sh "contact_fetch,email_reveal,validation" 5
 ```
 
-`PS_WORKER_PROCESS=1` switches the DB pool to NullPool (one connection per task, no persistent pool).
-`PROCRASTINATE_CONNECTION_STRING` tells the Procrastinate CLI which database to connect to.
+`run_worker.sh` is a thin `while true` loop that restarts the process after a 5 s delay on any exit. In production the same role is played by Docker's `restart: unless-stopped` policy.
+
+The scrape worker uses static fetches first, then curl_cffi impersonation, then local Scrapling browser fallback. The browser fallback is local-only; `PS_BROWSERLESS_URL` is not used by the scraper.
+
+`PS_WORKER_PROCESS=1` (set automatically by the wrapper) switches the **SQLAlchemy** pool to NullPool so each task opens and closes its own connection, avoiding pool contention between concurrent workers. The Procrastinate connector pool is separate and is tuned in `app/queue.py`.
 
 You only need to run the workers for the pipeline stages you are actively testing. The API works independently of the workers for all read/write endpoints.
 
@@ -195,4 +197,4 @@ uv run pytest tests/test_procrastinate_queue_architecture.py -q
 | `SNOV_CLIENT_ID` / `SNOV_CLIENT_SECRET` | For S3/S4 | Contact discovery + email reveal |
 | `APOLLO_API_KEY` | For S3 | Contact discovery |
 | `ZEROBOUNCE_API_KEY` | For S5 | Email validation |
-| `PS_WORKER_PROCESS` | Workers only | Set to `1` to activate NullPool |
+| `PS_WORKER_PROCESS` | Workers only | Set to `1` to switch SQLAlchemy to NullPool (set automatically by `run_worker.sh`) |

@@ -18,8 +18,9 @@ _psycopg_dsn = settings.database_url.replace("postgresql+psycopg://", "postgresq
 
 _connector = PsycopgConnector(
     conninfo=_psycopg_dsn,
-    min_size=0,
-    max_size=10,
+    min_size=1,   # one warm connection; avoids fully cold starts on worker boot
+    max_size=4,   # concurrency + headroom; tune up if worker -c > 3
+    timeout=60,   # remote DB takes ~3 s per connection; 30 s default is too tight
     # kwargs is a named pool param (not **kwargs); defaults to None which causes
     # **pool.kwargs to crash in listen_notify. Pass explicit connection-level args.
     kwargs={

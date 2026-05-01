@@ -27,6 +27,8 @@ from app.models import (  # noqa: F401
     Prompt,
     ScrapeJob,
     ScrapePage,
+    ScrapeRun,
+    ScrapeRunItem,
     TitleMatchRule,
     Upload,
 )
@@ -58,6 +60,8 @@ PIPELINE_TABLES = {
     "job_events",
     "scrapejob",
     "scrapepage",
+    "scrape_runs",
+    "scrape_run_items",
     "contact_fetch_batches",
     "contact_fetch_jobs",
     "contact_fetch_runtime_controls",

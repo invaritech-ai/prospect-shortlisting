@@ -143,8 +143,22 @@ export type CompanyScrapeResult = {
   queued_count: number
   queued_job_ids: string[]
   failed_company_ids: string[]
+  skipped_count?: number
+  queue_depth?: number
   idempotency_key?: string | null
   idempotency_replayed?: boolean
+}
+
+export type ScrapeRunRead = {
+  id: string
+  status: string
+  requested_count: number
+  queued_count: number
+  skipped_count: number
+  failed_count: number
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
 }
 
 export type ScrapeJobRead = {

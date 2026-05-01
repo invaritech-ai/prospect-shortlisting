@@ -114,7 +114,17 @@ test('scrapeSelectedCompanies sends idempotency header and scrape_rules body', a
   mockFetch((_url, init) => {
     sentHeaders = new Headers(init?.headers as HeadersInit)
     sentBody = String(init?.body ?? '')
-    return { requested_count: 1, queued_count: 1, queued_job_ids: ['j1'], failed_company_ids: [] }
+    return {
+      id: 'run-test-1',
+      status: 'accepted',
+      requested_count: 1,
+      queued_count: 0,
+      skipped_count: 0,
+      failed_count: 0,
+      created_at: '2026-05-01T00:00:00.000000+00:00',
+      started_at: null,
+      finished_at: null,
+    }
   })
 
   await scrapeSelectedCompanies('campaign-1', ['c1'], {
@@ -401,6 +411,30 @@ test('startPipelineRun posts campaign-scoped payload', async () => {
   assert.match(sentBody, /"campaign_id":"camp-1"/)
   assert.match(sentBody, /"scrape_rules_snapshot":\{"page_kinds":\["home","contact"\]\}/)
   assert.match(sentBody, /"analysis_prompt_snapshot":\{"prompt_id":"p-1","prompt_text":"Label ICP fit"\}/)
+})
+
+test('createRuns maps pipeline run response into run result', async () => {
+  mockFetch(() => ({
+    pipeline_run_id: 'run-1',
+    requested_count: 3,
+    reused_count: 0,
+    queued_count: 2,
+    skipped_count: 1,
+    failed_count: 0,
+  }))
+
+  const result = await createRuns({
+    campaign_id: 'camp-1',
+    prompt_id: 'prompt-1',
+    scope: 'selected',
+    company_ids: ['c1', 'c2', 'c3'],
+  })
+
+  assert.equal(result.requested_count, 3)
+  assert.equal(result.queued_count, 2)
+  assert.deepEqual(result.skipped_company_ids, [])
+  assert.equal(result.runs.length, 1)
+  assert.equal(result.runs[0]?.id, 'run-1')
 })
 
 test('getPipelineRunProgress requests run progress endpoint', async () => {

@@ -7,7 +7,9 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
+from app.api.schemas.scrape import ScrapeRunRead
 from app.api.schemas.upload import (
+    CompanyIdsResult,
     CompanyList,
     CompanyListItem,
     CompanyScrapeRequest,
@@ -15,10 +17,12 @@ from app.api.schemas.upload import (
     LetterCounts,
 )
 from app.db.session import get_engine, get_session
-from app.jobs._priority import BULK_PIPELINE, BULK_USER
-from app.jobs.scrape import scrape_website
+from app.jobs._defaults import DEFAULT_CLASSIFY_MODEL, DEFAULT_GENERAL_MODEL
+from app.jobs._priority import BULK_PIPELINE
+from app.jobs.scrape import defer_scrape_website_bulk, dispatch_scrape_run
 from app.models import Company, CompanyFeedback, ScrapeJob, Upload
 from app.models.pipeline import utcnow
+from app.models.scrape import ScrapeRun, ScrapeRunItem
 from app.services.queue_guard import available_slots, current_depth
 from app.services.company_service import (
     CompanyFilters,
@@ -38,8 +42,6 @@ from app.services.scrape_service import (
 
 router = APIRouter(prefix="/v1", tags=["companies"])
 _scrape_manager = ScrapeJobManager()
-_DEFAULT_GENERAL_MODEL = "openai/gpt-4.1-nano"
-_DEFAULT_CLASSIFY_MODEL = "inception/mercury-2"
 
 
 @router.get("/companies", response_model=CompanyList)
@@ -162,58 +164,99 @@ def get_letter_counts(
     return LetterCounts(counts=counts)
 
 
-@router.post("/companies/scrape-selected", response_model=CompanyScrapeResult)
+@router.get("/companies/ids", response_model=CompanyIdsResult)
+def get_company_ids(
+    session: Session = Depends(get_session),
+    campaign_id: UUID = Query(...),
+    decision_filter: str = Query(default="all"),
+    scrape_filter: str = Query(default="all"),
+    letter: str | None = Query(default=None, min_length=1, max_length=1),
+    letters: str | None = Query(default=None),
+    stage_filter: str = Query(default="all"),
+    status_filter: str = Query(default="all"),
+    search: str | None = Query(default=None, max_length=200),
+    upload_id: UUID | None = Query(default=None),
+) -> CompanyIdsResult:
+    filters = validate_company_filters(
+        decision_filter=decision_filter,
+        scrape_filter=scrape_filter,
+        stage_filter=stage_filter,
+        status_filter=status_filter,
+        search=search,
+        letter=letter,
+        letters=letters,
+        upload_id=upload_id,
+    )
+    validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=upload_id)
+
+    ctx = build_company_query_context()
+    stmt = (
+        select(col(Company.id))
+        .select_from(Company)
+        .join(Upload, col(Upload.id) == col(Company.upload_id))
+        .outerjoin(ctx.latest_classification, ctx.latest_classification.c.company_id == col(Company.id))
+        .outerjoin(ctx.latest_scrape, ctx.latest_scrape.c.normalized_url == col(Company.normalized_url))
+        .outerjoin(ctx.latest_analysis, ctx.latest_analysis.c.company_id == col(Company.id))
+        .outerjoin(ctx.latest_contact_fetch, ctx.latest_contact_fetch.c.company_id == col(Company.id))
+        .outerjoin(CompanyFeedback, col(CompanyFeedback.company_id) == col(Company.id))
+        .where(col(Upload.campaign_id) == campaign_id)
+    )
+    stmt = apply_company_filters(stmt, filters, ctx).order_by(col(Company.domain).asc())
+    ids = list(session.exec(stmt))
+    return CompanyIdsResult(ids=ids, total=len(ids))
+
+
+@router.post("/companies/scrape-selected", response_model=ScrapeRunRead)
 async def scrape_selected_companies(
     payload: CompanyScrapeRequest,
     session: Session = Depends(get_session),
-) -> CompanyScrapeResult:
+) -> ScrapeRunRead:
     validate_campaign_upload_scope(
         session=session,
         campaign_id=payload.campaign_id,
         upload_id=payload.upload_id,
     )
-    engine = get_engine()
     company_ids = payload.company_ids
-    queue_depth = current_depth(engine, "scrape")
-    can_enqueue = available_slots(engine, "scrape", len(company_ids))
-    to_enqueue = company_ids[:can_enqueue]
-    skipped_capacity = company_ids[can_enqueue:]
+    scrape_rules_kw = payload.scrape_rules.model_dump() if payload.scrape_rules else None
 
-    queued_job_ids: list[UUID] = []
-    failed_company_ids: list[UUID] = list(skipped_capacity)
-
-    for company_id in to_enqueue:
-        company = session.get(Company, company_id)
-        if company is None:
-            failed_company_ids.append(company_id)
-            continue
-        try:
-            job = _scrape_manager.create_job(
-                session=session,
-                website_url=company.normalized_url,
-                js_fallback=True,
-                include_sitemap=True,
-                general_model=_DEFAULT_GENERAL_MODEL,
-                classify_model=_DEFAULT_CLASSIFY_MODEL,
-            )
-            session.commit()
-            await scrape_website.configure(priority=BULK_USER).defer_async(
-                job_id=str(job.id),
-                scrape_rules=payload.scrape_rules.model_dump() if payload.scrape_rules else None,
-            )
-            queued_job_ids.append(job.id)
-        except (ScrapeJobAlreadyRunningError, CircuitBreakerOpenError, ValueError):
-            session.rollback()
-            failed_company_ids.append(company_id)
-
-    return CompanyScrapeResult(
-        requested_count=len(company_ids),
-        queued_count=len(queued_job_ids),
-        skipped_count=len(failed_company_ids),
-        queue_depth=queue_depth,
-        queued_job_ids=queued_job_ids,
-        failed_company_ids=failed_company_ids,
+    # Validate all submitted IDs belong to this campaign (and upload if scoped).
+    # 400 rather than silent drop: the caller must know if their selection was stale.
+    scope_q = (
+        select(col(Company.id))
+        .join(Upload, col(Upload.id) == col(Company.upload_id))
+        .where(col(Upload.campaign_id) == payload.campaign_id)
     )
+    if payload.upload_id is not None:
+        scope_q = scope_q.where(col(Upload.id) == payload.upload_id)
+    authorized = {row for row in session.exec(scope_q)}
+    invalid = [cid for cid in company_ids if cid not in authorized]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "company_ids_out_of_scope",
+                "invalid_ids": [str(i) for i in invalid],
+            },
+        )
+
+    run = ScrapeRun(
+        campaign_id=payload.campaign_id,
+        requested_count=len(company_ids),
+        scrape_rules=scrape_rules_kw,
+    )
+    session.add(run)
+
+    items = [
+        ScrapeRunItem(run_id=run.id, company_id=cid)
+        for cid in company_ids
+    ]
+    session.add_all(items)
+    session.commit()
+    session.refresh(run)
+
+    await dispatch_scrape_run.defer_async(run_id=str(run.id))
+
+    return ScrapeRunRead.model_validate(run, from_attributes=True)
 
 
 @router.post("/companies/scrape-all", response_model=CompanyScrapeResult)
@@ -221,7 +264,10 @@ async def scrape_all_companies(
     campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> CompanyScrapeResult:
-    """Queue scrape jobs for every company in the campaign with no active scrape."""
+    """Queue scrape jobs for every company in the campaign with no active scrape.
+
+    TODO: migrate to ScrapeRun + dispatch_scrape_run pattern (same as scrape-selected).
+    """
     validate_campaign_upload_scope(session=session, campaign_id=campaign_id, upload_id=None)
     engine = get_engine()
     queue_depth = current_depth(engine, "scrape")
@@ -248,24 +294,27 @@ async def scrape_all_companies(
     queued_job_ids: list[UUID] = []
     failed_company_ids: list[UUID] = []
 
-    for company in to_enqueue:
-        try:
-            job = _scrape_manager.create_job(
-                session=session,
-                website_url=company.normalized_url,
-                js_fallback=True,
-                include_sitemap=True,
-                general_model=_DEFAULT_GENERAL_MODEL,
-                classify_model=_DEFAULT_CLASSIFY_MODEL,
-            )
-            session.commit()
-            await scrape_website.configure(priority=BULK_PIPELINE).defer_async(
-                job_id=str(job.id),
-            )
-            queued_job_ids.append(job.id)
-        except (ScrapeJobAlreadyRunningError, CircuitBreakerOpenError, ValueError):
-            session.rollback()
-            failed_company_ids.append(company.id)
+    if to_enqueue:
+        for company in to_enqueue:
+            try:
+                with session.begin_nested():
+                    job = _scrape_manager.create_job(
+                        session=session,
+                        website_url=company.normalized_url,
+                        js_fallback=True,
+                        include_sitemap=True,
+                        general_model=DEFAULT_GENERAL_MODEL,
+                        classify_model=DEFAULT_CLASSIFY_MODEL,
+                    )
+                queued_job_ids.append(job.id)
+            except (ScrapeJobAlreadyRunningError, CircuitBreakerOpenError, ValueError):
+                failed_company_ids.append(company.id)
+        session.commit()
+        await defer_scrape_website_bulk(
+            priority=BULK_PIPELINE,
+            job_ids=queued_job_ids,
+            scrape_rules=None,
+        )
 
     failed_company_ids.extend(company.id for company in companies[can_enqueue:])
     return CompanyScrapeResult(

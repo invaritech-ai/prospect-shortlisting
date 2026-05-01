@@ -11,8 +11,8 @@ from app.api.routes.campaigns import create_campaign
 from app.api.routes.contacts import get_contact_counts, list_all_contacts
 from app.api.routes.stats import get_stats
 from app.api.schemas.campaign import CampaignCreate
-from app.models import Company, ContactFetchJob, ContactVerifyJob, Contact, Upload
-from app.models.pipeline import CompanyPipelineStage, ContactVerifyJobState, utcnow
+from app.models import AnalysisJob, Company, ContactFetchJob, ContactVerifyJob, Contact, PipelineRun, Prompt, Upload
+from app.models.pipeline import AnalysisJobState, CompanyPipelineStage, ContactVerifyJobState, PipelineRunStatus, utcnow
 
 
 def _seed_upload(session: Session, filename: str, *, campaign_id) -> Upload:
@@ -196,4 +196,70 @@ def test_stats_validation_scope_honors_upload(sqlite_session: Session) -> None:
         )))
         sqlite_session.exec(delete(Company).where(col(Company.upload_id).in_([upload_a.id, upload_b.id])))
         sqlite_session.exec(delete(Upload).where(col(Upload.id).in_([upload_a.id, upload_b.id])))
+        sqlite_session.commit()
+
+
+def test_stats_analysis_counts_one_company_once_when_requeued(sqlite_session: Session) -> None:
+    campaign = create_campaign(payload=CampaignCreate(name="Stats Analysis Requeue"), session=sqlite_session)
+    upload = _seed_upload(sqlite_session, "stats-analysis.csv", campaign_id=campaign.id)
+    try:
+        company = _seed_company(sqlite_session, upload_id=upload.id, domain="stuck-then-requeued.example")
+        prompt = Prompt(name="Prompt", prompt_text="Classify {context}", enabled=True)
+        sqlite_session.add(prompt)
+        sqlite_session.flush()
+
+        first_run = PipelineRun(
+            campaign_id=campaign.id,
+            state=PipelineRunStatus.QUEUED,
+            company_ids_snapshot=[str(company.id)],
+        )
+        second_run = PipelineRun(
+            campaign_id=campaign.id,
+            state=PipelineRunStatus.RUNNING,
+            company_ids_snapshot=[str(company.id)],
+        )
+        sqlite_session.add_all([first_run, second_run])
+        sqlite_session.flush()
+
+        sqlite_session.add_all([
+            AnalysisJob(
+                pipeline_run_id=first_run.id,
+                upload_id=upload.id,
+                company_id=company.id,
+                crawl_artifact_id=uuid4(),
+                prompt_id=prompt.id,
+                general_model="gpt-4o",
+                classify_model="gpt-4o",
+                state=AnalysisJobState.QUEUED,
+                terminal_state=False,
+                prompt_hash="hash-queued",
+            ),
+            AnalysisJob(
+                pipeline_run_id=second_run.id,
+                upload_id=upload.id,
+                company_id=company.id,
+                crawl_artifact_id=uuid4(),
+                prompt_id=prompt.id,
+                general_model="gpt-4o",
+                classify_model="gpt-4o",
+                state=AnalysisJobState.RUNNING,
+                terminal_state=False,
+                prompt_hash="hash-running",
+            ),
+        ])
+        sqlite_session.commit()
+
+        stats = get_stats(session=sqlite_session, campaign_id=campaign.id, upload_id=upload.id)
+
+        assert stats.analysis.total == 1
+        assert stats.analysis.running == 1
+        assert stats.analysis.queued == 0
+        assert stats.analysis.succeeded == 0
+        assert stats.analysis.failed == 0
+    finally:
+        sqlite_session.exec(delete(AnalysisJob))
+        sqlite_session.exec(delete(PipelineRun))
+        sqlite_session.exec(delete(Prompt))
+        sqlite_session.exec(delete(Company).where(col(Company.upload_id) == upload.id))
+        sqlite_session.exec(delete(Upload).where(col(Upload.id) == upload.id))
         sqlite_session.commit()
