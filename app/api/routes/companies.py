@@ -7,6 +7,12 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
+from app.api.schemas.contacts import (
+    BulkContactFetchRequest,
+    ContactFetchResult,
+    ContactListResponse,
+    ContactRead,
+)
 from app.api.schemas.scrape import ScrapeRunRead
 from app.api.schemas.upload import (
     CompanyIdsResult,
@@ -20,7 +26,17 @@ from app.db.session import get_engine, get_session
 from app.jobs._defaults import DEFAULT_CLASSIFY_MODEL, DEFAULT_GENERAL_MODEL
 from app.jobs._priority import BULK_PIPELINE
 from app.jobs.scrape import defer_scrape_website_bulk, dispatch_scrape_run
-from app.models import Company, CompanyFeedback, ScrapeJob, Upload
+from app.jobs.contact_fetch import fetch_contacts as _fetch_contacts_task
+from app.models import Company, CompanyFeedback, Contact, ScrapeJob, Upload
+from app.models.pipeline import ContactFetchJobState
+from app.services.contact_fetch_service import ContactFetchService
+from app.services.contact_query_service import (
+    apply_contact_filters as _apply_contact_filters,
+    campaign_upload_scope as _campaign_upload_scope,
+    contact_emails_map as _contact_emails_map,
+)
+
+_contact_fetch_service = ContactFetchService()
 from app.models.pipeline import utcnow
 from app.models.scrape import ScrapeRun, ScrapeRunItem
 from app.services.queue_guard import available_slots, current_depth
@@ -324,6 +340,150 @@ async def scrape_all_companies(
         queue_depth=queue_depth,
         queued_job_ids=queued_job_ids,
         failed_company_ids=failed_company_ids,
+    )
+
+
+@router.post("/companies/fetch-contacts-selected", response_model=ContactFetchResult)
+async def fetch_contacts_selected(
+    payload: BulkContactFetchRequest,
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    companies = list(
+        session.exec(
+            select(Company)
+            .join(Upload, col(Upload.id) == col(Company.upload_id))
+            .where(
+                col(Upload.campaign_id) == payload.campaign_id,
+                col(Company.id).in_(payload.company_ids),
+            )
+        )
+    )
+    if {c.id for c in companies} != set(payload.company_ids):
+        raise HTTPException(status_code=400, detail="One or more company_ids are outside campaign scope.")
+
+    batch, jobs, reused = _contact_fetch_service.enqueue(
+        session=session,
+        campaign_id=payload.campaign_id,
+        company_ids=payload.company_ids,
+        force_refresh=payload.force_refresh,
+    )
+    session.commit()
+    session.refresh(batch)
+
+    new_jobs = [j for j in jobs if j.contact_fetch_batch_id == batch.id]
+    defer_failed = 0
+    for job in new_jobs:
+        try:
+            await _fetch_contacts_task.defer_async(contact_fetch_job_id=str(job.id))
+        except Exception:
+            defer_failed += 1
+
+    return ContactFetchResult(
+        requested_count=len(payload.company_ids),
+        queued_count=len(new_jobs) - defer_failed,
+        already_fetching_count=reused,
+        queued_job_ids=[j.id for j in new_jobs if j.state == ContactFetchJobState.QUEUED],
+        reused_count=reused,
+        batch_id=batch.id,
+    )
+
+
+@router.post("/companies/{company_id}/fetch-contacts", response_model=ContactFetchResult)
+async def fetch_contacts_for_company(
+    company_id: UUID,
+    campaign_id: UUID = Query(...),
+    force_refresh: bool = Query(default=False),
+    session: Session = Depends(get_session),
+) -> ContactFetchResult:
+    company = session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found.")
+    upload = session.get(Upload, company.upload_id)
+    if upload is None or upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=400, detail="Company is not in the selected campaign.")
+
+    batch, jobs, reused = _contact_fetch_service.enqueue(
+        session=session,
+        campaign_id=campaign_id,
+        company_ids=[company_id],
+        force_refresh=force_refresh,
+    )
+    session.commit()
+    session.refresh(batch)
+    for j in jobs:
+        session.refresh(j)
+
+    new_jobs = [j for j in jobs if j.contact_fetch_batch_id == batch.id]
+    defer_failed = 0
+    for job in new_jobs:
+        try:
+            await _fetch_contacts_task.defer_async(contact_fetch_job_id=str(job.id))
+        except Exception:
+            defer_failed += 1
+
+    return ContactFetchResult(
+        requested_count=1,
+        queued_count=len(new_jobs) - defer_failed,
+        already_fetching_count=reused,
+        queued_job_ids=[j.id for j in new_jobs if j.state == ContactFetchJobState.QUEUED],
+        reused_count=reused,
+        batch_id=batch.id,
+    )
+
+
+@router.get("/companies/{company_id}/contacts", response_model=ContactListResponse)
+def list_company_contacts(
+    company_id: UUID,
+    campaign_id: UUID = Query(...),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    title_match: bool | None = Query(default=None),
+    verification_status: str | None = Query(default=None),
+    stage_filter: str = Query(default="all"),
+    session: Session = Depends(get_session),
+) -> ContactListResponse:
+    from sqlalchemy import func as _func
+
+    company = session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found.")
+    upload = session.get(Upload, company.upload_id)
+    if upload is None or upload.campaign_id != campaign_id:
+        raise HTTPException(status_code=400, detail="Company is not in the selected campaign.")
+
+    q = select(Contact, Company.domain).join(Company, col(Company.id) == col(Contact.company_id))
+    q = q.where(_campaign_upload_scope(campaign_id), col(Contact.company_id) == company_id)
+    q = _apply_contact_filters(
+        q,
+        title_match=title_match,
+        verification_status=verification_status,
+        stage_filter=stage_filter,
+    )
+
+    total = session.exec(select(_func.count()).select_from(q.subquery())).one()
+    rows = list(session.exec(q.order_by(col(Contact.created_at).desc()).offset(offset).limit(limit)).all())
+
+    email_map = _contact_emails_map(session, [c for c, _ in rows])
+    items = [
+        ContactRead.model_validate({
+            **c.__dict__,
+            "domain": domain,
+            "emails": email_map.get(c.id, []),
+            "freshness_status": "fresh",
+            "group_key": str(c.id),
+            "last_seen_at": c.last_seen_at,
+            "provider_has_email": c.provider_has_email,
+            "source_provider": c.source_provider,
+        })
+        for c, domain in rows
+    ]
+
+    return ContactListResponse(
+        total=total,
+        has_more=(offset + len(items)) < total,
+        limit=limit,
+        offset=offset,
+        items=items,
     )
 
 
