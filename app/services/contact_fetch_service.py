@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
+
+_JOB_LOCK_TTL = timedelta(hours=1)
 
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
@@ -26,6 +28,9 @@ from app.models.pipeline import (
 from app.services.title_match_service import load_title_rules, match_title
 
 logger = logging.getLogger(__name__)
+
+_SNOV_MAX_PAGES = 50
+_APOLLO_MAX_PAGES = 50
 
 
 def _utcnow() -> datetime:
@@ -65,6 +70,16 @@ def _apollo_to_person(person: dict) -> dict:
         "provider_has_email": bool(person.get("email")),
         "raw_payload_json": person,
     }
+
+
+def _dedupe_people(people: list[dict]) -> list[dict]:
+    by_id: dict[str, dict] = {}
+    for person in people:
+        person_id = str(person.get("provider_person_id") or "").strip()
+        if not person_id:
+            continue
+        by_id[person_id] = person
+    return list(by_id.values())
 
 
 def _active_job_for_company(session: Session, company_id: UUID) -> ContactFetchJob | None:
@@ -157,6 +172,7 @@ class ContactFetchService:
                 .values(
                     state=ContactFetchJobState.RUNNING,
                     lock_token=lock_token,
+                    lock_expires_at=now + _JOB_LOCK_TTL,
                     started_at=now,
                     updated_at=now,
                     attempt_count=ContactFetchJob.attempt_count + 1,
@@ -244,14 +260,33 @@ class ContactFetchService:
 
         now = _utcnow()
         with Session(engine) as session:
-            attempt = ContactProviderAttempt(
-                contact_fetch_job_id=job_id,
-                provider=provider,
-                sequence_index=seq_idx,
-                state=ContactProviderAttemptState.RUNNING,
-                started_at=now,
-            )
-            session.add(attempt)
+            attempt = session.exec(
+                select(ContactProviderAttempt).where(
+                    col(ContactProviderAttempt.contact_fetch_job_id) == job_id,
+                    col(ContactProviderAttempt.provider) == provider,
+                )
+            ).first()
+            if attempt is None:
+                attempt = ContactProviderAttempt(
+                    contact_fetch_job_id=job_id,
+                    provider=provider,
+                    sequence_index=seq_idx,
+                    state=ContactProviderAttemptState.RUNNING,
+                    started_at=now,
+                )
+                session.add(attempt)
+            else:
+                attempt.sequence_index = seq_idx
+                attempt.state = ContactProviderAttemptState.RUNNING
+                attempt.terminal_state = False
+                attempt.started_at = now
+                attempt.finished_at = None
+                attempt.last_error_code = None
+                attempt.last_error_message = None
+                attempt.failure_reason = None
+                attempt.deferred_reason = None
+                attempt.updated_at = now
+                session.add(attempt)
             session.commit()
             session.refresh(attempt)
             attempt_id = attempt.id
@@ -261,36 +296,72 @@ class ContactFetchService:
 
         if provider == "snov":
             client = SnovClient()
-            prospects, _total, err = client.search_prospects(company_domain)
-            people = [_snov_to_person(p, company_domain) for p in prospects]
+            all_prospects: list[dict] = []
+            page = 1
+            total_expected = 0
+            while page <= _SNOV_MAX_PAGES:
+                prospects, total, err = client.search_prospects(company_domain, page=page)
+                if err:
+                    break
+                if page == 1:
+                    total_expected = max(int(total or 0), 0)
+                if not prospects:
+                    break
+                all_prospects.extend(prospects)
+                if total_expected and len(all_prospects) >= total_expected:
+                    break
+                page += 1
+            people = [_snov_to_person(p, company_domain) for p in all_prospects]
         elif provider == "apollo":
             client = ApolloClient()
-            raw = client.search_people(company_domain)
-            err = client.last_error_code
-            people = [_apollo_to_person(p) for p in raw]
+            all_people: list[dict] = []
+            page = 1
+            while page <= _APOLLO_MAX_PAGES:
+                raw = client.search_people(company_domain, page=page)
+                err = client.last_error_code
+                if err:
+                    break
+                if not raw:
+                    break
+                all_people.extend(raw)
+                if len(raw) < 100:
+                    break
+                page += 1
+            people = [_apollo_to_person(p) for p in all_people]
         else:
             err = f"unknown_provider_{provider}"
 
+        people = _dedupe_people(people)
         contacts_found = 0
         title_matched = 0
 
         if not err:
             with Session(engine) as session:
+                person_ids = [str(person.get("provider_person_id") or "").strip() for person in people]
+                person_ids = [person_id for person_id in person_ids if person_id]
+                existing_by_id: dict[str, Contact] = {}
+                if person_ids:
+                    existing = list(
+                        session.exec(
+                            select(Contact).where(
+                                col(Contact.company_id) == company_id,
+                                col(Contact.source_provider) == provider,
+                                col(Contact.provider_person_id).in_(person_ids),
+                            )
+                        )
+                    )
+                    existing_by_id = {str(contact.provider_person_id): contact for contact in existing}
+
                 for person in people:
-                    if not person.get("provider_person_id"):
+                    person_id = str(person.get("provider_person_id") or "").strip()
+                    if not person_id:
                         continue
                     is_match = (
                         match_title(person.get("title") or "", include_rules, exclude_words)
                         if include_rules
                         else False
                     )
-                    existing = session.exec(
-                        select(Contact).where(
-                            col(Contact.company_id) == company_id,
-                            col(Contact.source_provider) == provider,
-                            col(Contact.provider_person_id) == person["provider_person_id"],
-                        )
-                    ).first()
+                    existing = existing_by_id.get(person_id)
                     if existing:
                         existing.first_name = person.get("first_name", existing.first_name)
                         existing.last_name = person.get("last_name", existing.last_name)
@@ -303,11 +374,11 @@ class ContactFetchService:
                         existing.contact_fetch_job_id = job_id
                         session.add(existing)
                     else:
-                        session.add(Contact(
+                        created = Contact(
                             company_id=company_id,
                             contact_fetch_job_id=job_id,
                             source_provider=provider,
-                            provider_person_id=person["provider_person_id"],
+                            provider_person_id=person_id,
                             first_name=person.get("first_name", ""),
                             last_name=person.get("last_name", ""),
                             title=person.get("title"),
@@ -315,7 +386,9 @@ class ContactFetchService:
                             provider_has_email=person.get("provider_has_email"),
                             raw_payload_json=person.get("raw_payload_json"),
                             title_match=is_match,
-                        ))
+                        )
+                        session.add(created)
+                        existing_by_id[person_id] = created
                     contacts_found += 1
                     if is_match:
                         title_matched += 1

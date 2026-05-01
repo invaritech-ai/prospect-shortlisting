@@ -6,8 +6,8 @@ from uuid import uuid4
 import pytest
 from sqlmodel import Session, col, select
 
-from app.models import Campaign, Company, Contact, ContactFetchBatch, ContactFetchJob, Upload
-from app.models.pipeline import ContactFetchJobState
+from app.models import Campaign, Company, Contact, ContactFetchBatch, ContactFetchJob, ContactProviderAttempt, Upload
+from app.models.pipeline import ContactFetchJobState, ContactProviderAttemptState
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -263,6 +263,43 @@ def test_run_job_sets_succeeded_state(sqlite_session: Session, monkeypatch) -> N
     assert job.terminal_state is True
 
 
+def test_run_job_reuses_existing_provider_attempt_on_retry(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(
+        snov_mod.SnovClient,
+        "search_prospects",
+        lambda self, domain, page=1: ([{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO"}], 1, ""),
+    )
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    sqlite_session.add(
+        ContactProviderAttempt(
+            contact_fetch_job_id=job.id,
+            provider="snov",
+            sequence_index=0,
+            state=ContactProviderAttemptState.FAILED,
+            terminal_state=True,
+        )
+    )
+    sqlite_session.commit()
+
+    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+
+    attempts = list(
+        sqlite_session.exec(
+            select(ContactProviderAttempt).where(col(ContactProviderAttempt.contact_fetch_job_id) == job.id)
+        )
+    )
+    snov_attempts = [attempt for attempt in attempts if attempt.provider == "snov"]
+    assert len(snov_attempts) == 1
+    assert snov_attempts[0].state == ContactProviderAttemptState.SUCCEEDED
+
+
 # ── Task 2 (cont.) ───────────────────────────────────────────────��────────────
 
 def test_force_refresh_creates_new_job(sqlite_session: Session) -> None:
@@ -339,3 +376,74 @@ def test_batch_marked_failed_when_any_job_fails(sqlite_session: Session, monkeyp
     batch = sqlite_session.get(ContactFetchBatch, batch_id)
     assert batch.state == ContactFetchBatchState.FAILED
     assert batch.finished_at is not None
+
+
+# ── lock_expires_at ───────────────────────────────────────────────────────────
+
+def test_cas_claim_sets_lock_expires_at(sqlite_session: Session, monkeypatch) -> None:
+    """Active jobs must have lock_expires_at set so reset-stuck won't touch them."""
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+    from datetime import timezone
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    sqlite_session.commit()
+
+    # Capture state mid-run by patching finalization
+    lock_expires_at_during_run: list = []
+    original_run_provider = ContactFetchService._run_provider
+
+    def patched_run_provider(self, *, engine, **kwargs):
+        with Session(engine) as s:
+            j = s.get(ContactFetchJob, kwargs.get("job_id") or job.id)
+            if j:
+                lock_expires_at_during_run.append(j.lock_expires_at)
+        return original_run_provider(self, engine=engine, **kwargs)
+
+    monkeypatch.setattr(ContactFetchService, "_run_provider", patched_run_provider)
+
+    ContactFetchService().run_contact_fetch_job(
+        engine=sqlite_session.bind,
+        contact_fetch_job_id=str(job.id),
+    )
+
+    assert len(lock_expires_at_during_run) > 0
+    assert lock_expires_at_during_run[0] is not None
+    assert lock_expires_at_during_run[0].tzinfo is not None  # timezone-aware
+
+
+@pytest.mark.asyncio
+async def test_reset_stuck_skips_active_job_with_future_lock(
+    sqlite_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reset-stuck must not reset a job whose lock hasn't expired yet."""
+    from datetime import timedelta
+    from sqlalchemy import update as _update
+    from app.models.pipeline import utcnow
+    from app.api.routes.companies import reset_stuck_contact_fetch_jobs
+    from app.jobs import contact_fetch as cf_mod
+
+    monkeypatch.setattr(cf_mod.fetch_contacts, "defer_async", lambda **kw: None)
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    # Simulate active run: RUNNING + future lock
+    future = utcnow() + timedelta(hours=1)
+    sqlite_session.execute(
+        _update(ContactFetchJob)
+        .where(col(ContactFetchJob.id) == job.id)
+        .values(state=ContactFetchJobState.RUNNING, lock_expires_at=future, terminal_state=False)
+    )
+    sqlite_session.commit()
+
+    result = await reset_stuck_contact_fetch_jobs(session=sqlite_session)
+
+    assert result.reset_count == 0
+    sqlite_session.refresh(job)
+    assert job.state == ContactFetchJobState.RUNNING  # untouched
