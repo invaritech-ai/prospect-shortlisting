@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlmodel import Session, col, select
 
-from app.models import Campaign, Company, ContactFetchBatch, ContactFetchJob, Upload
+from app.models import Campaign, Company, Contact, ContactFetchBatch, ContactFetchJob, Upload
 from app.models.pipeline import ContactFetchJobState
 
 
@@ -106,6 +106,164 @@ def test_enqueue_reuses_active_job(sqlite_session: Session) -> None:
     assert len(jobs2) == 1
     assert jobs2[0].id == jobs1[0].id
 
+
+# ── Task 4: worker execution ──────────────────────────────────────────────────
+
+def _seed_job(
+    session: Session, campaign: Campaign
+) -> tuple[Company, "ContactFetchJob"]:
+    from app.services.contact_fetch_service import ContactFetchService
+    company = _seed_company(session, campaign)
+    session.commit()
+    svc = ContactFetchService()
+    _, jobs, _ = svc.enqueue(
+        session=session,
+        campaign_id=campaign.id,
+        company_ids=[company.id],
+        force_refresh=False,
+    )
+    session.commit()
+    return company, jobs[0]
+
+
+def test_run_job_snov_upserts_contacts(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: (
+            [{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO", "search_emails_start": "https://x"}],
+            1,
+            "",
+        ),
+    )
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert len(contacts) == 1
+    assert contacts[0].source_provider == "snov"
+    assert contacts[0].first_name == "Alice"
+    assert contacts[0].title == "CMO"
+
+
+def test_run_job_apollo_upserts_contacts(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: [{"id": "apollo-1", "first_name": "Bob", "last_name": "Jones", "title": "CTO", "linkedin_url": "https://li/bob"}],
+    )
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert len(contacts) == 1
+    assert contacts[0].source_provider == "apollo"
+    assert contacts[0].linkedin_url == "https://li/bob"
+
+
+def test_run_job_both_providers_kept(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: ([{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO"}], 1, ""),
+    )
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: [{"id": "apollo-1", "first_name": "Bob", "last_name": "Jones", "title": "CTO"}],
+    )
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert {c.source_provider for c in contacts} == {"snov", "apollo"}
+
+
+def test_run_job_repeated_run_upserts_not_duplicates(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: ([{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO"}], 1, ""),
+    )
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job1 = _seed_job(sqlite_session, campaign)
+    svc = ContactFetchService()
+    svc.run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job1.id))
+
+    _, job2 = _seed_job(sqlite_session, campaign)
+    svc.run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job2.id))
+
+    contacts = list(sqlite_session.exec(
+        select(Contact).where(col(Contact.company_id) == company.id, col(Contact.source_provider) == "snov")
+    ))
+    assert len(contacts) == 1
+
+
+def test_run_job_title_match_applied(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+    from app.models import TitleMatchRule
+
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: ([{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "marketing director"}], 1, ""),
+    )
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    sqlite_session.add(TitleMatchRule(campaign_id=campaign.id, rule_type="include", keywords="marketing, director", match_type="keyword"))
+    sqlite_session.flush()
+    company, job = _seed_job(sqlite_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+
+    contact = sqlite_session.exec(select(Contact).where(col(Contact.company_id) == company.id)).first()
+    assert contact is not None
+    assert contact.title_match is True
+
+
+def test_run_job_sets_succeeded_state(sqlite_session: Session, monkeypatch) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+
+    campaign = _seed_campaign(sqlite_session)
+    company, job = _seed_job(sqlite_session, campaign)
+    ContactFetchService().run_contact_fetch_job(engine=sqlite_session.bind, contact_fetch_job_id=str(job.id))
+
+    sqlite_session.refresh(job)
+    assert job.state == ContactFetchJobState.SUCCEEDED
+    assert job.terminal_state is True
+
+
+# ── Task 2 (cont.) ───────────────────────────────────────────────��────────────
 
 def test_force_refresh_creates_new_job(sqlite_session: Session) -> None:
     from app.services.contact_fetch_service import ContactFetchService

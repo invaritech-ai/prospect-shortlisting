@@ -145,7 +145,7 @@ class ContactFetchService:
         lock_token = str(uuid4())
         now = _utcnow()
 
-        # Phase 1: CAS-claim
+        # Phase 1: CAS-claim + extract all data needed for subsequent phases
         with Session(engine) as session:
             updated = session.execute(
                 sa_update(ContactFetchJob)
@@ -171,10 +171,15 @@ class ContactFetchService:
             company = session.get(Company, job.company_id)
             upload = session.get(Upload, company.upload_id)
             campaign_id = upload.campaign_id
+
+            # Extract plain values before session closes
+            providers = list(job.requested_providers_json or ["snov", "apollo"])
+            company_id_val = company.id
+            company_domain = company.domain
+
             include_rules, exclude_words = load_title_rules(session, campaign_id=campaign_id)
             session.commit()
 
-        providers = job.requested_providers_json or ["snov", "apollo"]
         total_found = 0
         total_matched = 0
         any_failure = False
@@ -183,7 +188,8 @@ class ContactFetchService:
             err = self._run_provider(
                 engine=engine,
                 job_id=job_id,
-                company=company,
+                company_id=company_id_val,
+                company_domain=company_domain,
                 provider=provider,
                 seq_idx=seq_idx,
                 include_rules=include_rules,
@@ -201,8 +207,8 @@ class ContactFetchService:
                         )
                     ).first()
                     if attempt:
-                        total_found += attempt.contacts_found
-                        total_matched += attempt.title_matched_count
+                        total_found += int(attempt.contacts_found or 0)
+                        total_matched += int(attempt.title_matched_count or 0)
 
         final_state = ContactFetchJobState.FAILED if any_failure else ContactFetchJobState.SUCCEEDED
         with Session(engine) as session:
@@ -221,7 +227,8 @@ class ContactFetchService:
         *,
         engine: Any,
         job_id: UUID,
-        company: Company,
+        company_id: UUID,
+        company_domain: str,
         provider: str,
         seq_idx: int,
         include_rules: list[list[str]],
@@ -250,11 +257,11 @@ class ContactFetchService:
 
         if provider == "snov":
             client = SnovClient()
-            prospects, _total, err = client.search_prospects(company.domain)
-            people = [_snov_to_person(p, company.domain) for p in prospects]
+            prospects, _total, err = client.search_prospects(company_domain)
+            people = [_snov_to_person(p, company_domain) for p in prospects]
         elif provider == "apollo":
             client = ApolloClient()
-            raw = client.search_people(company.domain)
+            raw = client.search_people(company_domain)
             err = client.last_error_code
             people = [_apollo_to_person(p) for p in raw]
         else:
@@ -275,7 +282,7 @@ class ContactFetchService:
                     )
                     existing = session.exec(
                         select(Contact).where(
-                            col(Contact.company_id) == company.id,
+                            col(Contact.company_id) == company_id,
                             col(Contact.source_provider) == provider,
                             col(Contact.provider_person_id) == person["provider_person_id"],
                         )
@@ -293,7 +300,7 @@ class ContactFetchService:
                         session.add(existing)
                     else:
                         session.add(Contact(
-                            company_id=company.id,
+                            company_id=company_id,
                             contact_fetch_job_id=job_id,
                             source_provider=provider,
                             provider_person_id=person["provider_person_id"],
