@@ -96,6 +96,32 @@ def retry_url_for_working_origin(
     return rewritten
 
 
+def classify_scrape_outcome(fetched_pages: list[dict]) -> tuple[str, str]:
+    successful = [
+        p for p in fetched_pages
+        if p.get("success") and int(p.get("text_len") or 0) >= 80
+    ]
+    failures = [p for p in fetched_pages if not p.get("success")]
+    has_home = any(p.get("page_kind") == "home" for p in successful)
+
+    if successful and not failures and has_home:
+        return ("full_success", "")
+    if has_home and len(successful) >= 2:
+        return ("partial_success", "")
+    if len(successful) >= 2:
+        return ("partial_success", "")
+
+    failure_codes = [
+        str(p.get("fetch_error_code") or "")
+        for p in failures
+        if str(p.get("fetch_error_code") or "")
+    ]
+    if failure_codes:
+        dominant = max(set(failure_codes), key=failure_codes.count)
+        return ("failed_gracefully", dominant)
+    return ("failed_gracefully", "no_pages_fetched")
+
+
 class ScrapeJobAlreadyRunningError(ValueError):
     def __init__(self, *, normalized_url: str, existing_job_id: Any) -> None:
         self.normalized_url = normalized_url
@@ -684,6 +710,17 @@ class ScrapeService:
             job.lock_token = None
             job.lock_expires_at = None
 
+            fetched_pages_summary = [
+                {
+                    "success": bool(snap.get("text_len") and snap["text_len"] > 0),
+                    "page_kind": snap.get("page_kind", ""),
+                    "text_len": snap.get("text_len") or 0,
+                    "fetch_error_code": snap.get("fetch_error_code") or "",
+                }
+                for snap in fetched_pages
+            ]
+            scrape_outcome, terminal_code = classify_scrape_outcome(fetched_pages_summary)
+
             if markdown_pages == 0:
                 job.state = "failed"
                 job.failure_reason = "unknown"
@@ -723,6 +760,7 @@ class ScrapeService:
                 failures=failure_count,
                 markdown_pages=markdown_pages,
                 llm_used=llm_used,
+                scrape_outcome=scrape_outcome,
             )
 
 
