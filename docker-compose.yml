@@ -1,133 +1,121 @@
 # Backend services share one image tag so Compose / BuildKit build and export once
 # (avoids 4× identical “exporting to image” on small deploy hosts — common Coolify failure point).
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-prospect}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prospect}
-      POSTGRES_DB: ${POSTGRES_DB:-prospect}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prospect} -d ${POSTGRES_DB:-prospect}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
+    api:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+        command: >
+            sh -c "uv run alembic upgrade head &&
+                   uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+        restart: unless-stopped
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "curl -fsS http://127.0.0.1:8000/v1/health/live >/dev/null || exit 1",
+                ]
+            interval: 15s
+            timeout: 5s
+            retries: 5
+            start_period: 20s
 
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: >
-      sh -c "uv run alembic upgrade head &&
-             uv run python -m procrastinate --app=app.queue.app schema --apply &&
-             uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/v1/health/live >/dev/null || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+    worker-scrape:
+        image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
+        env_file:
+            - .env
+        environment:
+            PS_WORKER_PROCESS: "1"
+        depends_on:
+            api:
+                condition: service_healthy
+        command:
+            - "uv"
+            - "run"
+            - "python"
+            - "-m"
+            - "procrastinate"
+            - "--app=app.queue.app"
+            - "worker"
+            - "-q"
+            - "scrape"
+            - "-c"
+            - "2"
+        restart: unless-stopped
 
-  worker-scrape:
-    image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    depends_on:
-      api:
-        condition: service_healthy
-    command:
-      - "uv"
-      - "run"
-      - "python"
-      - "-m"
-      - "procrastinate"
-      - "--app=app.queue.app"
-      - "worker"
-      - "-q"
-      - "scrape"
-      - "-c"
-      - "2"
-    restart: unless-stopped
+    worker-ai:
+        image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
+        env_file:
+            - .env
+        environment:
+            PS_WORKER_PROCESS: "1"
+        depends_on:
+            api:
+                condition: service_healthy
+        command:
+            - "uv"
+            - "run"
+            - "python"
+            - "-m"
+            - "procrastinate"
+            - "--app=app.queue.app"
+            - "worker"
+            - "-q"
+            - "ai_decision"
+            - "-c"
+            - "2"
+        restart: unless-stopped
 
-  worker-ai:
-    image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    depends_on:
-      api:
-        condition: service_healthy
-    command:
-      - "uv"
-      - "run"
-      - "python"
-      - "-m"
-      - "procrastinate"
-      - "--app=app.queue.app"
-      - "worker"
-      - "-q"
-      - "ai_decision"
-      - "-c"
-      - "2"
-    restart: unless-stopped
+    worker-provider:
+        image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
+        env_file:
+            - .env
+        environment:
+            PS_WORKER_PROCESS: "1"
+        depends_on:
+            api:
+                condition: service_healthy
+        command:
+            - "uv"
+            - "run"
+            - "python"
+            - "-m"
+            - "procrastinate"
+            - "--app=app.queue.app"
+            - "worker"
+            - "-q"
+            - "contact_fetch,email_reveal,validation"
+            - "-c"
+            - "5"
+        restart: unless-stopped
 
-  worker-provider:
-    image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
-    env_file:
-      - .env
-    environment:
-      PS_WORKER_PROCESS: "1"
-    depends_on:
-      api:
-        condition: service_healthy
-    command:
-      - "uv"
-      - "run"
-      - "python"
-      - "-m"
-      - "procrastinate"
-      - "--app=app.queue.app"
-      - "worker"
-      - "-q"
-      - "contact_fetch,email_reveal,validation"
-      - "-c"
-      - "5"
-    restart: unless-stopped
-
-  # Operator UI (Vite). Pair with docker-compose.local.yml so the browser can
-  # reach the API via the loopback-only host mapping on :8001.
-  # Start with: docker compose -f docker-compose.yml -f docker-compose.local.yml --profile ui up -d
-  # Or on the host: cd apps/web && npm run dev -> http://127.0.0.1:5173
-  web:
-    profiles: ["ui"]
-    image: node:22-bookworm-slim
-    working_dir: /app
-    ports:
-      - "5173:5173"
-    environment:
-      USE_POLLING: "1"
-      VITE_API_BASE_URL: http://127.0.0.1:8001
-    volumes:
-      - ./apps/web:/app
-      - web_node_modules:/app/node_modules
-    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
-    depends_on:
-      api:
-        condition: service_healthy
+    # Operator UI (Vite). Pair with docker-compose.local.yml so the browser can
+    # reach the API via the loopback-only host mapping on :8001.
+    # Start with: docker compose -f docker-compose.yml -f docker-compose.local.yml --profile ui up -d
+    # Or on the host: cd apps/web && npm run dev -> http://127.0.0.1:5173
+    web:
+        profiles: ["ui"]
+        image: node:22-bookworm-slim
+        working_dir: /app
+        ports:
+            - "5173:5173"
+        environment:
+            USE_POLLING: "1"
+            VITE_API_BASE_URL: http://127.0.0.1:8001
+        volumes:
+            - ./apps/web:/app
+            - web_node_modules:/app/node_modules
+        command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+        depends_on:
+            api:
+                condition: service_healthy
 
 volumes:
-  postgres_data:
-  web_node_modules:
+    postgres_data:
+    web_node_modules:
