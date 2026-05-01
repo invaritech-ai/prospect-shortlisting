@@ -653,9 +653,7 @@ async def _stealth_fetch(url: str, timeout_sec: float) -> Selector | None:
         "hide_canvas": True,
     }
 
-    mode = "browserless" if settings.browserless_url else "local"
-    if settings.browserless_url:
-        fetch_kwargs["cdp_url"] = settings.browserless_url
+    mode = "local"
 
     try:
         logger.info("fetch_stealth_%s url=%s", mode, url)
@@ -721,20 +719,24 @@ def _validate_stealth_response(url: str, response: Selector | None) -> FetchResu
 # ── Session-reusing stealth multi-fetch ───────────────────────────────────────
 
 def _stealth_session_kwargs() -> dict:
-    """Build kwargs for AsyncStealthySession from settings."""
-    _timeout_ms: int = settings.scrape_stealth_timeout_ms
+    """Build kwargs for AsyncStealthySession from settings (local-only, no CDP)."""
     kwargs: dict = {
         "headless": True,
-        "timeout": _timeout_ms,
+        "timeout": settings.scrape_stealth_timeout_ms,
         "network_idle": True,
         "solve_cloudflare": True,
         "block_webrtc": True,
         "hide_canvas": True,
+        "max_pages": settings.scrape_stealth_max_pages,
+        "block_images": settings.scrape_stealth_block_images,
+        "disable_resources": settings.scrape_stealth_disable_resources,
+        "humanize": settings.scrape_stealth_humanize,
+        "os_randomize": settings.scrape_stealth_os_randomize,
+        "selector_config": {**StealthyFetcher._generate_parser_arguments()},
     }
-    if settings.browserless_url:
-        kwargs["cdp_url"] = settings.browserless_url
-    # Add parser config the same way StealthyFetcher.async_fetch does
-    kwargs["selector_config"] = {**StealthyFetcher._generate_parser_arguments()}
+    proxy_url = settings.scrape_proxy_url.strip()
+    if proxy_url:
+        kwargs["proxy"] = proxy_url
     return kwargs
 
 
@@ -753,7 +755,7 @@ async def stealth_fetch_many(
     if not urls:
         return []
 
-    mode = "browserless" if settings.browserless_url else "local"
+    mode = "local"
     session_kwargs = _stealth_session_kwargs()
     results: list[FetchResult] = []
 
@@ -951,8 +953,8 @@ async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str
 
     timeout_sec = settings.scrape_stealth_timeout_ms / 1000 + 30
     logger.info(
-        "fetch_stealth_attempt url=%s timeout_sec=%.1f browserless=%s",
-        url, timeout_sec, bool(settings.browserless_url),
+        "fetch_stealth_attempt url=%s timeout_sec=%.1f mode=local",
+        url, timeout_sec,
     )
     response = await _stealth_fetch(url, timeout_sec)
     return _validate_stealth_response(url, response)

@@ -261,3 +261,23 @@ def test_static_headers_do_not_advertise_unsupported_brotli() -> None:
     encoding = fetch_service._STATIC_HEADERS["Accept-Encoding"]
     assert "br" not in encoding
     assert "gzip" in encoding
+
+
+def test_stealth_session_kwargs_are_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fetch_service.settings, "browserless_url", "wss://example.invalid/stealth")
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_max_pages", 2, raising=False)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_block_images", True, raising=False)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_disable_resources", True, raising=False)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_humanize", True, raising=False)
+    monkeypatch.setattr(fetch_service.settings, "scrape_stealth_os_randomize", True, raising=False)
+    monkeypatch.setattr(fetch_service.settings, "scrape_proxy_url", "", raising=False)
+
+    kwargs = fetch_service._stealth_session_kwargs()
+
+    assert "cdp_url" not in kwargs
+    assert kwargs["max_pages"] == 2
+    assert kwargs["block_images"] is True
+    assert kwargs["disable_resources"] is True
+    assert kwargs["humanize"] is True
+    assert kwargs["os_randomize"] is True
+    assert "proxy" not in kwargs

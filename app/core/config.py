@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Number of consecutive successful static fetches required before a
     # domain escalated to stealth is demoted back to the static tier.
     scrape_stealth_demotion_streak: int = 3
+    scrape_stealth_max_pages: int = 2
+    scrape_stealth_block_images: bool = True
+    scrape_stealth_disable_resources: bool = True
+    scrape_stealth_humanize: bool = True
+    scrape_stealth_os_randomize: bool = True
+    scrape_proxy_url: str = ""
 
     markdown_model: str = "stepfun/step-3.5-flash"
     # Browserless CDP URL, e.g. wss://production-sfo.browserless.io?token=YOUR_TOKEN
