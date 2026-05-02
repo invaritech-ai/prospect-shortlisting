@@ -597,13 +597,13 @@ export function usePipelineViews(
       setS4SelectedContactIds([])
       skipNextS4LetterReloadRef.current = true
       setS4ActiveLetters(new Set())
-      setS4VerifFilter('valid')
+      setS4VerifFilter('email_revealed')
       setS4Offset(0)
       setS4PageSize(DEFAULT_PAGE_SIZE)
       const dv = defaultValidationContactSort(statsRef.current)
       setS4SortBy(dv.sortBy)
       setS4SortDir(dv.sortDir)
-      void loadS4View(dv.sortBy, dv.sortDir, 'valid', DEFAULT_PAGE_SIZE, 0, [])
+      void loadS4View(dv.sortBy, dv.sortDir, 'email_revealed', DEFAULT_PAGE_SIZE, 0, [])
     }
   }, [activeView, cancelStaleSelectAllRequests, loadPipelineView, loadFullPipelineView, loadS4View])
 

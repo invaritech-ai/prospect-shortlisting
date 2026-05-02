@@ -131,7 +131,7 @@ export type ScrapeSubFilter =
   | 'pending'
   | 'active'
   | 'failed'
-export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'campaign_ready' | 'title_match' | 'stale_30d'
+export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'email_revealed' | 'campaign_ready' | 'title_match' | 'stale_30d'
 
 export type CompanyIdsResult = {
   ids: string[]

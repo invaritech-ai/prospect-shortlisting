@@ -32,6 +32,7 @@ export function verifFilterToParams(filter: S4VerifFilter): {
     case 'invalid': return { verificationStatus: 'invalid' }
     case 'catch-all': return { verificationStatus: 'catch-all' }
     case 'unverified': return { verificationStatus: 'unverified' }
+    case 'email_revealed': return { stageFilter: 'email_revealed' }
     case 'campaign_ready': return { stageFilter: 'campaign_ready' }
     case 'title_match': return { titleMatch: true }
     case 'stale_30d': return { staleDays: 30 }

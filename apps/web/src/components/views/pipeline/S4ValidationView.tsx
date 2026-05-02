@@ -47,6 +47,7 @@ interface S4ValidationViewProps {
 
 const VERIF_FILTERS: Array<{ value: S4VerifFilter; label: string; color?: string }> = [
   { value: 'all', label: 'All contacts' },
+  { value: 'email_revealed', label: 'Revealed (pending validation)', color: '#0369a1' },
   { value: 'valid', label: 'Valid', color: '#15803d' },
   { value: 'invalid', label: 'Invalid', color: '#dc2626' },
   { value: 'catch-all', label: 'Catch-all', color: '#d97706' },
@@ -302,16 +303,13 @@ export function S4ValidationView({
 
       {!isLoading && visibleContacts.length === 0 && (
         <div className="rounded-2xl border border-(--oc-border) bg-white px-6 py-10 text-center">
-          {verifFilter === 'unverified' && contacts != null && (contacts.total ?? 0) > 0 ? (
+          {verifFilter === 'email_revealed' && contacts != null && (contacts.total ?? 0) === 0 ? (
             <div className="space-y-1">
-              <p className="text-sm font-semibold text-emerald-700">All contacts have been email_revealed ✓</p>
-              <p className="text-xs text-(--oc-muted)">Switch to "Valid" or "Campaign ready" to review results.</p>
+              <p className="text-sm font-semibold text-(--oc-text)">No revealed emails yet</p>
+              <p className="text-xs text-(--oc-muted)">Go to S4 · Reveal and reveal emails for title-matched contacts, then come back here to validate them.</p>
             </div>
           ) : contacts != null && contacts.total === 0 ? (
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-(--oc-text)">No contacts fetched yet</p>
-              <p className="text-xs text-(--oc-muted)">Reveal emails in S4 before validating them here.</p>
-            </div>
+            <p className="text-sm text-(--oc-muted)">No contacts match this filter.</p>
           ) : (
             <p className="text-sm text-(--oc-muted)">No contacts match this filter.</p>
           )}

@@ -214,7 +214,7 @@ export function S4RevealView({
                 className="rounded-xl border px-3 py-1.5 text-xs"
                 style={{ borderColor, backgroundColor: bg }}
               >
-                <span className="font-black tabular-nums" style={{ color }}>{value.toLocaleString()}</span>
+                <span className="font-black tabular-nums" style={{ color }}>{(value ?? 0).toLocaleString()}</span>
                 <span className="ml-1.5" style={{ color }}>{label}</span>
               </div>
             ))}
