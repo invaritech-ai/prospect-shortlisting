@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, col, select
 
 from app.api.schemas.scrape import ScrapeJobCreate, ScrapeJobRead, ScrapePageContentRead
@@ -11,6 +11,7 @@ from app.db.session import get_session
 from app.jobs._priority import USER_ACTION
 from app.jobs.scrape import scrape_website
 from app.models import ScrapeJob, ScrapePage
+from app.models.scrape import ScrapeRun, ScrapeRunItem
 from app.services.scrape_service import (
     CircuitBreakerOpenError,
     ScrapeJobAlreadyRunningError,
@@ -54,6 +55,36 @@ async def create_scrape_job(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}") from exc
     return ScrapeJobRead.model_validate(job, from_attributes=True)
+
+
+@router.get("/scrape-jobs", response_model=list[ScrapeJobRead])
+def list_scrape_jobs(
+    campaign_id: UUID = Query(...),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> list[ScrapeJobRead]:
+    """Recent scrape jobs scoped to a campaign via ScrapeRunItem → ScrapeRun.
+
+    Used by the Operations Log to surface scrape activity alongside analysis runs.
+    """
+    stmt = (
+        select(ScrapeJob)
+        .join(ScrapeRunItem, col(ScrapeRunItem.scrape_job_id) == col(ScrapeJob.id))
+        .join(ScrapeRun, col(ScrapeRun.id) == col(ScrapeRunItem.run_id))
+        .where(col(ScrapeRun.campaign_id) == campaign_id)
+        .order_by(col(ScrapeJob.updated_at).desc())
+        .limit(limit)
+    )
+    rows = list(session.exec(stmt).all())
+    # Deduplicate (same ScrapeJob can appear under multiple ScrapeRunItems)
+    seen: set[UUID] = set()
+    unique: list[ScrapeJob] = []
+    for job in rows:
+        if job.id in seen:
+            continue
+        seen.add(job.id)
+        unique.append(job)
+    return [ScrapeJobRead.model_validate(job, from_attributes=True) for job in unique]
 
 
 @router.get("/scrape-jobs/{job_id}", response_model=ScrapeJobRead)

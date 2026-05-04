@@ -19,7 +19,7 @@ function scrapeStatus(job: ScrapeJobRead): OperationsEventStatus {
 
 function runStatus(run: RunRead): OperationsEventStatus {
   const status = run.status.toLowerCase()
-  if (status === 'running' || status === 'created') return 'active'
+  if (status === 'running' || status === 'created' || status === 'queued') return 'active'
   if (status === 'failed' || status === 'dead') return 'failed'
   return 'completed'
 }
@@ -54,7 +54,7 @@ export function buildOperationsEvents(scrapeJobs: ScrapeJobRead[], runs: RunRead
       title: run.prompt_name,
       subtitle: `${run.id.slice(0, 8)}… · ${done}/${run.total_jobs} · ${run.failed_jobs} failed`,
       error_code: errorHint,
-      search_blob: `${run.prompt_name} ${run.id} ${run.status}`.toLowerCase(),
+      search_blob: `${run.prompt_name} ${run.id} ${run.status} ${errorHint ?? ''}`.toLowerCase(),
       scrape_job: null,
       run,
     }

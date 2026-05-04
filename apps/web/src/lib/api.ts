@@ -326,6 +326,12 @@ export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
   return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
 }
 
+export async function listScrapeJobs(campaignId: string, limit = 50): Promise<ScrapeJobRead[]> {
+  return request<ScrapeJobRead[]>(
+    `/v1/scrape-jobs?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`,
+  )
+}
+
 export async function listScrapeJobPageContents(jobId: string, limit = 200, offset = 0): Promise<ScrapePageContentRead[]> {
   return request<ScrapePageContentRead[]>(`/v1/scrape-jobs/${jobId}/pages-content?limit=${limit}&offset=${offset}`)
 }

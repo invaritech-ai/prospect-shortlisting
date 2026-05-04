@@ -22,6 +22,7 @@ import {
   getStats,
   loginWithPassword,
   listRuns,
+  listScrapeJobs,
   listCampaigns,
   listUploads,
   logoutSession,
@@ -306,8 +307,11 @@ function App() {
       return
     }
     try {
-      const runRows = await listRuns(selectedCampaignId ?? undefined, 50, 0)
-      setRecentScrapeJobs([])
+      const [runRows, scrapeRows] = await Promise.all([
+        listRuns(selectedCampaignId ?? undefined, 50, 0),
+        listScrapeJobs(selectedCampaignId, 50).catch(() => []),
+      ])
+      setRecentScrapeJobs(scrapeRows)
       setRecentRuns(runRows)
     } catch { /* non-critical */ }
   }, [authRequestsEnabled, selectedCampaignId, uploads])
