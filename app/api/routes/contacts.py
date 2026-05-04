@@ -149,7 +149,7 @@ def list_all_contacts(
     q = select(Contact, Company.domain).join(
         Company, col(Company.id) == col(Contact.company_id)
     )
-    q = q.where(_campaign_upload_scope(campaign_id))
+    q = q.where(_campaign_upload_scope(campaign_id), col(Contact.is_active).is_(True))
     q = _apply_contact_filters(
         q,
         title_match=title_match,
@@ -161,6 +161,8 @@ def list_all_contacts(
     )
     if upload_id is not None:
         q = q.where(col(Company.upload_id) == upload_id)
+
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=settings.contact_discovery_freshness_days)
 
     total = session.exec(select(func.count()).select_from(q.subquery())).one()
 
@@ -201,13 +203,19 @@ def list_all_contacts(
     contacts_only = [contact for contact, _domain in rows]
     email_map = _contact_emails_map(session, contacts_only)
     for contact, domain in rows:
+        contact_updated_at = contact.updated_at
+        if contact_updated_at is not None and contact_updated_at.tzinfo is None:
+            contact_updated_at = contact_updated_at.replace(tzinfo=timezone.utc)
+        is_stale = (
+            contact_updated_at is not None and contact_updated_at <= stale_cutoff
+        )
         items.append(
             ContactRead.model_validate(
                 {
                     **contact.__dict__,
                     "domain": domain,
                     "emails": email_map.get(contact.id, []),
-                    "freshness_status": "fresh",
+                    "freshness_status": "stale" if is_stale else "fresh",
                     "group_key": _discovered_group_key(contact),
                     "last_seen_at": contact.last_seen_at,
                     "provider_has_email": contact.provider_has_email,
@@ -226,7 +234,10 @@ def list_all_contacts(
             .where(letter_expr.between("a", "z"))
             .group_by(letter_expr)
         )
-        letter_stmt = letter_stmt.where(_campaign_upload_scope(campaign_id))
+        letter_stmt = letter_stmt.where(
+            _campaign_upload_scope(campaign_id),
+            col(Contact.is_active).is_(True),
+        )
         letter_stmt = _apply_contact_filters(
             letter_stmt,
             title_match=title_match,
@@ -481,7 +492,7 @@ def list_contact_ids(
     letter_values = _parse_letters(letters)
 
     q = select(Contact.id).join(Company, col(Company.id) == col(Contact.company_id))
-    q = q.where(_cup_scope(campaign_id))
+    q = q.where(_cup_scope(campaign_id), col(Contact.is_active).is_(True))
     q = _acf(q, title_match=title_match, search=search, stale_days=stale_days, letters=letter_values or None)
 
     ids = list(session.exec(q).all())

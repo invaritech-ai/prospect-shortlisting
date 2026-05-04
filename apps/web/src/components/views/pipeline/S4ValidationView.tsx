@@ -317,11 +317,22 @@ export function S4ValidationView({
       )}
 
       {!isLoading && visibleContacts.length > 0 && (
-        <div className="oc-panel overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-(--oc-border) text-[10px] uppercase tracking-wider text-(--oc-muted)">
-                <th className="w-8 p-3">
+        <div className="oc-panel overflow-auto h-[calc(100vh-200px)]">
+          <table className="w-full min-w-[1180px] text-sm table-fixed">
+            <colgroup>
+              <col style={{ width: '40px' }} />
+              <col style={{ width: '200px' }} />
+              <col style={{ width: '160px' }} />
+              <col style={{ width: '110px' }} />
+              <col style={{ width: '230px' }} />
+              <col style={{ width: '110px' }} />
+              <col style={{ width: '130px' }} />
+              <col style={{ width: '140px' }} />
+              <col style={{ width: '130px' }} />
+            </colgroup>
+            <thead className="sticky top-0 z-10 bg-(--oc-surface-strong) shadow-[inset_0_-1px_0_var(--oc-border)]">
+              <tr className="text-[10px] uppercase tracking-wider text-(--oc-muted)">
+                <th className="px-3 py-2.5 text-left">
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
@@ -330,16 +341,16 @@ export function S4ValidationView({
                     onChange={() =>
                       onToggleAll(allVisibleSelected ? [] : visibleContacts.map((c) => c.id))
                     }
-                    className="cursor-pointer disabled:cursor-not-allowed"
+                    className="cursor-pointer disabled:cursor-not-allowed align-middle"
                   />
                 </th>
                 <SortableHeader label="Contact" field="first_name" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <SortableHeader label="Company" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <SortableHeader label="Modified" field="updated_at" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
-                <th className="p-3 text-left font-semibold">Email</th>
-                <SortableHeader label="Title" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
+                <th className="px-3 py-2.5 text-left font-semibold">Email</th>
+                <SortableHeader label="Title match" field="title" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
                 <SortableHeader label="Verification" field="verification_status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
-                <th className="p-3 text-left font-semibold">Last validated</th>
+                <th className="px-3 py-2.5 text-left font-semibold">Last validated</th>
                 <SortableHeader label="Stage" field="pipeline_stage" sortBy={sortBy} sortDir={sortDir} onSort={onSort} disabled={isLoading} />
               </tr>
             </thead>
@@ -351,48 +362,49 @@ export function S4ValidationView({
                 return (
                   <tr
                     key={contact.id}
-                    className="border-b border-(--oc-border) last:border-0 transition"
+                    className="border-b border-(--oc-border) last:border-0 align-middle transition hover:bg-(--oc-surface)"
                     style={selectedSet.has(contact.id) ? { backgroundColor: 'var(--s5-bg)' } : {}}
                   >
-                    <td className="p-3">
+                    <td className="px-3 py-2.5">
                       <input
                         type="checkbox"
                         checked={selectedSet.has(contact.id)}
                         disabled={isLoading || isValidating}
                         onChange={() => onToggleContact(contact.id)}
-                        className="cursor-pointer disabled:cursor-not-allowed"
+                        className="cursor-pointer disabled:cursor-not-allowed align-middle"
                       />
                     </td>
-                    <td className="p-3">
-                      <div className="font-semibold text-sm">{fullName}</div>
+                    <td className="px-3 py-2.5">
+                      <div className="truncate font-semibold text-sm" title={fullName}>{fullName}</div>
                       {contact.title && (
-                        <div className="text-[11px] text-(--oc-muted)">{contact.title}</div>
+                        <div className="truncate text-[11px] text-(--oc-muted)" title={contact.title}>{contact.title}</div>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-3 py-2.5">
                       <a
                         href={`https://${contact.domain}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-mono text-[11px] font-medium hover:underline"
+                        className="block truncate font-mono text-[11px] font-medium hover:underline"
                         style={{ color: 'var(--s5-text)' }}
+                        title={contact.domain}
                       >
                         {contact.domain}
                       </a>
                     </td>
-                    <td className="p-3 text-[11px] text-(--oc-muted) tabular-nums">
+                    <td className="px-3 py-2.5 text-[11px] text-(--oc-muted) tabular-nums">
                       <RelativeTimeLabel timestamp={contact.updated_at} prefix="" />
                     </td>
-                    <td className="p-3">
+                    <td className="px-3 py-2.5">
                       {contact.email ? (
-                        <span className="font-mono text-[11.5px] text-(--oc-text)">{contact.email}</span>
+                        <span className="block truncate font-mono text-[11.5px] text-(--oc-text)" title={contact.email}>{contact.email}</span>
                       ) : (
                         <span className="text-xs text-(--oc-muted) italic">No email</span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-3 py-2.5">
                       {contact.title_match ? (
-                        <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="20 6 9 17 4 12"/>
                           </svg>
@@ -402,10 +414,10 @@ export function S4ValidationView({
                         <span className="text-[11px] text-(--oc-muted)">No match</span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-3 py-2.5">
                       {vb ? (
                         <span
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
                           style={{ backgroundColor: vb.bg, color: vb.text }}
                         >
                           <span
@@ -418,7 +430,7 @@ export function S4ValidationView({
                         <span className="text-[11px] text-(--oc-muted)">Unverified</span>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-3 py-2.5 whitespace-nowrap">
                       {(() => {
                         const validatedAt = getLastValidatedAt(contact)
                         if (!validatedAt) return <span className="text-[11px] text-(--oc-muted)">Unknown</span>
@@ -430,10 +442,10 @@ export function S4ValidationView({
                         )
                       })()}
                     </td>
-                    <td className="p-3">
+                    <td className="px-3 py-2.5">
                       {sb ? (
                         <span
-                          className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold"
+                          className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
                           style={{ backgroundColor: sb.bg, color: sb.text }}
                         >
                           {sb.label}
