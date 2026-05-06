@@ -457,40 +457,16 @@ class ContactFetchService:
         Returns (email, smtp_status, raw_payload). Empty email means reveal failed
         or returned nothing — caller stores the contact as fetched_no_email.
         """
-        provider = person.get("_provider")
-        person_id = str(person.get("provider_person_id") or "").strip()
-        if provider == "apollo":
-            from app.services.apollo_client import ApolloClient
+        from app.services.contact_reveal import reveal_email_for_person
 
-            apollo = ApolloClient()
-            result = apollo.reveal_email(person_id) if person_id else None
-            if result and result.get("email"):
-                return str(result["email"]), "valid", result
-            return "", None, result or {}
-        if provider == "snov":
-            from app.services.snov_client import SnovClient
-
-            snov = SnovClient()
-            emails: list[dict] = []
-            err = ""
-            if person_id:
-                emails, err = snov.search_prospect_email(person_id)
-            if (not emails or err) and person.get("first_name") and person.get("last_name"):
-                emails, err = snov.find_email_by_name(
-                    person.get("first_name", ""),
-                    person.get("last_name", ""),
-                    company_domain,
-                )
-            if not err and emails:
-                # Prefer 'valid' over 'unknown'
-                ranked = sorted(
-                    emails,
-                    key=lambda e: {"valid": 0, "unknown": 1}.get(e.get("smtp_status", ""), 2),
-                )
-                best = ranked[0]
-                return str(best.get("email") or ""), best.get("smtp_status"), best
-            return "", None, {}
-        return "", None, {}
+        result = reveal_email_for_person(
+            provider=str(person.get("_provider") or ""),
+            person_id=str(person.get("provider_person_id") or ""),
+            first_name=str(person.get("first_name") or ""),
+            last_name=str(person.get("last_name") or ""),
+            domain=company_domain,
+        )
+        return result.email, result.smtp_status, result.raw or {}
 
     def _reveal_and_upsert(
         self,

@@ -9,6 +9,7 @@ from sqlmodel import Session, col, select
 
 from app.models import Company, Contact, ContactRevealBatch, Upload
 from app.models.pipeline import ContactFetchBatchState
+from app.services.contact_reveal import reveal_email_for_person, smtp_to_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +31,6 @@ def _is_eligible(contact: Contact) -> bool:
         return True
     stale_cutoff = _utcnow() - timedelta(days=_REVEAL_FRESHNESS_DAYS)
     return contact.updated_at < stale_cutoff
-
-
-def _smtp_to_confidence(smtp_status: str) -> float:
-    if smtp_status == "valid":
-        return 1.0
-    if smtp_status == "unknown":
-        return 0.5
-    return 0.0
-
-
-def _best_email(emails: list[dict]) -> dict:
-    order = {"valid": 0, "unknown": 1}
-    return min(emails, key=lambda email: order.get(email.get("smtp_status", ""), 2))
 
 
 class EmailRevealService:
@@ -112,50 +100,29 @@ class EmailRevealService:
             company = session.get(Company, company_id)
             domain = company.domain if company else ""
 
-        email: str | None = None
-        smtp_status: str | None = None
-        raw: dict = {}
-        err = ""
-
-        if provider == "snov":
-            from app.services.snov_client import SnovClient
-
-            client = SnovClient()
-            emails, err = client.search_prospect_email(provider_person_id)
-            if not err and emails:
-                best = _best_email(emails)
-                email = best.get("email")
-                smtp_status = best.get("smtp_status")
-                raw = best
-            elif not err:
-                emails, err = client.find_email_by_name(first_name, last_name, domain)
-                if not err and emails:
-                    best = _best_email(emails)
-                    email = best.get("email")
-                    smtp_status = best.get("smtp_status")
-                    raw = best
-        elif provider == "apollo":
-            from app.services.apollo_client import ApolloClient
-
-            client = ApolloClient()
-            person = client.reveal_email(provider_person_id)
-            if person:
-                email = person.get("email") or None
-                smtp_status = "valid" if email else None
-                raw = person
-            err = client.last_error_code if not person else ""
-        else:
+        if provider not in ("snov", "apollo"):
             logger.warning("reveal_email: unknown source_provider %r for contact %s", provider, cid)
             return
 
-        if err:
-            logger.warning("reveal_email: provider error %r for contact %s", err, cid)
-            raise RuntimeError(f"email_reveal_provider_error:{err}")
+        result = reveal_email_for_person(
+            provider=provider,
+            person_id=provider_person_id,
+            first_name=first_name,
+            last_name=last_name,
+            domain=domain,
+        )
 
-        if not email:
+        if result.error_code:
+            logger.warning("reveal_email: provider error %r for contact %s", result.error_code, cid)
+            raise RuntimeError(f"email_reveal_provider_error:{result.error_code}")
+
+        if not result.found:
             return
 
-        confidence = _smtp_to_confidence(smtp_status or "")
+        email = result.email
+        smtp_status = result.smtp_status
+        raw = result.raw or {}
+        confidence = smtp_to_confidence(smtp_status)
 
         with Session(engine) as session:
             contact = session.get(Contact, cid)
