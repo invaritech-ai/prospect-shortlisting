@@ -8,7 +8,7 @@ import type {
   DecisionFilter,
   StatsResponse,
 } from '../../../lib/types'
-import { listDiscoveredCompanies } from '../../../lib/api'
+import { listDiscoveredCompanies, listTitleMatchRules } from '../../../lib/api'
 import { parseApiError } from '../../../lib/utils'
 import { LetterStrip } from '../../ui/LetterStrip'
 import { SelectionBar } from '../../ui/SelectionBar'
@@ -100,6 +100,8 @@ interface S3ContactFetchViewProps {
   onFetchOne: (company: CompanyListItem) => void
   onFetchSelected: () => void
   onResetStuck?: () => void
+  onOpenTitleRules?: (newRulesSinceLastSeen: number) => void
+  titleRulesDrawerOpen?: boolean
   onViewContacts: (company: CompanyListItem) => void
   offset: number
   pageSize: number
@@ -156,6 +158,8 @@ export function S3ContactFetchView({
   onFetchOne,
   onFetchSelected,
   onResetStuck,
+  onOpenTitleRules,
+  titleRulesDrawerOpen,
   onViewContacts,
   offset,
   pageSize,
@@ -182,6 +186,54 @@ export function S3ContactFetchView({
   const setAuditSearchAndReset = (value: string) => {
     setAuditSearch(value)
     setAuditOffset(0)
+  }
+
+  // ── Title-rule change badge ──
+  // Counts rules added since this user last opened the title-rules drawer for
+  // this campaign. lastSeen is stored per-campaign in localStorage; on first
+  // visit we seed it to "now" so existing rules don't show as new.
+  const [unseenRuleCount, setUnseenRuleCount] = useState(0)
+  const titleRulesStorageKey = campaignId ? `ps:title-rules-last-seen:${campaignId}` : ''
+  const prevDrawerOpenRef = useRef<boolean>(Boolean(titleRulesDrawerOpen))
+
+  useEffect(() => {
+    if (!campaignId) {
+      setUnseenRuleCount(0)
+      return
+    }
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const rules = await listTitleMatchRules(campaignId)
+        if (cancelled) return
+        let lastSeen = window.localStorage.getItem(titleRulesStorageKey)
+        if (!lastSeen) {
+          lastSeen = new Date().toISOString()
+          window.localStorage.setItem(titleRulesStorageKey, lastSeen)
+        }
+        const lastSeenMs = Date.parse(lastSeen)
+        const newer = rules.filter((r) => Date.parse(r.created_at) > lastSeenMs).length
+        setUnseenRuleCount(newer)
+      } catch {
+        if (!cancelled) setUnseenRuleCount(0)
+      }
+    }
+    void refresh()
+    // Refetch when the drawer transitions open → closed (likely a save happened).
+    if (prevDrawerOpenRef.current && !titleRulesDrawerOpen) {
+      void refresh()
+    }
+    prevDrawerOpenRef.current = Boolean(titleRulesDrawerOpen)
+    return () => { cancelled = true }
+  }, [campaignId, titleRulesDrawerOpen, titleRulesStorageKey])
+
+  const handleOpenTitleRules = () => {
+    const countAtClick = unseenRuleCount
+    if (titleRulesStorageKey) {
+      window.localStorage.setItem(titleRulesStorageKey, new Date().toISOString())
+    }
+    setUnseenRuleCount(0)
+    onOpenTitleRules?.(countAtClick)
   }
 
   const setAuditModeAndReset = (value: AuditMode) => {
@@ -373,6 +425,24 @@ export function S3ContactFetchView({
               : 'Companies with at least one title-matched contact.'}
           </span>
         )}
+        {onOpenTitleRules && (
+          <button
+            type="button"
+            onClick={handleOpenTitleRules}
+            disabled={controlsDisabled}
+            className="relative ml-auto rounded-lg border border-(--oc-border) px-3 py-1 text-xs font-medium transition hover:border-(--s3) hover:text-(--s3-text) hover:cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Edit title rules
+            {unseenRuleCount > 0 && (
+              <span
+                aria-label={`${unseenRuleCount} new title rule${unseenRuleCount === 1 ? '' : 's'}`}
+                className="absolute -right-1.5 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white"
+              >
+                {unseenRuleCount > 9 ? '9+' : unseenRuleCount}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {!isAuditActive && (
@@ -545,9 +615,9 @@ export function S3ContactFetchView({
                         type="button"
                         onClick={() => onViewContacts(summaryToCompanyStub(summary))}
                         disabled={controlsDisabled}
-                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text)"
+                        className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text) hover:cursor-pointer disabled:cursor-not-allowed"
                       >
-                        View emails
+                        Contacts
                       </button>
                     </td>
                   </tr>
@@ -637,10 +707,10 @@ export function S3ContactFetchView({
                     <button
                       type="button"
                       onClick={() => onViewContacts(c)}
-                      disabled={controlsDisabled || (c.revealed_contact_count ?? c.contact_count ?? 0) === 0}
-                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text) disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={controlsDisabled || (c.contact_count ?? 0) === 0}
+                      className="rounded-lg border border-(--oc-border) px-2.5 py-1.5 text-[11px] font-medium transition hover:border-(--s3) hover:text-(--s3-text) hover:cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      Emails
+                      Contacts
                     </button>
                     <button
                       type="button"

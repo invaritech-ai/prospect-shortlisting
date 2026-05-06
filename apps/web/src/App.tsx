@@ -180,6 +180,7 @@ function App() {
 
   // ── Title rules panel ─────────────────────────────────────────────────────
   const [isTitleRulesOpen, setIsTitleRulesOpen] = useState(false)
+  const [titleRulesNewCountAtOpen, setTitleRulesNewCountAtOpen] = useState(0)
   const [isStartingCampaignPipeline, setIsStartingCampaignPipeline] = useState(false)
 
   // ── Custom hooks ──────────────────────────────────────────────────────────
@@ -1145,6 +1146,11 @@ function App() {
             onFetchOne={(c) => void onFetchContacts(c)}
             onFetchSelected={pipeline.onPipelineFetchContacts}
             onResetStuck={() => void resetStuckContactFetchJobs().then(() => void loadRecentActivity())}
+            onOpenTitleRules={(newCount) => {
+              setTitleRulesNewCountAtOpen(newCount)
+              setIsTitleRulesOpen(true)
+            }}
+            titleRulesDrawerOpen={isTitleRulesOpen}
             onViewContacts={(company) => void panels.openCompanyContacts(company)}
             offset={pipeline.pipelineOffset}
             pageSize={pipeline.pipelinePageSize}
@@ -1350,7 +1356,11 @@ function App() {
       <TitleRulesPanel
         campaignId={selectedCampaignId}
         isOpen={isTitleRulesOpen}
-        onClose={() => setIsTitleRulesOpen(false)}
+        newRulesSinceLastSeen={titleRulesNewCountAtOpen}
+        onClose={() => {
+          setIsTitleRulesOpen(false)
+          setTitleRulesNewCountAtOpen(0)
+        }}
       />
 
       {busyMessage !== null && <GlobalLoadingOverlay message={busyMessage} />}

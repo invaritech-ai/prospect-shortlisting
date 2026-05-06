@@ -14,10 +14,17 @@ import { Drawer } from '../ui/Drawer'
 interface TitleRulesPanelProps {
   campaignId: string | null
   isOpen: boolean
+  newRulesSinceLastSeen?: number
   onClose: () => void
 }
 
-export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanelProps) {
+export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0, onClose }: TitleRulesPanelProps) {
+  const [noticeDismissed, setNoticeDismissed] = useState(false)
+  useEffect(() => {
+    // Reset dismissal whenever a new "open" event arrives so the banner
+    // re-shows next time the user opens the drawer with unseen changes.
+    if (isOpen) setNoticeDismissed(false)
+  }, [isOpen])
   const [rules, setRules] = useState<TitleMatchRuleRead[]>([])
   const [stats, setStats] = useState<TitleRuleStatsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -153,6 +160,24 @@ export function TitleRulesPanel({ campaignId, isOpen, onClose }: TitleRulesPanel
   return (
     <Drawer isOpen={isOpen} onClose={onClose} title="Title Match Rules" subtitle="S3 · Contacts" size="lg">
       <div className="flex h-full flex-col gap-5 overflow-y-auto p-5">
+
+        {/* "New rules since last visit" banner */}
+        {newRulesSinceLastSeen > 0 && !noticeDismissed && (
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+            <span className="text-amber-900">
+              <span className="font-bold">{newRulesSinceLastSeen}</span>{' '}
+              {newRulesSinceLastSeen === 1 ? 'rule was' : 'rules were'} added since you last opened this panel.
+            </span>
+            <button
+              type="button"
+              onClick={() => setNoticeDismissed(true)}
+              className="rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 hover:cursor-pointer"
+              aria-label="Dismiss"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Stats header */}
         {(stats || isLoadingStats) && (
