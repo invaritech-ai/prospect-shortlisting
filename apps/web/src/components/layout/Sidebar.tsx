@@ -40,8 +40,8 @@ const NAV_ITEMS: Array<{
   { value: 'full-pipeline', label: 'Full Pipeline', Icon: IconSliders },
   { value: 's1-scraping', label: 'S1 · Scraping', stageColor: 'var(--s1)', Icon: IconGlobe },
   { value: 's2-ai', label: 'S2 · AI Decision', stageColor: 'var(--s2)', Icon: IconChart },
-  { value: 's3-contacts', label: 'S3 · Contacts', stageColor: 'var(--s3)', Icon: IconUsers },
-  { value: 's4-reveal', label: 'S4 · Reveal', stageColor: 'var(--s4)', Icon: IconZap },
+  { value: 's3-contacts', label: 'S3 · Contacts & Emails', stageColor: 'var(--s3)', Icon: IconUsers },
+  { value: 's4-reveal', label: 'S4 · Retry Reveals', stageColor: 'var(--s4)', Icon: IconZap },
   { value: 's5-validation', label: 'S5 · Validation', stageColor: 'var(--s5)', Icon: IconCheck },
   { value: 'queue-history', label: 'Queue History', Icon: IconHistory },
 ]

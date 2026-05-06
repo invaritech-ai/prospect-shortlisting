@@ -314,6 +314,7 @@ export function S3ContactFetchView({
           {[
             { label: 'Discovered', value: discoveredCounts.total, color: '#14532d', bg: '#dcfce7' },
             { label: 'Title matched', value: discoveredCounts.matched, color: '#0f766e', bg: '#ccfbf1' },
+            { label: 'Needs reveal retry', value: discoveredCounts.fetched_no_email ?? 0, color: '#92400e', bg: '#fef3c7' },
             { label: 'Fresh', value: discoveredCounts.fresh, color: '#0369a1', bg: '#dbeafe' },
             { label: 'Stale', value: discoveredCounts.stale, color: '#92400e', bg: '#fef3c7' },
           ].map(({ label, value, color, bg }) => (

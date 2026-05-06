@@ -537,7 +537,7 @@ export type ProspectContactRead = {
   updated_at: string
 }
 
-export type ContactStage = 'fetched' | 'email_revealed' | 'campaign_ready'
+export type ContactStage = 'fetched' | 'fetched_no_email' | 'email_revealed' | 'campaign_ready'
 export type ContactStageFilter = 'all' | ContactStage
 
 export type ContactListResponse = {
@@ -590,6 +590,7 @@ export type ContactCountsResponse = {
   stale: number
   fresh: number
   already_revealed: number
+  fetched_no_email?: number
 }
 
 export type ContactVerifyRequest = {
@@ -649,6 +650,7 @@ export type DiscoveredContactCountsResponse = {
   stale: number
   fresh: number
   already_revealed: number
+  fetched_no_email?: number
 }
 
 export type DiscoveredContactIdsResult = {

@@ -124,7 +124,7 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
             style={activeView === 's3-contacts' ? { backgroundColor: 'var(--s3)22', color: 'var(--s3)' } : {}}
           >
             <IconUsers size={16} />
-            S3 · Contacts
+            S3 · Contacts & Emails
           </button>
           <button
             type="button"
@@ -140,7 +140,7 @@ export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: Bo
             style={activeView === 's4-reveal' ? { backgroundColor: 'var(--s4)22', color: 'var(--s4)' } : {}}
           >
             <IconZap size={16} />
-            S4 · Reveal
+            S4 · Retry Reveals
           </button>
           <button
             type="button"
