@@ -132,6 +132,64 @@ def load_title_rules(
     return include_rules, exclude_words
 
 
+# Map our internal seniority preset names to Apollo's `person_seniorities[]` enum.
+# Apollo enum reference: owner, founder, c_suite, partner, vp, head, director, manager, senior, entry, intern.
+_APOLLO_SENIORITY_MAP: dict[str, str] = {
+    "c_level": "c_suite",
+    "vp_level": "vp",
+    "director_level": "director",
+    "manager_level": "manager",
+    "senior_ic": "senior",
+}
+
+
+def derive_apollo_filters(
+    session: Session,
+    *,
+    campaign_id: UUID,
+) -> tuple[list[str], list[str]]:
+    """Translate a campaign's title rules into Apollo `person_titles` and `person_seniorities`.
+
+    Regex rules and multi-keyword AND rules cannot be expressed in Apollo's filter
+    grammar. We skip them server-side and rely on the local `match_title` pass to
+    do the final filter — Apollo will over-fetch in those cases but never under-fetch.
+
+    Returns (person_titles, person_seniorities). Either may be empty; an empty
+    return means "do not pass any filter to Apollo" (search the whole domain).
+    """
+    rules = list(
+        session.exec(
+            select(TitleMatchRule)
+            .where(col(TitleMatchRule.campaign_id) == campaign_id)
+            .where(col(TitleMatchRule.rule_type) == "include")
+        )
+    )
+    titles: list[str] = []
+    seniorities: list[str] = []
+    for rule in rules:
+        match_type = (rule.match_type or "keyword").strip().lower()
+        kw = (rule.keywords or "").strip()
+        if not kw:
+            continue
+        if match_type == "regex":
+            continue  # Apollo can't express; local filter will catch.
+        if match_type == "seniority":
+            mapped = _APOLLO_SENIORITY_MAP.get(kw)
+            if mapped and mapped not in seniorities:
+                seniorities.append(mapped)
+            continue
+        # keyword: comma-separated. Single term → push as title; multi-term AND
+        # cannot be pushed (Apollo OR-merges person_titles[]). Use the longest
+        # term as the most specific hint, local filter does the AND check.
+        parts = [p.strip() for p in kw.split(",") if p.strip()]
+        if not parts:
+            continue
+        candidate = max(parts, key=len) if len(parts) > 1 else parts[0]
+        if candidate not in titles:
+            titles.append(candidate)
+    return titles, seniorities
+
+
 def rematch_contacts(session: Session, *, campaign_id: UUID) -> int:
     include_rules, exclude_words = load_title_rules(session, campaign_id=campaign_id)
     contacts = list(

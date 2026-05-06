@@ -22,6 +22,10 @@ def _utcnow() -> datetime:
 def _is_eligible(contact: Contact) -> bool:
     if not contact.title_match:
         return False
+    # Retry path for the merged S3+S4 flow: contacts that matched rules but
+    # didn't get an email during the inline reveal are flagged fetched_no_email.
+    if contact.pipeline_stage == "fetched_no_email":
+        return True
     if contact.email is None:
         return True
     stale_cutoff = _utcnow() - timedelta(days=_REVEAL_FRESHNESS_DAYS)

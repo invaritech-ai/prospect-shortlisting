@@ -166,6 +166,29 @@ def test_enqueue_includes_stale_email(db_session: Session) -> None:
     assert skipped == 0
 
 
+def test_enqueue_includes_fetched_no_email_retry(db_session: Session) -> None:
+    """After merged S3+S4 flow, contacts marked fetched_no_email must be eligible
+    for the standalone reveal endpoint as a retry path."""
+    from app.services.email_reveal_service import EmailRevealService
+
+    campaign = _seed_campaign(db_session)
+    company = _seed_company(db_session, campaign)
+    contact = _seed_contact(db_session, company, title_match=True, email=None)
+    contact.pipeline_stage = "fetched_no_email"
+    db_session.add(contact)
+    db_session.commit()
+
+    _batch, contact_ids, skipped = EmailRevealService().enqueue(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+    db_session.commit()
+
+    assert len(contact_ids) == 1
+    assert skipped == 0
+
+
 def test_run_reveal_snov_writes_email(db_session: Session, monkeypatch) -> None:
     from app.services.email_reveal_service import EmailRevealService
     from app.services import snov_client as snov_mod

@@ -738,7 +738,7 @@ class Contact(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
-    # Pipeline stage: fetched | email_revealed | campaign_ready
+    # Pipeline stage: fetched | fetched_no_email | email_revealed | campaign_ready
     pipeline_stage: str = Field(default="fetched", max_length=32, index=True)
 
     discovered_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)

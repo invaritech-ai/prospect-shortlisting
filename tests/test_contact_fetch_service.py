@@ -175,15 +175,21 @@ def test_run_job_apollo_upserts_contacts(db_session: Session, monkeypatch) -> No
     assert contacts[0].linkedin_url == "https://li/bob"
 
 
-def test_run_job_both_providers_kept(db_session: Session, monkeypatch) -> None:
+def test_run_job_apollo_first_skips_snov_when_apollo_finds_matches(
+    db_session: Session, monkeypatch
+) -> None:
+    """Merged S3+S4 flow: Snov is fallback-only; if Apollo returned any match we skip Snov."""
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
 
-    monkeypatch.setattr(
-        snov_mod.SnovClient, "search_prospects",
-        lambda self, domain, page=1: ([{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO"}], 1, ""),
-    )
+    snov_called: list[bool] = []
+
+    def _snov_search(self, domain, page=1):
+        snov_called.append(True)
+        return ([{"id": "snov-1", "first_name": "Alice", "last_name": "Smith", "position": "CMO"}], 1, "")
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", _snov_search)
     monkeypatch.setattr(
         apollo_mod.ApolloClient, "search_people",
         lambda self, domain, **kw: [{"id": "apollo-1", "first_name": "Bob", "last_name": "Jones", "title": "CTO"}],
@@ -194,7 +200,8 @@ def test_run_job_both_providers_kept(db_session: Session, monkeypatch) -> None:
     ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
 
     contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
-    assert {c.source_provider for c in contacts} == {"snov", "apollo"}
+    assert {c.source_provider for c in contacts} == {"apollo"}
+    assert snov_called == []  # Snov fallback must not have fired
 
 
 def test_run_job_succeeds_when_one_provider_finds_contacts_and_other_fails(
@@ -442,18 +449,18 @@ def test_cas_claim_sets_lock_expires_at(db_session: Session, monkeypatch) -> Non
     company, job = _seed_job(db_session, campaign)
     db_session.commit()
 
-    # Capture state mid-run by patching finalization
+    # Capture state mid-run by patching the apollo phase
     lock_expires_at_during_run: list = []
-    original_run_provider = ContactFetchService._run_provider
+    original_run_apollo = ContactFetchService._run_apollo
 
-    def patched_run_provider(self, *, engine, **kwargs):
+    def patched_run_apollo(self, *, engine, **kwargs):
         with Session(engine) as s:
             j = s.get(ContactFetchJob, kwargs.get("job_id") or job.id)
             if j:
                 lock_expires_at_during_run.append(j.lock_expires_at)
-        return original_run_provider(self, engine=engine, **kwargs)
+        return original_run_apollo(self, engine=engine, **kwargs)
 
-    monkeypatch.setattr(ContactFetchService, "_run_provider", patched_run_provider)
+    monkeypatch.setattr(ContactFetchService, "_run_apollo", patched_run_apollo)
 
     ContactFetchService().run_contact_fetch_job(
         engine=db_session.bind,
@@ -463,6 +470,133 @@ def test_cas_claim_sets_lock_expires_at(db_session: Session, monkeypatch) -> Non
     assert len(lock_expires_at_during_run) > 0
     assert lock_expires_at_during_run[0] is not None
     assert lock_expires_at_during_run[0].tzinfo is not None  # timezone-aware
+
+
+# ── Merged S3+S4 flow ────────────────────────────────────────────────────────
+
+def test_snov_fallback_fires_when_apollo_returns_zero_matches(
+    db_session: Session, monkeypatch
+) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+    from app.models import TitleMatchRule
+
+    monkeypatch.setattr(apollo_mod.ApolloClient, "search_people", lambda self, domain, **kw: [])
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: (
+            [{"id": "snov-1", "first_name": "Alice", "last_name": "S", "position": "marketing director"}],
+            1,
+            "",
+        ),
+    )
+
+    campaign = _seed_campaign(db_session)
+    db_session.add(TitleMatchRule(campaign_id=campaign.id, rule_type="include", keywords="marketing, director", match_type="keyword"))
+    db_session.flush()
+    company, job = _seed_job(db_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert len(contacts) == 1
+    assert contacts[0].source_provider == "snov"
+    assert contacts[0].title_match is True
+
+
+def test_inline_reveal_skipped_when_provider_has_email_false(
+    db_session: Session, monkeypatch
+) -> None:
+    """provider_has_email=False → reveal not called, contact stored as fetched_no_email."""
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: [{
+            "id": "apollo-1", "first_name": "Bob", "last_name": "J", "title": "CTO",
+            # no "email" key → provider_has_email becomes False
+        }],
+    )
+    reveal_calls: list[str] = []
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "reveal_email",
+        lambda self, pid: (reveal_calls.append(pid), None)[1],
+    )
+
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert len(contacts) == 1
+    assert contacts[0].pipeline_stage == "fetched_no_email"
+    assert contacts[0].email is None
+    assert reveal_calls == []  # reveal must not have been called
+
+
+def test_inline_reveal_succeeds_promotes_to_email_revealed(
+    db_session: Session, monkeypatch
+) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: [{
+            "id": "apollo-1", "first_name": "Bob", "last_name": "J", "title": "CTO",
+            "email": "b****@acme.com",  # masked → triggers provider_has_email=True
+        }],
+    )
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "reveal_email",
+        lambda self, pid: {"id": pid, "email": "bob@acme.com"},
+    )
+
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert len(contacts) == 1
+    assert contacts[0].email == "bob@acme.com"
+    assert contacts[0].pipeline_stage == "email_revealed"
+    assert contacts[0].email_provider == "apollo"
+
+
+def test_inline_reveal_failure_marks_fetched_no_email(
+    db_session: Session, monkeypatch
+) -> None:
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    monkeypatch.setattr(snov_mod.SnovClient, "search_prospects", lambda self, domain, page=1: ([], 0, ""))
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: [{
+            "id": "apollo-1", "first_name": "Bob", "last_name": "J", "title": "CTO",
+            "email": "b****@acme.com",
+        }],
+    )
+    monkeypatch.setattr(apollo_mod.ApolloClient, "reveal_email", lambda self, pid: None)
+
+    campaign = _seed_campaign(db_session)
+    company, job = _seed_job(db_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(engine=db_session.bind, contact_fetch_job_id=str(job.id))
+
+    contacts = list(db_session.exec(select(Contact).where(col(Contact.company_id) == company.id)))
+    assert len(contacts) == 1
+    assert contacts[0].pipeline_stage == "fetched_no_email"
+    assert contacts[0].email is None
 
 
 @pytest.mark.asyncio

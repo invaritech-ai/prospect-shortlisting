@@ -160,11 +160,12 @@ class ApolloClient:
         domain: str,
         page: int = 1,
         person_titles: list[str] | None = None,
+        person_seniorities: list[str] | None = None,
     ) -> list[dict]:
         """Search Apollo's people database for a company domain.
 
-        If person_titles is provided, Apollo pre-filters by job title,
-        reducing results to relevant contacts and saving API credits.
+        If person_titles or person_seniorities are provided, Apollo pre-filters
+        the result set, reducing returned contacts and saving API credits.
         """
         if not self._resolved_api_key():
             self.last_error_code = ERR_APOLLO_CREDENTIALS_MISSING
@@ -177,6 +178,8 @@ class ApolloClient:
         }
         if person_titles:
             params["person_titles[]"] = person_titles
+        if person_seniorities:
+            params["person_seniorities[]"] = person_seniorities
 
         data, err = self._post_json("/mixed_people/api_search", query_params=params)
         if err:

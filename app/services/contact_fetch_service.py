@@ -6,8 +6,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-_JOB_LOCK_TTL = timedelta(hours=1)
-
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
@@ -17,7 +15,6 @@ from app.models import (
     ContactFetchBatch,
     ContactFetchJob,
     ContactProviderAttempt,
-    TitleMatchRule,
     Upload,
 )
 from app.models.pipeline import (
@@ -25,7 +22,13 @@ from app.models.pipeline import (
     ContactFetchJobState,
     ContactProviderAttemptState,
 )
-from app.services.title_match_service import load_title_rules, match_title
+from app.services.title_match_service import (
+    derive_apollo_filters,
+    load_title_rules,
+    match_title,
+)
+
+_JOB_LOCK_TTL = timedelta(hours=1)
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +158,15 @@ class ContactFetchService:
     # ── Worker execution ──────────────────────────────────────────────────────
 
     def run_contact_fetch_job(self, *, engine: Any, contact_fetch_job_id: str) -> None:
-        """CAS-claim, run Snov then Apollo, upsert contacts, close job."""
+        """Merged S3+S4 flow.
+
+        1. CAS-claim the job.
+        2. Apollo first, with server-side title/seniority filter.
+        3. Local match_title() final filter (catches regex/AND rules Apollo can't express).
+        4. Snov fallback only if Apollo errored OR returned 0 matches.
+        5. Inline reveal — only when provider_has_email is True.
+        6. Upsert matched contacts; pipeline_stage = email_revealed | fetched_no_email.
+        """
         job_id = UUID(contact_fetch_job_id)
         lock_token = str(uuid4())
         now = _utcnow()
@@ -188,56 +199,69 @@ class ContactFetchService:
             upload = session.get(Upload, company.upload_id)
             campaign_id = upload.campaign_id
 
-            # Extract plain values before session closes
-            providers = list(job.requested_providers_json or ["snov", "apollo"])
             company_id_val = company.id
             company_domain = company.domain
 
             include_rules, exclude_words = load_title_rules(session, campaign_id=campaign_id)
+            apollo_titles, apollo_seniorities = derive_apollo_filters(session, campaign_id=campaign_id)
             session.commit()
 
-        total_found = 0
-        total_matched = 0
-        any_failure = False
+        # Phase 2: Apollo (always tried first)
+        apollo_matches, apollo_err = self._run_apollo(
+            engine=engine,
+            job_id=job_id,
+            company_id=company_id_val,
+            company_domain=company_domain,
+            include_rules=include_rules,
+            exclude_words=exclude_words,
+            person_titles=apollo_titles,
+            person_seniorities=apollo_seniorities,
+            seq_idx=0,
+        )
 
-        for seq_idx, provider in enumerate(providers):
-            err = self._run_provider(
+        # Phase 3: Snov fallback — only if Apollo errored OR returned 0 matches
+        snov_matches: list[dict] = []
+        snov_err = ""
+        if apollo_err or not apollo_matches:
+            snov_matches, snov_err = self._run_snov(
                 engine=engine,
                 job_id=job_id,
                 company_id=company_id_val,
                 company_domain=company_domain,
-                provider=provider,
-                seq_idx=seq_idx,
                 include_rules=include_rules,
                 exclude_words=exclude_words,
+                seq_idx=1,
             )
-            if err:
-                any_failure = True
-            else:
-                with Session(engine) as session:
-                    attempt = session.exec(
-                        select(ContactProviderAttempt)
-                        .where(
-                            col(ContactProviderAttempt.contact_fetch_job_id) == job_id,
-                            col(ContactProviderAttempt.provider) == provider,
-                        )
-                    ).first()
-                    if attempt:
-                        total_found += int(attempt.contacts_found or 0)
-                        total_matched += int(attempt.title_matched_count or 0)
+
+        all_matches = apollo_matches + snov_matches
+
+        # Phase 4: inline reveal + upsert (single transaction, batch for efficiency)
+        revealed_count = self._reveal_and_upsert(
+            engine=engine,
+            job_id=job_id,
+            company_id=company_id_val,
+            company_domain=company_domain,
+            matches=all_matches,
+        )
+
+        total_found = len(all_matches)
+        total_matched = len(all_matches)
+        any_failure = bool(apollo_err) and bool(snov_err or not snov_matches)
 
         final_state = (
             ContactFetchJobState.FAILED
             if any_failure and total_found == 0
             else ContactFetchJobState.SUCCEEDED
         )
+        partial = bool(apollo_err) and total_found > 0
+        _ = revealed_count  # currently unused; reserved for future telemetry
         with Session(engine) as session:
             job = session.get(ContactFetchJob, job_id)
             job.state = final_state
             job.terminal_state = True
             job.contacts_found = total_found
             job.title_matched_count = total_matched
-            job.last_error_code = "partial_provider_failure" if any_failure and total_found > 0 else None
+            job.last_error_code = "partial_provider_failure" if partial else None
             job.finished_at = _utcnow()
             job.updated_at = _utcnow()
             session.add(job)
@@ -247,22 +271,15 @@ class ContactFetchService:
         if batch_id:
             self._maybe_finalize_batch(engine=engine, batch_id=batch_id)
 
-    def _run_provider(
+    def _open_attempt(
         self,
         *,
         engine: Any,
         job_id: UUID,
-        company_id: UUID,
-        company_domain: str,
         provider: str,
         seq_idx: int,
-        include_rules: list[list[str]],
-        exclude_words: list[str],
-    ) -> str:
-        """Run one provider, upsert contacts. Returns error code or ''."""
-        from app.services.apollo_client import ApolloClient
-        from app.services.snov_client import SnovClient
-
+    ) -> UUID:
+        """Open (or reopen) a ContactProviderAttempt row, return its id."""
         now = _utcnow()
         with Session(engine) as session:
             attempt = session.exec(
@@ -294,111 +311,17 @@ class ContactFetchService:
                 session.add(attempt)
             session.commit()
             session.refresh(attempt)
-            attempt_id = attempt.id
+            return attempt.id
 
-        people: list[dict] = []
-        err = ""
-
-        if provider == "snov":
-            client = SnovClient()
-            all_prospects: list[dict] = []
-            page = 1
-            total_expected = 0
-            while page <= _SNOV_MAX_PAGES:
-                prospects, total, err = client.search_prospects(company_domain, page=page)
-                if err:
-                    break
-                if page == 1:
-                    total_expected = max(int(total or 0), 0)
-                if not prospects:
-                    break
-                all_prospects.extend(prospects)
-                if total_expected and len(all_prospects) >= total_expected:
-                    break
-                page += 1
-            people = [_snov_to_person(p, company_domain) for p in all_prospects]
-        elif provider == "apollo":
-            client = ApolloClient()
-            all_people: list[dict] = []
-            page = 1
-            while page <= _APOLLO_MAX_PAGES:
-                raw = client.search_people(company_domain, page=page)
-                err = client.last_error_code
-                if err:
-                    break
-                if not raw:
-                    break
-                all_people.extend(raw)
-                if len(raw) < 100:
-                    break
-                page += 1
-            people = [_apollo_to_person(p) for p in all_people]
-        else:
-            err = f"unknown_provider_{provider}"
-
-        people = _dedupe_people(people)
-        contacts_found = 0
-        title_matched = 0
-
-        if not err:
-            with Session(engine) as session:
-                person_ids = [str(person.get("provider_person_id") or "").strip() for person in people]
-                person_ids = [person_id for person_id in person_ids if person_id]
-                existing_by_id: dict[str, Contact] = {}
-                if person_ids:
-                    existing = list(
-                        session.exec(
-                            select(Contact).where(
-                                col(Contact.company_id) == company_id,
-                                col(Contact.source_provider) == provider,
-                                col(Contact.provider_person_id).in_(person_ids),
-                            )
-                        )
-                    )
-                    existing_by_id = {str(contact.provider_person_id): contact for contact in existing}
-
-                for person in people:
-                    person_id = str(person.get("provider_person_id") or "").strip()
-                    if not person_id:
-                        continue
-                    is_match = (
-                        match_title(person.get("title") or "", include_rules, exclude_words)
-                        if include_rules
-                        else False
-                    )
-                    existing = existing_by_id.get(person_id)
-                    if existing:
-                        existing.first_name = person.get("first_name", existing.first_name)
-                        existing.last_name = person.get("last_name", existing.last_name)
-                        existing.title = person.get("title", existing.title)
-                        existing.linkedin_url = person.get("linkedin_url", existing.linkedin_url)
-                        existing.provider_has_email = person.get("provider_has_email", existing.provider_has_email)
-                        existing.title_match = is_match
-                        existing.last_seen_at = _utcnow()
-                        existing.updated_at = _utcnow()
-                        existing.contact_fetch_job_id = job_id
-                        session.add(existing)
-                    else:
-                        created = Contact(
-                            company_id=company_id,
-                            contact_fetch_job_id=job_id,
-                            source_provider=provider,
-                            provider_person_id=person_id,
-                            first_name=person.get("first_name", ""),
-                            last_name=person.get("last_name", ""),
-                            title=person.get("title"),
-                            linkedin_url=person.get("linkedin_url"),
-                            provider_has_email=person.get("provider_has_email"),
-                            raw_payload_json=person.get("raw_payload_json"),
-                            title_match=is_match,
-                        )
-                        session.add(created)
-                        existing_by_id[person_id] = created
-                    contacts_found += 1
-                    if is_match:
-                        title_matched += 1
-                session.commit()
-
+    def _close_attempt(
+        self,
+        *,
+        engine: Any,
+        attempt_id: UUID,
+        err: str,
+        contacts_found: int,
+        title_matched: int,
+    ) -> None:
         final = ContactProviderAttemptState.SUCCEEDED if not err else ContactProviderAttemptState.FAILED
         with Session(engine) as session:
             attempt = session.get(ContactProviderAttempt, attempt_id)
@@ -413,7 +336,276 @@ class ContactFetchService:
             session.add(attempt)
             session.commit()
 
-        return err
+    def _run_apollo(
+        self,
+        *,
+        engine: Any,
+        job_id: UUID,
+        company_id: UUID,
+        company_domain: str,
+        include_rules: list[list[str]],
+        exclude_words: list[str],
+        person_titles: list[str],
+        person_seniorities: list[str],
+        seq_idx: int,
+    ) -> tuple[list[dict], str]:
+        """Page through Apollo with server-side filters; return locally-matched people."""
+        from app.services.apollo_client import ApolloClient
+
+        attempt_id = self._open_attempt(engine=engine, job_id=job_id, provider="apollo", seq_idx=seq_idx)
+
+        client = ApolloClient()
+        raw_people: list[dict] = []
+        err = ""
+        page = 1
+        while page <= _APOLLO_MAX_PAGES:
+            raw = client.search_people(
+                company_domain,
+                page=page,
+                person_titles=person_titles or None,
+                person_seniorities=person_seniorities or None,
+            )
+            err = client.last_error_code
+            if err:
+                break
+            if not raw:
+                break
+            raw_people.extend(raw)
+            if len(raw) < 100:
+                break
+            page += 1
+
+        people = _dedupe_people([_apollo_to_person(p) for p in raw_people])
+        contacts_found = len(people)
+        matches: list[dict] = []
+        # No include rules configured → treat every person as a match (uninitialised
+        # campaign behaviour). Once rules exist, both Apollo and Snov are filtered.
+        if include_rules:
+            for p in people:
+                if match_title(p.get("title") or "", include_rules, exclude_words):
+                    matches.append({**p, "_provider": "apollo"})
+        else:
+            matches.extend({**p, "_provider": "apollo"} for p in people)
+
+        self._close_attempt(
+            engine=engine,
+            attempt_id=attempt_id,
+            err=err,
+            contacts_found=contacts_found,
+            title_matched=len(matches),
+        )
+        _ = company_id  # reserved for per-attempt company linking if needed
+        return matches, err
+
+    def _run_snov(
+        self,
+        *,
+        engine: Any,
+        job_id: UUID,
+        company_id: UUID,
+        company_domain: str,
+        include_rules: list[list[str]],
+        exclude_words: list[str],
+        seq_idx: int,
+    ) -> tuple[list[dict], str]:
+        """Page through Snov (no server-side title filter); return locally-matched people."""
+        from app.services.snov_client import SnovClient
+
+        attempt_id = self._open_attempt(engine=engine, job_id=job_id, provider="snov", seq_idx=seq_idx)
+
+        client = SnovClient()
+        all_prospects: list[dict] = []
+        err = ""
+        total_expected = 0
+        page = 1
+        while page <= _SNOV_MAX_PAGES:
+            prospects, total, err = client.search_prospects(company_domain, page=page)
+            if err:
+                break
+            if page == 1:
+                total_expected = max(int(total or 0), 0)
+            if not prospects:
+                break
+            all_prospects.extend(prospects)
+            if total_expected and len(all_prospects) >= total_expected:
+                break
+            page += 1
+
+        people = _dedupe_people([_snov_to_person(p, company_domain) for p in all_prospects])
+        contacts_found = len(people)
+        matches: list[dict] = []
+        if include_rules:
+            for p in people:
+                if match_title(p.get("title") or "", include_rules, exclude_words):
+                    matches.append({**p, "_provider": "snov"})
+        else:
+            matches.extend({**p, "_provider": "snov"} for p in people)
+
+        self._close_attempt(
+            engine=engine,
+            attempt_id=attempt_id,
+            err=err,
+            contacts_found=contacts_found,
+            title_matched=len(matches),
+        )
+        _ = company_id
+        return matches, err
+
+    def _reveal_email_for(self, person: dict, company_domain: str) -> tuple[str, str | None, dict]:
+        """Reveal a single person's email via the right provider.
+
+        Returns (email, smtp_status, raw_payload). Empty email means reveal failed
+        or returned nothing — caller stores the contact as fetched_no_email.
+        """
+        provider = person.get("_provider")
+        person_id = str(person.get("provider_person_id") or "").strip()
+        if provider == "apollo":
+            from app.services.apollo_client import ApolloClient
+
+            apollo = ApolloClient()
+            result = apollo.reveal_email(person_id) if person_id else None
+            if result and result.get("email"):
+                return str(result["email"]), "valid", result
+            return "", None, result or {}
+        if provider == "snov":
+            from app.services.snov_client import SnovClient
+
+            snov = SnovClient()
+            emails: list[dict] = []
+            err = ""
+            if person_id:
+                emails, err = snov.search_prospect_email(person_id)
+            if (not emails or err) and person.get("first_name") and person.get("last_name"):
+                emails, err = snov.find_email_by_name(
+                    person.get("first_name", ""),
+                    person.get("last_name", ""),
+                    company_domain,
+                )
+            if not err and emails:
+                # Prefer 'valid' over 'unknown'
+                ranked = sorted(
+                    emails,
+                    key=lambda e: {"valid": 0, "unknown": 1}.get(e.get("smtp_status", ""), 2),
+                )
+                best = ranked[0]
+                return str(best.get("email") or ""), best.get("smtp_status"), best
+            return "", None, {}
+        return "", None, {}
+
+    def _reveal_and_upsert(
+        self,
+        *,
+        engine: Any,
+        job_id: UUID,
+        company_id: UUID,
+        company_domain: str,
+        matches: list[dict],
+    ) -> int:
+        """Reveal emails inline (only when provider_has_email) and upsert matched contacts."""
+        if not matches:
+            return 0
+
+        # Reveal phase — outside DB transaction (network calls)
+        revealed = 0
+        for person in matches:
+            if person.get("provider_has_email"):
+                email, smtp_status, raw = self._reveal_email_for(person, company_domain)
+                if email:
+                    person["_email"] = email
+                    person["_smtp_status"] = smtp_status
+                    person["_reveal_raw"] = raw
+                    revealed += 1
+
+        # Upsert phase
+        with Session(engine) as session:
+            person_ids = [str(p.get("provider_person_id") or "").strip() for p in matches]
+            person_ids = [pid for pid in person_ids if pid]
+            existing_rows: list[Contact] = []
+            if person_ids:
+                # Group by provider so we hit the unique-key (company, provider, person_id) correctly.
+                for provider in {p["_provider"] for p in matches}:
+                    pids_for_provider = [
+                        str(p.get("provider_person_id") or "").strip()
+                        for p in matches
+                        if p.get("_provider") == provider
+                    ]
+                    pids_for_provider = [pid for pid in pids_for_provider if pid]
+                    if not pids_for_provider:
+                        continue
+                    existing_rows.extend(
+                        session.exec(
+                            select(Contact).where(
+                                col(Contact.company_id) == company_id,
+                                col(Contact.source_provider) == provider,
+                                col(Contact.provider_person_id).in_(pids_for_provider),
+                            )
+                        )
+                    )
+            existing_by_key: dict[tuple[str, str], Contact] = {
+                (c.source_provider, str(c.provider_person_id)): c for c in existing_rows
+            }
+
+            now = _utcnow()
+            for person in matches:
+                provider = person["_provider"]
+                pid = str(person.get("provider_person_id") or "").strip()
+                if not pid:
+                    continue
+                email = person.get("_email") or ""
+                smtp_status = person.get("_smtp_status")
+                stage = "email_revealed" if email else "fetched_no_email"
+
+                key = (provider, pid)
+                existing = existing_by_key.get(key)
+                if existing:
+                    existing.first_name = person.get("first_name", existing.first_name)
+                    existing.last_name = person.get("last_name", existing.last_name)
+                    existing.title = person.get("title", existing.title)
+                    existing.linkedin_url = person.get("linkedin_url", existing.linkedin_url)
+                    existing.provider_has_email = person.get("provider_has_email", existing.provider_has_email)
+                    existing.title_match = True
+                    existing.last_seen_at = now
+                    existing.updated_at = now
+                    existing.contact_fetch_job_id = job_id
+                    if email:
+                        existing.email = email
+                        existing.email_provider = provider
+                        existing.email_confidence = 1.0 if smtp_status == "valid" else (0.5 if smtp_status == "unknown" else 0.0)
+                        existing.provider_email_status = smtp_status
+                        existing.reveal_raw_json = person.get("_reveal_raw")
+                        # Don't downgrade a contact already validated by S5
+                        if existing.pipeline_stage != "campaign_ready":
+                            existing.pipeline_stage = stage
+                    else:
+                        # Only push back to fetched_no_email if it isn't already further along
+                        if existing.pipeline_stage in ("fetched", ""):
+                            existing.pipeline_stage = stage
+                    session.add(existing)
+                else:
+                    created = Contact(
+                        company_id=company_id,
+                        contact_fetch_job_id=job_id,
+                        source_provider=provider,
+                        provider_person_id=pid,
+                        first_name=person.get("first_name", ""),
+                        last_name=person.get("last_name", ""),
+                        title=person.get("title"),
+                        linkedin_url=person.get("linkedin_url"),
+                        provider_has_email=person.get("provider_has_email"),
+                        raw_payload_json=person.get("raw_payload_json"),
+                        title_match=True,
+                        pipeline_stage=stage,
+                    )
+                    if email:
+                        created.email = email
+                        created.email_provider = provider
+                        created.email_confidence = 1.0 if smtp_status == "valid" else (0.5 if smtp_status == "unknown" else 0.0)
+                        created.provider_email_status = smtp_status
+                        created.reveal_raw_json = person.get("_reveal_raw")
+                    session.add(created)
+            session.commit()
+
+        return revealed
 
     def _maybe_finalize_batch(self, *, engine: Any, batch_id: UUID) -> None:
         """If every job in this batch is terminal, mark the batch succeeded/failed."""

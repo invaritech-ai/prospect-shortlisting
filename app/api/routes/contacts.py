@@ -300,6 +300,15 @@ def get_contact_counts(
                 ),
                 0,
             ).label("already_revealed"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (col(Contact.pipeline_stage) == "fetched_no_email", 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("fetched_no_email"),
         )
         .select_from(Contact)
         .join(Company, col(Company.id) == col(Contact.company_id))
@@ -315,6 +324,7 @@ def get_contact_counts(
         stale=int(row[2] or 0),
         fresh=int(row[3] or 0),
         already_revealed=int(row[4] or 0),
+        fetched_no_email=int(row[5] or 0),
     )
 
 

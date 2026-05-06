@@ -167,6 +167,7 @@ class ContactCountsResponse(BaseModel):
     stale: int
     fresh: int
     already_revealed: int
+    fetched_no_email: int = 0
 
 
 class ContactIdsResult(BaseModel):
