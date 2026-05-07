@@ -753,7 +753,21 @@ def get_cost_stats(
     rows = list(session.exec(companies_stmt.offset(offset).limit(limit + 1)))
     has_more = len(rows) > limit
     page_rows = rows[:limit]
-    total = session.exec(select(func.count()).select_from(companies_stmt.subquery())).one()
+    # Same number as wrapping companies_stmt in a subquery and COUNT(*)ing it,
+    # since (Company.id, Company.domain) is functionally 1:1 with company_id.
+    # Avoids materialising a GROUP BY just to count rows.
+    total_stmt = (
+        select(func.count(func.distinct(AiUsageEvent.company_id)))
+        .where(
+            col(AiUsageEvent.campaign_id) == campaign_id,
+            col(AiUsageEvent.created_at) >= window_cutoff,
+        )
+    )
+    if upload_id:
+        total_stmt = total_stmt.join(
+            Company, col(Company.id) == col(AiUsageEvent.company_id)
+        ).where(col(Company.upload_id) == upload_id)
+    total = session.exec(total_stmt).one()
     page_company_ids = [company_id for company_id, _domain in page_rows]
 
     page_stage_rows: list[tuple[UUID, str, float]] = []

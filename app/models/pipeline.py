@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint, event
+from sqlalchemy import DateTime, Index, JSON, Column, Enum as SAEnum, Numeric, Text, UniqueConstraint, event
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlmodel import Field, SQLModel
 
@@ -402,6 +402,9 @@ class PipelineRunEvent(SQLModel, table=True):
 
 class AiUsageEvent(SQLModel, table=True):
     __tablename__ = "ai_usage_events"
+    __table_args__ = (
+        Index("ix_ai_usage_events_campaign_created", "campaign_id", "created_at"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
