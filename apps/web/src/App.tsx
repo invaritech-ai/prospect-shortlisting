@@ -73,6 +73,7 @@ import { QueueHistoryView } from './components/views/QueueHistoryView'
 import { LoginView } from './components/views/auth/LoginView'
 import { SettingsView } from './components/views/settings/SettingsView'
 import { buildOperationsEvents } from './lib/telemetry'
+import { useCampaignEventStream } from './lib/useCampaignEventStream'
 
 // Panels
 import { MarkdownPreviewPanel } from './components/panels/MarkdownPreviewPanel'
@@ -460,6 +461,18 @@ function App() {
     }, 10000)
     return () => window.clearInterval(timer)
   }, [authRequestsEnabled, loadStats, loadCompanyCounts, loadContactCounts, loadDiscoveredContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
+
+  useCampaignEventStream(
+    authRequestsEnabled ? selectedCampaignId : null,
+    useCallback(() => {
+      void loadStats()
+      void loadCompanyCounts()
+      void loadContactCounts()
+      void loadDiscoveredContactCounts()
+      refreshPipelineView({ background: true })
+    }, [loadStats, loadCompanyCounts, loadContactCounts, loadDiscoveredContactCounts, refreshPipelineView]),
+    authRequestsEnabled,
+  )
 
   useEffect(() => {
     if (!authRequestsEnabled) return
