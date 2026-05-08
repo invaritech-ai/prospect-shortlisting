@@ -487,7 +487,7 @@ export function S3ContactFetchView({
               type="button"
               onClick={() => onFetchSelected()}
               disabled={controlsDisabled || isFetching || selectedIds.length === 0}
-              className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-60"
+              className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition hover:cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
               style={{ backgroundColor: 'var(--s3)' }}
             >
               {isFetching ? '…' : 'Discover Contacts'}
@@ -716,7 +716,7 @@ export function S3ContactFetchView({
                       type="button"
                       onClick={() => onFetchOne(c)}
                       disabled={controlsDisabled}
-                      className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition"
+                      className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                       style={{ backgroundColor: 'var(--s3)' }}
                     >
                       Discover
