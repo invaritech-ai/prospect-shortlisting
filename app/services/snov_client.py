@@ -369,7 +369,13 @@ class SnovClient:
         if err:
             return [], err
 
-        task_hash = str((start_data.get("meta") or {}).get("task_hash") or "")
+        # Snov returns task_hash under `data` for some endpoints and `meta` for
+        # others. Accept either to be robust to shape drift.
+        task_hash = str(
+            (start_data.get("data") or {}).get("task_hash")
+            or (start_data.get("meta") or {}).get("task_hash")
+            or ""
+        )
         if not task_hash:
             log_event(logger, "snov_no_email_task_hash", prospect_hash=prospect_hash, data=start_data)
             return [], ERR_SNOV_FAILED
@@ -381,10 +387,16 @@ class SnovClient:
         if err:
             return [], err
 
-        # result.data.emails — docs: {"data": {"emails": [{"email": "...", "smtp_status": "valid"}]}}
-        data = result.get("data") or {}
-        emails = data.get("emails") if isinstance(data, dict) else []
-        return list(emails or []), ""
+        # Snov's response shape for this endpoint varies:
+        #   {"data": {"emails": [...]}}                         (older docs)
+        #   {"data": [{"emails": [...] | "result": [...] }]}    (observed in practice)
+        emails: list[dict] = []
+        data = result.get("data")
+        if isinstance(data, dict):
+            emails = list(data.get("emails") or data.get("result") or [])
+        elif isinstance(data, list) and data and isinstance(data[0], dict):
+            emails = list(data[0].get("emails") or data[0].get("result") or [])
+        return emails, ""
 
     def find_email_by_name(self, first_name: str, last_name: str, domain: str) -> tuple[list[dict], str]:
         """Find email by first name + last name + domain (pattern-based guess).
@@ -403,7 +415,13 @@ class SnovClient:
         if err:
             return [], err
 
-        task_hash = str((start_data.get("meta") or {}).get("task_hash") or "")
+        # Snov's email-finder returns task_hash under `data` (not `meta` like the
+        # domain-search endpoints). Accept either to be robust to future shape drift.
+        task_hash = str(
+            (start_data.get("data") or {}).get("task_hash")
+            or (start_data.get("meta") or {}).get("task_hash")
+            or ""
+        )
         if not task_hash:
             log_event(logger, "snov_no_email_finder_hash",
                       first_name=first_name, last_name=last_name, domain=domain, data=start_data)
@@ -416,9 +434,11 @@ class SnovClient:
         if err:
             return [], err
 
-        # Response: {"data": [{"emails": [{"email": "...", "smtp_status": "valid", ...}]}]}
+        # Snov returns emails under `result` for this endpoint (older docs / other
+        # endpoints use `emails`). Accept either to be robust.
+        # Actual shape: {"data": [{"people": "...", "result": [{"email": "...", "smtp_status": "valid"}]}]}
         rows = result.get("data") or []
         if rows and isinstance(rows, list) and isinstance(rows[0], dict):
-            emails = rows[0].get("emails") or []
+            emails = rows[0].get("result") or rows[0].get("emails") or []
             return list(emails), ""
         return [], ""

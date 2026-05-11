@@ -45,9 +45,21 @@ def _stable_id(first: str, last: str, domain: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+def _extract_snov_prospect_hash(prospect: dict) -> str:
+    """Snov returns the prospect's real hash as the last path segment of
+    `search_emails_start`. Extract it so reveal can call the correct endpoint.
+    """
+    url = str(prospect.get("search_emails_start") or "").strip()
+    if not url:
+        return ""
+    return url.rsplit("/", 1)[-1].split("?")[0].strip()
+
+
 def _snov_to_person(prospect: dict, domain: str) -> dict:
+    snov_hash = _extract_snov_prospect_hash(prospect)
     pid = (
-        str(prospect.get("id") or prospect.get("hash") or "").strip()
+        snov_hash
+        or str(prospect.get("id") or prospect.get("hash") or "").strip()
         or _stable_id(prospect.get("first_name", ""), prospect.get("last_name", ""), domain)
     )
     return {

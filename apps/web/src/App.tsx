@@ -458,7 +458,7 @@ function App() {
       void loadDiscoveredContactCounts()
       void loadCampaignCostSummary(selectedCampaignId)
       void loadCampaignCostBreakdown(selectedCampaignId)
-    }, 10000)
+    }, 60000)
     return () => window.clearInterval(timer)
   }, [authRequestsEnabled, loadStats, loadCompanyCounts, loadContactCounts, loadDiscoveredContactCounts, loadRecentActivity, loadCampaignCostSummary, loadCampaignCostBreakdown, selectedCampaignId])
 
@@ -488,7 +488,7 @@ function App() {
     if (!livePipelineViews.includes(activeView)) return
     const timer = window.setInterval(() => {
       refreshPipelineView({ background: true })
-    }, 5000)
+    }, 30000)
     return () => window.clearInterval(timer)
   }, [activeView, authRequestsEnabled, refreshPipelineView, selectedCampaignId])
 
