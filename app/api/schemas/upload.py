@@ -92,6 +92,7 @@ class CompanyListItem(UTCReadModel):
     discovered_contact_count: int = 0
     discovered_title_matched_count: int = 0
     revealed_contact_count: int = 0
+    revealed_title_matched_count: int = 0
     contact_fetch_status: str | None = None
 
 

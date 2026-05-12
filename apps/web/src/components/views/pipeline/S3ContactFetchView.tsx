@@ -124,10 +124,10 @@ const DECISION_FILTERS: Array<{ value: DecisionFilter; label: string }> = [
 
 function discoveryStatusLabel(company: CompanyListItem): string | null {
   const status = (company.contact_fetch_status ?? '').toLowerCase()
-  const discovered = company.discovered_contact_count ?? 0
+  const total = (company.discovered_contact_count ?? 0) + (company.revealed_contact_count ?? 0)
   if (status === 'running' || status === 'queued') return 'In progress'
-  if (status === 'succeeded' && discovered === 0) return 'Done · no contacts'
-  if (status === 'succeeded' && discovered > 0) return 'Done'
+  if (status === 'succeeded' && total === 0) return 'Done · 0 matched'
+  if (status === 'succeeded' && total > 0) return 'Done'
   if (status === 'failed' || status === 'dead') return 'Failed'
   return null
 }
@@ -695,10 +695,10 @@ export function S3ContactFetchView({
                   ) : <span className="text-xs text-(--oc-muted)">—</span>}
                 </td>
                 <td className="p-3 text-xs">
-                  <div className="font-mono font-semibold">{(c.discovered_contact_count ?? 0).toLocaleString()}</div>
-                  {(c.discovered_title_matched_count ?? 0) > 0 && (
+                  <div className="font-mono font-semibold">{((c.discovered_contact_count ?? 0) + (c.revealed_contact_count ?? 0)).toLocaleString()}</div>
+                  {((c.discovered_title_matched_count ?? 0) + (c.revealed_title_matched_count ?? 0)) > 0 && (
                     <div className="text-[10px] text-(--oc-muted)">
-                      {(c.discovered_title_matched_count ?? 0).toLocaleString()} matched
+                      {((c.discovered_title_matched_count ?? 0) + (c.revealed_title_matched_count ?? 0)).toLocaleString()} matched
                     </div>
                   )}
                 </td>

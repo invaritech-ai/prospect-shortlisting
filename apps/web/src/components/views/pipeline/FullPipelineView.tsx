@@ -45,7 +45,8 @@ function s2Status(c: CompanyListItem): CellStatus {
 }
 
 function s3Status(c: CompanyListItem): CellStatus {
-  if ((c.discovered_contact_count ?? 0) > 0) return { label: `${c.discovered_contact_count} discovered`, variant: 'ok' }
+  const total = (c.discovered_contact_count ?? 0) + (c.revealed_contact_count ?? 0)
+  if (total > 0) return { label: `${total} discovered`, variant: 'ok' }
   const cs = c.contact_fetch_status?.toLowerCase()
   if (cs === 'running' || cs === 'queued') return { label: 'Fetching…', variant: 'run' }
   if (cs === 'succeeded') return { label: 'Fetched (0)', variant: 'neu' }

@@ -134,10 +134,12 @@ def list_companies(
             feedback_manual_label=str(row[19]) if row[19] is not None else None,
             latest_scrape_error_code=str(row[20]) if row[20] is not None else None,
             latest_scrape_failure_reason=str(row[21]) if row[21] is not None else None,
-            contact_count=int(row[22]) if row[22] is not None else 0,
+            contact_count=(int(row[22]) if row[22] is not None else 0)
+            + (int(row[23]) if row[23] is not None else 0),
             revealed_contact_count=int(row[22]) if row[22] is not None else 0,
             discovered_contact_count=int(row[23]) if row[23] is not None else 0,
             discovered_title_matched_count=int(row[24]) if row[24] is not None else 0,
+            revealed_title_matched_count=int(row[27]) if row[27] is not None else 0,
             contact_fetch_status=str(row[25]) if row[25] is not None else None,
             last_activity=row[26],
         )

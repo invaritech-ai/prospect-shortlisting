@@ -83,6 +83,7 @@ export type CompanyListItem = {
   discovered_contact_count: number
   discovered_title_matched_count: number
   revealed_contact_count: number
+  revealed_title_matched_count: number
   contact_fetch_status: string | null
 }
 

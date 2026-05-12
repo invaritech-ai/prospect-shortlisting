@@ -303,11 +303,15 @@ class ContactFetchService:
 
         total_found = len(all_matches)
         total_matched = len(all_matches)
-        any_failure = bool(apollo_err) and bool(snov_err or not snov_matches)
+        # Job only fails when both providers actually errored. Snov running
+        # cleanly with 0 matches is a legitimate "no candidates" outcome, not
+        # a failure — we still want to record the job as succeeded so the UI
+        # shows "Done · 0 matched" instead of a misleading "Failed".
+        both_errored = bool(apollo_err) and bool(snov_err)
 
         final_state = (
             ContactFetchJobState.FAILED
-            if any_failure and total_found == 0
+            if both_errored
             else ContactFetchJobState.SUCCEEDED
         )
         partial = bool(apollo_err) and total_found > 0

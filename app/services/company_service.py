@@ -246,6 +246,10 @@ def _contact_count_subquery() -> Any:
                 func.sum(case((and_(discovered_only, col(Contact.title_match).is_(True)), 1), else_=0)),
                 0,
             ).label("discovered_title_matched_count"),
+            func.coalesce(
+                func.sum(case((and_(has_email, col(Contact.title_match).is_(True)), 1), else_=0)),
+                0,
+            ).label("revealed_title_matched_count"),
         )
         .where(col(Contact.is_active).is_(True))
         .group_by(col(Contact.company_id))
@@ -438,6 +442,7 @@ def build_company_base_stmt(campaign_id: UUID, ctx: CompanyQueryContext) -> Any:
             func.coalesce(ctx.contact_counts.c.discovered_title_matched_count, 0),
             ctx.latest_contact_fetch.c.state,
             ctx.last_activity.label("last_activity"),
+            func.coalesce(ctx.contact_counts.c.revealed_title_matched_count, 0),
         )
         .join(Upload, col(Upload.id) == col(Company.upload_id))
         .outerjoin(ctx.latest_classification, ctx.latest_classification.c.company_id == col(Company.id))
@@ -498,8 +503,14 @@ def apply_company_sort(stmt: Any, filters: CompanyFilters, ctx: CompanyQueryCont
         "decision": ctx.decision_rank,
         "confidence": ctx.latest_confidence,
         "scrape_status": ctx.latest_scrape.c.state,
-        "contact_count": func.coalesce(ctx.contact_counts.c.revealed_contact_count, 0),
-        "discovered_contact_count": func.coalesce(ctx.contact_counts.c.discovered_contact_count, 0),
+        "contact_count": (
+            func.coalesce(ctx.contact_counts.c.revealed_contact_count, 0)
+            + func.coalesce(ctx.contact_counts.c.discovered_contact_count, 0)
+        ),
+        "discovered_contact_count": (
+            func.coalesce(ctx.contact_counts.c.discovered_contact_count, 0)
+            + func.coalesce(ctx.contact_counts.c.revealed_contact_count, 0)
+        ),
         "scrape_updated_at": func.coalesce(ctx.latest_scrape.c.scrape_updated_at, _ACTIVITY_EPOCH),
         "analysis_updated_at": func.coalesce(ctx.latest_analysis.c.analysis_updated_at, _ACTIVITY_EPOCH),
         "contact_fetch_updated_at": func.coalesce(ctx.latest_contact_fetch.c.contact_fetch_updated_at, _ACTIVITY_EPOCH),

@@ -265,14 +265,16 @@ def test_list_companies_exposes_discovered_and_revealed_contact_counts(db_sessio
     )
 
     by_domain = {item.domain: item for item in response.items}
-    assert by_domain["discovered-only.example"].contact_count == 0
+    assert by_domain["discovered-only.example"].contact_count == 2
     assert by_domain["discovered-only.example"].revealed_contact_count == 0
     assert by_domain["discovered-only.example"].discovered_contact_count == 2
     assert by_domain["discovered-only.example"].discovered_title_matched_count == 1
-    assert by_domain["revealed.example"].contact_count == 1
+    assert by_domain["discovered-only.example"].revealed_title_matched_count == 0
+    assert by_domain["revealed.example"].contact_count == 2
     assert by_domain["revealed.example"].revealed_contact_count == 1
     assert by_domain["revealed.example"].discovered_contact_count == 1
     assert by_domain["revealed.example"].discovered_title_matched_count == 1
+    assert by_domain["revealed.example"].revealed_title_matched_count == 1
 
 
 def test_company_counts_honors_upload_scope(db_session: Session) -> None:
