@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
+from structlog import get_logger
+
 
 from app.api.schemas.analysis import FeedbackRead, FeedbackUpsert
 from app.api.schemas.contacts import (
@@ -62,7 +64,7 @@ from app.services.scrape_service import (
     ScrapeJobAlreadyRunningError,
     ScrapeJobManager,
 )
-
+logger = get_logger()
 router = APIRouter(prefix="/v1", tags=["companies"])
 _scrape_manager = ScrapeJobManager()
 
@@ -463,6 +465,8 @@ async def fetch_contacts_for_company(
     force_refresh: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> ContactFetchResult:
+
+    logger.info(f"fetch_contacts_for_company called with company_id={company_id} campaign_id={campaign_id} force_refresh={force_refresh}")
     company = session.get(Company, company_id)
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found.")
@@ -478,6 +482,7 @@ async def fetch_contacts_for_company(
         company_ids=[company_id],
         force_refresh=force_refresh,
     )
+    logger.info(f"fetch_contacts_for_company enqueued batch={batch.id} jobs={len(jobs)} reused={reused}")
     session.commit()
     session.refresh(batch)
     for j in jobs:

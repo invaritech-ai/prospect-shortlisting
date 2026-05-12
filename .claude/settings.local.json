@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(uv run *)",
+      "Bash(PYTHONPATH=. uv run python -c ' *)",
+      "Bash(curl -s -X POST \"http://localhost:8000/v1/companies/f58a0854-180c-4ace-9247-2f0a283da641/fetch-contacts?campaign_id=b280be3e-4413-4154-83fb-ecaf75e936ab&force_refresh=true\")"
     ]
   }
 }

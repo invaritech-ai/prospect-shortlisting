@@ -1,0 +1,5 @@
+Adding tasks from blueprint
+usage: procrastinate [-h] [-a APP] [-v] [--log-format LOG_FORMAT]
+                     [--log-format-style {%,{,$}] [-V]
+                     {worker,defer,schema,healthchecks,shell} ...
+procrastinate: error: unrecognized arguments: -v

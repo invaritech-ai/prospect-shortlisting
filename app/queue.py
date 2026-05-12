@@ -10,6 +10,15 @@ from __future__ import annotations
 from procrastinate import App, PsycopgConnector
 
 from app.core.config import settings
+from app.core.logging import configure_logging
+
+
+# Procrastinate workers don't go through app/main.py, so the FastAPI startup
+# hook never runs and the root logger stays at WARNING — every `logger.info`
+# from worker-side code (e.g. the [discover] traces) is silently dropped.
+# Configure logging at module import so any process that imports the queue app
+# (worker, API, scripts) gets INFO-level logs.
+configure_logging()
 
 
 # PsycopgConnector expects a plain psycopg DSN (postgresql://...).

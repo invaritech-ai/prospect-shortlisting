@@ -6,9 +6,10 @@ tuple and ask the right provider for an email address. Centralising that lookup
 here avoids drift between the two callers.
 """
 from __future__ import annotations
-
 from dataclasses import dataclass
+from structlog import get_logger
 
+logger = get_logger()
 
 @dataclass
 class RevealResult:
@@ -53,18 +54,23 @@ def reveal_email_for_person(
     or errored — `error_code` distinguishes the two for callers that care.
     """
     pid = (person_id or "").strip()
+    logger.info("reveal_email_for_person", provider=provider, pid=pid[:24], domain=domain)
     if provider == "apollo":
         from app.services.apollo_client import ApolloClient
 
         apollo = ApolloClient()
         result = apollo.reveal_email(pid) if pid else None
         err = apollo.last_error_code if not result else ""
-        if result and result.get("email"):
-            return RevealResult(
-                email=str(result["email"]),
-                smtp_status="valid",
-                raw=result,
-            )
+        if result:
+            email_val = str(result.get("email") or "").strip()
+            # Apollo returns a placeholder like "email_not_unlocked@domain.com"
+            # when the plan can't unlock; treat that as "not revealed".
+            if email_val and "email_not_unlocked" not in email_val.lower():
+                return RevealResult(
+                    email=email_val,
+                    smtp_status="valid",
+                    raw=result,
+                )
         return RevealResult(raw=result or {}, error_code=err)
 
     if provider == "snov":

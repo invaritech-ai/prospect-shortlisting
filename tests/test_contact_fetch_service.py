@@ -12,10 +12,24 @@ from app.models.pipeline import ContactFetchJobState, ContactProviderAttemptStat
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _seed_campaign(session: Session) -> Campaign:
+def _seed_campaign(session: Session, *, seed_rules: bool = True) -> Campaign:
+    """Create a test campaign. By default also seeds a permissive wildcard
+    title rule so the discovery contract — "save only title-matched contacts"
+    — has something to match. Tests that want to exercise the no-rules
+    short-circuit should pass `seed_rules=False`."""
+    from app.models import TitleMatchRule
+
     c = Campaign(name="test")
     session.add(c)
     session.flush()
+    if seed_rules:
+        session.add(TitleMatchRule(
+            campaign_id=c.id,
+            rule_type="include",
+            keywords=".+",
+            match_type="regex",
+        ))
+        session.flush()
     return c
 
 
@@ -505,10 +519,12 @@ def test_snov_fallback_fires_when_apollo_returns_zero_matches(
     assert contacts[0].title_match is True
 
 
-def test_inline_reveal_skipped_when_provider_has_email_false(
+def test_inline_reveal_attempted_for_apollo_without_search_email(
     db_session: Session, monkeypatch
 ) -> None:
-    """provider_has_email=False → reveal not called, contact stored as fetched_no_email."""
+    """Apollo search rarely returns the real email — reveal must be attempted
+    regardless of `provider_has_email`, otherwise every Apollo contact would
+    land in DB with email=NULL."""
     from app.services.contact_fetch_service import ContactFetchService
     from app.services import snov_client as snov_mod
     from app.services import apollo_client as apollo_mod
@@ -518,7 +534,8 @@ def test_inline_reveal_skipped_when_provider_has_email_false(
         apollo_mod.ApolloClient, "search_people",
         lambda self, domain, **kw: [{
             "id": "apollo-1", "first_name": "Bob", "last_name": "J", "title": "CTO",
-            # no "email" key → provider_has_email becomes False
+            # no "email" key → provider_has_email becomes False, but reveal
+            # should still be attempted via /people/match.
         }],
     )
     reveal_calls: list[str] = []
@@ -536,7 +553,7 @@ def test_inline_reveal_skipped_when_provider_has_email_false(
     assert len(contacts) == 1
     assert contacts[0].pipeline_stage == "fetched_no_email"
     assert contacts[0].email is None
-    assert reveal_calls == []  # reveal must not have been called
+    assert reveal_calls == ["apollo-1"]  # reveal must have been attempted
 
 
 def test_inline_reveal_succeeds_promotes_to_email_revealed(
@@ -569,6 +586,119 @@ def test_inline_reveal_succeeds_promotes_to_email_revealed(
     assert contacts[0].email == "bob@acme.com"
     assert contacts[0].pipeline_stage == "email_revealed"
     assert contacts[0].email_provider == "apollo"
+
+
+def test_no_title_rules_short_circuits_without_provider_calls(
+    db_session: Session, monkeypatch
+) -> None:
+    """When the campaign has no include rules there is nothing to match
+    against — the job must short-circuit without burning provider credits
+    and without saving any contact rows."""
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    snov_calls: list[str] = []
+    apollo_calls: list[str] = []
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: (snov_calls.append(domain), ([], 0, ""))[1],
+    )
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: (apollo_calls.append(domain), [])[1],
+    )
+
+    campaign = _seed_campaign(db_session, seed_rules=False)
+    company, job = _seed_job(db_session, campaign)
+
+    ContactFetchService().run_contact_fetch_job(
+        engine=db_session.bind, contact_fetch_job_id=str(job.id),
+    )
+
+    db_session.refresh(job)
+    assert job.state == ContactFetchJobState.SUCCEEDED
+    assert job.terminal_state is True
+    assert job.contacts_found == 0
+    assert job.title_matched_count == 0
+    assert job.last_error_code == "no_title_rules"
+    assert snov_calls == []  # no provider calls — no wasted credits
+    assert apollo_calls == []
+    contacts = list(db_session.exec(
+        select(Contact).where(col(Contact.company_id) == company.id)
+    ))
+    assert contacts == []  # nothing saved
+
+
+def test_rerun_upserts_into_existing_row_by_name_not_duplicate(
+    db_session: Session, monkeypatch
+) -> None:
+    """Re-running Discover after Snov's `provider_person_id` scheme changed
+    (commit a9922fc) must update the existing row by (first_name, last_name)
+    instead of inserting a duplicate."""
+    from app.models import TitleMatchRule
+    from app.services.contact_fetch_service import ContactFetchService
+    from app.services import snov_client as snov_mod
+    from app.services import apollo_client as apollo_mod
+
+    # Apollo not configured — Snov fallback fires.
+    monkeypatch.setattr(
+        apollo_mod.ApolloClient, "search_people",
+        lambda self, domain, **kw: [],
+    )
+    # Snov returns the same prospect we already have in DB but with a *new*
+    # provider_person_id (this is exactly the schema-drift scenario).
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospects",
+        lambda self, domain, page=1: ([{
+            "first_name": "Vic",
+            "last_name": "Alfonsi",
+            "position": "Vice President of Sales and Marketing",
+            "search_emails_start": "https://api.snov.io/v2/.../newhashABC",
+        }], 1, "") if page == 1 else ([], 0, ""),
+    )
+    monkeypatch.setattr(
+        snov_mod.SnovClient, "search_prospect_email",
+        lambda self, pid: ([{"email": "valfonsi@acme.com", "smtp_status": "valid"}], ""),
+    )
+
+    campaign = _seed_campaign(db_session)
+    db_session.add(TitleMatchRule(
+        campaign_id=campaign.id, rule_type="include",
+        keywords="vice president", match_type="keyword",
+    ))
+    db_session.flush()
+    company, job = _seed_job(db_session, campaign)
+
+    # Pre-seed the stale row that an older Discover run left behind: same
+    # person, but old-style provider_person_id and no email.
+    db_session.add(Contact(
+        company_id=company.id,
+        source_provider="snov",
+        provider_person_id="OLDHASH_xyz",
+        first_name="Vic",
+        last_name="Alfonsi",
+        title="Vice President of Sales and Marketing",
+        title_match=True,
+        pipeline_stage="fetched",
+    ))
+    db_session.commit()
+
+    ContactFetchService().run_contact_fetch_job(
+        engine=db_session.bind, contact_fetch_job_id=str(job.id),
+    )
+
+    contacts = list(db_session.exec(
+        select(Contact).where(col(Contact.company_id) == company.id)
+    ))
+    # Critical: exactly one row, no duplicate. The stale row was upserted in
+    # place — pid migrated to the new value, email populated.
+    assert len(contacts) == 1
+    assert contacts[0].first_name == "Vic"
+    assert contacts[0].last_name == "Alfonsi"
+    assert contacts[0].email == "valfonsi@acme.com"
+    assert contacts[0].provider_person_id == "newhashABC"
+    assert contacts[0].pipeline_stage == "email_revealed"
 
 
 def test_inline_reveal_failure_marks_fetched_no_email(

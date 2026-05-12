@@ -6,7 +6,7 @@ from typing import Any
 
 
 def configure_logging() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 
 
 def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
