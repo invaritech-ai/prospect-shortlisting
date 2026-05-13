@@ -1,8 +1,10 @@
 """Cross-stage queue history.
 
 Unions job rows from S1 (CrawlJob), S2 (AnalysisJob), S3 (ContactFetchJob),
-S4 (ContactRevealJob), and S5 (ContactVerifyJob) so the QueueHistoryView in
-the SPA can show one timeline of work across the whole pipeline.
+and S5 (ContactVerifyJob) so the QueueHistoryView in the SPA can show one
+timeline of work across the whole pipeline. S4 was merged into S3
+(ContactFetchJob runs the inline reveal); the legacy ContactRevealJob table
+is never written and is therefore omitted from this union.
 
 Performance notes
 -----------------
@@ -34,7 +36,6 @@ from app.models import (
     CrawlJob,
     Upload,
 )
-from app.models.pipeline import ContactRevealJob
 
 router = APIRouter(prefix="/v1", tags=["queue-history"])
 
@@ -44,7 +45,7 @@ _DEFAULT_HISTORY_DAYS = 7
 
 class QueueHistoryItem(BaseModel):
     id: UUID
-    stage: str  # s1 | s2 | s3 | s4 | s5
+    stage: str  # s1 | s2 | s3 | s5
     company_domain: str | None = None
     state: str
     created_at: Any
@@ -147,7 +148,6 @@ def get_queue_history(
     _collect_with_company("s1", CrawlJob)
     _collect_with_company("s2", AnalysisJob)
     _collect_with_company("s3", ContactFetchJob)
-    _collect_with_company("s4", ContactRevealJob)
     _collect_no_company("s5", ContactVerifyJob)
 
     items.sort(key=lambda it: it.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)

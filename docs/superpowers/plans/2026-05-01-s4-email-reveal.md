@@ -1,5 +1,7 @@
 # S4 Email Reveal Implementation Plan
 
+> **⚠ Superseded (2026-05-13).** This implementation plan was carried out, then **merged into S3**. Reveal is no longer a standalone pipeline stage — it runs inline inside `ContactFetchJob` via `ContactFetchService.run_contact_fetch_job` (see `_reveal_and_upsert`). The `reveal_email` task and `EmailRevealService` survive only as the manual retry path behind `POST /v1/contacts/reveal`. Do not follow the file map below to build new functionality; it documents the original (now-merged) design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement manual per-contact email reveal — the operator selects title-matched contacts, clicks reveal, and the worker fetches the email from the contact's source provider and writes it back.

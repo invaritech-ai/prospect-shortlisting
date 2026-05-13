@@ -1,5 +1,11 @@
 # Repository mental model: Prospect_shortlisting
 
+> **Staleness notice (2026-05-13).** This doc still describes the **old** architecture in parts. Two things to keep in mind:
+> 1. **Queue runtime:** the worker layer migrated from **Celery + Redis** to **Procrastinate** (PostgreSQL LISTEN/NOTIFY). The Celery/Redis/Beat boxes in the architecture diagram and the `app/celery_app.py` / `app/tasks/` references below are historical. Current truth is `app/queue.py` and `app/jobs/`.
+> 2. **Pipeline stages:** the pipeline is now **S1–S5**, not S1–S4. S3 (`ContactFetchJob`) absorbed the former S4 email-reveal step — the same job now fetches contacts, filters by title rules, and reveals emails inline. The legacy `ContactRevealJob` table still exists but is never written. S5 = ZeroBounce validation (`ContactVerifyJob`).
+>
+> For an authoritative architecture map use `README.md` and `CLAUDE.md`.
+
 ## What problem it solves
 
 Operators ingest batches of company websites (from spreadsheet uploads), **crawl** key pages (home / about / product), **classify** each company with configurable prompts and models (via OpenRouter), **review** results in a UI (thumbs, manual labels, exports), and **enrich** with prospect contacts (Snov + optional ZeroBounce). The system is built for **async scale**: long-running scrapes and LLM calls run out-of-band on Celery; state lives in **PostgreSQL** (SQLModel/Alembic).
@@ -9,7 +15,7 @@ Operators ingest batches of company websites (from spreadsheet uploads), **crawl
 ```mermaid
 flowchart LR
   subgraph ui [apps/web React SPA]
-    Pipeline[pipeline stage views S1–S4]
+    Pipeline[pipeline stage views S1–S5 — S3 covers contact discovery + inline email reveal]
     Campaigns[CampaignsView]
     Ops[OperationsLogView / QueueHistoryView]
     Dash[DashboardView]

@@ -1,6 +1,6 @@
 # Pipeline Consistency Checklist
 
-Use this checklist before merging any pipeline-facing change (S1/S2/S3/S4, Full Pipeline, or related API contracts).
+Use this checklist before merging any pipeline-facing change (S1/S2/S3/S5, Full Pipeline, or related API contracts). S4 was merged into S3 — `ContactFetchJob` now runs the inline reveal in the same job; there is no longer a separate S4 stage in the live pipeline (the manual `/contacts/reveal` retry endpoint is a side path, not a pipeline stage).
 
 ## 1) Filter Semantics
 

@@ -770,7 +770,7 @@ export type IntegrationHealthItem = {
 
 export type QueueHistoryItem = {
   id: string
-  stage: 's1' | 's2' | 's3' | 's4' | 's5'
+  stage: 's1' | 's2' | 's3' | 's5'
   company_domain: string | null
   state: string
   created_at: string

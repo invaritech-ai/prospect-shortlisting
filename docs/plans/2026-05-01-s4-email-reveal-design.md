@@ -1,5 +1,7 @@
 # S4 Email Reveal Design
 
+> **⚠ Superseded (2026-05-13).** The standalone S4 email-reveal stage described below was **merged into S3**. Discover now runs Apollo/Snov contact search **and** the inline per-contact reveal inside a single `ContactFetchJob` (see `app/services/contact_fetch_service.py::run_contact_fetch_job` — docstring "Merged S3+S4 flow — Discover button handler"). The `reveal_email` Procrastinate task and `EmailRevealService` are retained only as a **manual retry path** (`POST /v1/contacts/reveal`) for contacts left at `fetched_no_email`. `ContactRevealJob` rows are no longer written; the table still exists but is dead. Frontend `S4RevealView` is now a manual "Retry Reveals" screen, not a pipeline stage. Read this doc only for historical context on the original design.
+
 **Date:** 2026-05-01
 
 ## Problem
