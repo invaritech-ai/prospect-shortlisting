@@ -62,7 +62,6 @@ def test_failure_reason_columns_exist(db_engine) -> None:
         "crawl_jobs": "failure_reason",
         "contact_fetch_jobs": "failure_reason",
         "contact_provider_attempts": "failure_reason",
-        "contact_reveal_attempts": "failure_reason",
     }
 
     for table, column_name in expected.items():

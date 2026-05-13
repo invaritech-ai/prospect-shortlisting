@@ -10,7 +10,6 @@ from app.models.pipeline import (
     ClassificationResult,
     ContactFetchJob,
     ContactFetchJobState,
-    ContactRevealJob,
     CrawlJob,
     CrawlJobState,
     JobEvent,
@@ -30,7 +29,6 @@ def test_native_db_enum_columns_bind_python_values() -> None:
         (ClassificationResult, "predicted_label"): _enum_values(PredictedLabel),
         (JobEvent, "job_type"): _enum_values(JobType),
         (ContactFetchJob, "state"): _enum_values(ContactFetchJobState),
-        (ContactRevealJob, "state"): _enum_values(ContactFetchJobState),
     }
 
     for (model, column_name), values in expected.items():

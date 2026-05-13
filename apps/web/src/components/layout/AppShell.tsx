@@ -32,7 +32,6 @@ function hasPipelineActivity(stats: StatsResponse): boolean {
     sliceQueueBusy(stats.scrape)
     || sliceQueueBusy(stats.analysis)
     || sliceQueueBusy(stats.contact_fetch)
-    || sliceQueueBusy(stats.contact_reveal)
     || sliceQueueBusy(stats.validation)
   )
 }
@@ -42,12 +41,11 @@ function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
   if (!stats) {
     return <span className="truncate text-xs text-(--oc-muted)">Loading activity…</span>
   }
-  const { scrape, analysis, contact_fetch: cf, contact_reveal: cr, validation: v } = stats
+  const { scrape, analysis, contact_fetch: cf, validation: v } = stats
   const rows: { key: string; label: string; color: string; s: typeof scrape }[] = []
   if (sliceQueueBusy(scrape)) rows.push({ key: 's1', label: 'S1', color: 'var(--s1)', s: scrape })
   if (sliceQueueBusy(analysis)) rows.push({ key: 's2', label: 'S2', color: 'var(--s2)', s: analysis })
   if (sliceQueueBusy(cf)) rows.push({ key: 's3', label: 'S3', color: 'var(--s3)', s: cf! })
-  if (sliceQueueBusy(cr)) rows.push({ key: 's4', label: 'S4', color: 'var(--s4)', s: cr! })
   if (sliceQueueBusy(v)) rows.push({ key: 's5', label: 'S5', color: 'var(--s5)', s: v! })
   if (rows.length === 0) {
     return (

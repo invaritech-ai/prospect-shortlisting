@@ -407,7 +407,6 @@ export type StatsResponse = {
   scrape: PipelineStageStats
   analysis: PipelineStageStats
   contact_fetch?: PipelineStageStats
-  contact_reveal?: PipelineStageStats
   validation?: PipelineStageStats
   costs?: {
     currency: string

@@ -23,8 +23,6 @@ function isStageStartedForDefaultSort(view: ActiveView, stats: StatsResponse | n
       return stageHasWork(stats.analysis)
     case 's3-contacts':
       return stageHasWork(stats.contact_fetch)
-    case 's4-reveal':
-      return stageHasWork(stats.contact_reveal)
     case 's5-validation':
       return stageHasWork(stats.validation)
     default:
@@ -50,9 +48,9 @@ export function defaultCompanySortForStageView(
   return { sortBy: 'last_activity', sortDir: 'desc' }
 }
 
-/** S4 discovered list: domain first, then last_seen freshness when reveal pipeline has started. */
+/** S4 retry-reveal discovered list: domain first, then last_seen freshness once S3 has fetched contacts. */
 export function defaultDiscoveredSort(stats: StatsResponse | null): { sortBy: string; sortDir: 'asc' | 'desc' } {
-  const started = isStageStartedForDefaultSort('s4-reveal', stats)
+  const started = isStageStartedForDefaultSort('s3-contacts', stats)
   return started ? { sortBy: 'last_seen_at', sortDir: 'desc' } : { sortBy: 'domain', sortDir: 'asc' }
 }
 
