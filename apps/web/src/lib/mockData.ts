@@ -217,6 +217,37 @@ export const MOCK_SERVICES_HEALTH: IntegrationHealthItem[] = [
   },
 ]
 
+// ── Recent uploads ────────────────────────────────────────────
+
+import type { UploadRead } from './types'
+
+export const MOCK_RECENT_UPLOADS: UploadRead[] = [
+  {
+    id: 'upload-001', campaign_id: 'camp-001',
+    filename: 'series-b-saas-may.csv', checksum: 'abc1',
+    row_count: 1500, valid_count: 1487, invalid_count: 13,
+    created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'upload-002', campaign_id: 'camp-001',
+    filename: 'saas-batch-2.xlsx', checksum: 'abc2',
+    row_count: 847, valid_count: 842, invalid_count: 5,
+    created_at: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'upload-003', campaign_id: 'camp-001',
+    filename: 'final-additions.csv', checksum: 'abc3',
+    row_count: 500, valid_count: 500, invalid_count: 0,
+    created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'upload-004', campaign_id: 'camp-002',
+    filename: 'fintech-europe.xlsx', checksum: 'abc4',
+    row_count: 614, valid_count: 608, invalid_count: 6,
+    created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+]
+
 // ── Per-campaign pipeline summaries ───────────────────────────
 
 export interface CampaignPipelineSummary {
