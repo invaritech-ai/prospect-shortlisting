@@ -46,7 +46,7 @@
   --s5-glow: rgba(123, 63, 228, 0.12);
 
   /* ── Layout ─────────────────────────────────────────────── */
-  --oc-sidebar-w:    220px;
+  --oc-sidebar-w:    240px;
   --oc-bottom-nav-h: 60px;
 
   /* ── Z-index ─────────────────────────────────────────────── */
@@ -630,6 +630,61 @@
     color: var(--item-accent, var(--oc-accent-ink));
     font-weight: 600;
     box-shadow: inset 3px 0 0 var(--item-accent, var(--oc-accent));
+  }
+
+  /* Section label */
+  .oc-nav-section-label {
+    font-size: 0.5625rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--oc-muted);
+    padding: 0 0.75rem;
+    margin: 1rem 0 0.25rem;
+    display: block;
+    opacity: 0.7;
+  }
+
+  /* Stage identity dot (small colored square) */
+  .oc-stage-nav-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* Count badge on nav items */
+  .oc-nav-badge {
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 700;
+    padding: 0.1875rem 0.4375rem;
+    border-radius: 9999px;
+    color: #fff;
+    line-height: 1;
+    flex-shrink: 0;
+    letter-spacing: 0;
+  }
+
+  /* Campaign picker button */
+  .oc-campaign-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    border-radius: 0.75rem;
+    border: 1px solid var(--oc-border);
+    background: var(--oc-surface-dim);
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color var(--oc-transition), background var(--oc-transition), box-shadow var(--oc-transition);
+  }
+  .oc-campaign-picker:hover {
+    border-color: var(--oc-accent);
+    background: var(--oc-surface);
+    box-shadow: 0 2px 8px rgba(0, 102, 255, 0.08);
   }
 
   /* Dropdown */
