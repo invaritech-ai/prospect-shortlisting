@@ -217,6 +217,37 @@ export const MOCK_SERVICES_HEALTH: IntegrationHealthItem[] = [
   },
 ]
 
+// ── Per-campaign pipeline summaries ───────────────────────────
+
+export interface CampaignPipelineSummary {
+  total: number
+  notScraped: number
+  scraped: number       // scraped but not yet classified
+  classified: number    // crap + unknown (not worth pursuing further)
+  possible: number      // worth pursuing
+  contactsFound: number
+  validEmails: number
+  lastActivity: string
+}
+
+export const MOCK_CAMPAIGN_SUMMARIES: Record<string, CampaignPipelineSummary> = {
+  'camp-001': {
+    total: 2847, notScraped: 342, scraped: 614, classified: 1468,
+    possible: 423, contactsFound: 389, validEmails: 891,
+    lastActivity: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+  },
+  'camp-002': {
+    total: 614, notScraped: 0, scraped: 0, classified: 481,
+    possible: 133, contactsFound: 118, validEmails: 94,
+    lastActivity: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  'camp-003': {
+    total: 189, notScraped: 189, scraped: 0, classified: 0,
+    possible: 0, contactsFound: 0, validEmails: 0,
+    lastActivity: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+}
+
 // ── Derived funnel summary ─────────────────────────────────────
 
 export interface FunnelSummary {
