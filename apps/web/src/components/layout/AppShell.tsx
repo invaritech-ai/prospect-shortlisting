@@ -4,7 +4,15 @@ import type { CampaignRead, StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
-import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconZap, IconCog, IconHistory } from '../ui/icons'
+import { IconBuilding, IconGlobe, IconChart, IconPulse, IconUsers, IconTimeline, IconSliders, IconCheck, IconCog, IconHistory } from '../ui/icons'
+
+/** Maps each stage view to its CSS variable so --current-stage is set globally */
+const STAGE_COLOR: Partial<Record<string, string>> = {
+  's1-scraping':   'var(--s1)',
+  's2-ai':         'var(--s2)',
+  's3-contacts':   'var(--s3)',
+  's5-validation': 'var(--s5)',
+}
 
 interface AppShellProps {
   className?: string
@@ -65,17 +73,17 @@ function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
 }
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
-  dashboard:       { label: 'Dashboard',           Icon: IconPulse },
-  operations:      { label: 'Operations',           Icon: IconTimeline },
-  campaigns:       { label: 'Campaigns',            Icon: IconBuilding },
-  settings:        { label: 'Settings',             Icon: IconCog },
-  'full-pipeline': { label: 'Full Pipeline',        Icon: IconSliders },
-  's1-scraping':   { label: 'S1 · Scraping',        Icon: IconGlobe },
-  's2-ai':         { label: 'S2 · AI Decision',     Icon: IconChart },
-  's3-contacts':   { label: 'S3 · Contacts & Emails', Icon: IconUsers },
-  's4-reveal':     { label: 'S4 · Retry Reveals',   Icon: IconZap },
-  's5-validation': { label: 'S5 · Validation',      Icon: IconCheck },
-  'queue-history': { label: 'Queue History',        Icon: IconHistory },
+  dashboard:       { label: 'Dashboard',             Icon: IconPulse },
+  operations:      { label: 'Operations',             Icon: IconTimeline },
+  campaigns:       { label: 'Campaigns',              Icon: IconBuilding },
+  settings:        { label: 'Settings',               Icon: IconCog },
+  'full-pipeline': { label: 'Full Pipeline',          Icon: IconSliders },
+  's1-scraping':   { label: 'Scraping',               Icon: IconGlobe },
+  's2-ai':         { label: 'AI Decision',            Icon: IconChart },
+  's3-contacts':   { label: 'Contacts & Email',       Icon: IconUsers },
+  's4-reveal':     { label: 'Retry Reveals',          Icon: IconUsers },
+  's5-validation': { label: 'Validation',             Icon: IconCheck },
+  'queue-history': { label: 'Queue History',          Icon: IconHistory },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'
@@ -110,9 +118,13 @@ export function AppShell({
 
   const { label, Icon } = VIEW_TITLES[activeView]
   const activity = stats && hasPipelineActivity(stats)
+  const stageColor = STAGE_COLOR[activeView]
 
   return (
-    <div className={`flex h-full min-h-0 flex-1 overflow-hidden ${className}`.trim()}>
+    <div
+      className={`flex h-full min-h-0 flex-1 overflow-hidden ${className}`.trim()}
+      style={{ '--current-stage': stageColor ?? '' } as React.CSSProperties}
+    >
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
@@ -135,7 +147,7 @@ export function AppShell({
           </div>
           <span className="oc-header-divider" />
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', minWidth: 0, marginLeft: '0.125rem' }}>
-            <Icon size={16} className="oc-icon-accent" />
+            <Icon size={16} className={stageColor ? 'oc-icon-stage' : 'oc-icon-accent'} />
             <div style={{ minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: '0.875rem', fontWeight: 700, color: 'var(--oc-accent-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
               <span style={{ display: 'block', fontSize: '0.625rem', fontWeight: 500, color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -160,8 +172,8 @@ export function AppShell({
         <header className="oc-desktop-header">
           <div style={{ minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
-              <Icon size={18} className="oc-icon-accent" />
-              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--oc-accent-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+              <Icon size={18} className={stageColor ? 'oc-icon-stage' : 'oc-icon-accent'} />
+              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: stageColor ? `var(--current-stage)` : 'var(--oc-accent-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
             </div>
             <p style={{ fontSize: '0.625rem', fontWeight: 500, color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Campaign: {activeCampaignName ?? 'none selected'}
