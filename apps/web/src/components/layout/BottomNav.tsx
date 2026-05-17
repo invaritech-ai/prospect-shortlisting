@@ -1,110 +1,136 @@
 import { useState } from 'react'
 import type { ActiveView } from '../../lib/navigation'
+import type { CompanyCounts, StatsResponse } from '../../lib/types'
+import { MOCK_COMPANY_COUNTS, MOCK_STATS } from '../../lib/mockData'
+import { BottomSheet } from './bottom-nav/BottomSheet'
+import type { SheetItem } from './bottom-nav/BottomSheet'
 import {
-  IconBuilding, IconGlobe, IconChart, IconPulse, IconPencil,
-  IconDots, IconCog, IconUsers, IconTimeline, IconSliders,
-  IconCheck, IconZap,
+  IconPulse, IconBuilding, IconGlobe, IconChart, IconUsers,
+  IconCheck, IconSliders, IconCog,
 } from '../ui/icons'
+
+// Tab 1 — Home: Dashboard + Campaigns
+const HOME_ITEMS: SheetItem[] = [
+  { view: 'dashboard', label: 'Dashboard', Icon: IconPulse },
+  { view: 'campaigns', label: 'Campaigns', Icon: IconBuilding },
+]
+
+// Tab 3 — Tools (extended as screens are added)
+const TOOLS_ITEMS: SheetItem[] = [
+  { view: 'full-pipeline', label: 'Full Pipeline', Icon: IconSliders },
+]
+
+// Icon for "Pipeline" tab — four small squares representing stages
+function IconPipeline({ size = 22 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2"  y="3"  width="5" height="5" rx="1.5" />
+      <rect x="9"  y="3"  width="5" height="5" rx="1.5" />
+      <rect x="16" y="3"  width="6" height="5" rx="1.5" />
+      <rect x="2"  y="16" width="20" height="5" rx="1.5" />
+      <line x1="4.5"  y1="8"  x2="4.5"  y2="12" />
+      <line x1="11.5" y1="8"  x2="11.5" y2="12" />
+      <line x1="19"   y1="8"  x2="19"   y2="12" />
+      <line x1="4.5"  y1="12" x2="19"   y2="12" />
+      <line x1="12"   y1="12" x2="12"   y2="16" />
+    </svg>
+  )
+}
+
+const HOME_VIEWS:     ActiveView[] = ['dashboard', 'campaigns']
+const PIPELINE_VIEWS: ActiveView[] = ['s1-scraping', 's2-ai', 's3-contacts', 's5-validation']
+const TOOLS_VIEWS:    ActiveView[] = ['full-pipeline']
+const CONFIG_VIEWS:   ActiveView[] = ['settings', 'operations', 'queue-history']
+
+type OpenSheet = 'home' | 'pipeline' | 'tools' | null
 
 interface BottomNavProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
   onOpenPromptLibrary: () => void
+  companyCounts?: CompanyCounts | null
+  stats?: StatsResponse | null
 }
 
-const NAV_ITEMS = [
-  { value: 'dashboard' as const, label: 'Dashboard', Icon: IconPulse },
-  { value: 's1-scraping' as const, label: 'Scraping', Icon: IconGlobe },
-  { value: 's2-ai' as const, label: 'AI', Icon: IconChart },
-]
+interface TabProps {
+  id: string
+  label: string
+  Icon: React.FC<{ size?: number }>
+  isActive: boolean
+  isOpen: boolean
+  onClick: () => void
+}
 
-const MORE_ITEMS: Array<{ value: ActiveView; label: string; stageColor?: string; Icon: typeof IconBuilding }> = [
-  { value: 'campaigns',      label: 'Campaigns',             Icon: IconBuilding },
-  { value: 'operations',     label: 'Operations',            Icon: IconTimeline },
-  { value: 'settings',       label: 'Settings',              Icon: IconCog },
-  { value: 'full-pipeline',  label: 'Full Pipeline',         Icon: IconSliders },
-  { value: 's3-contacts',    label: 'S3 · Contacts & Emails',stageColor: 'var(--s3)', Icon: IconUsers },
-  { value: 's4-reveal',      label: 'S4 · Retry Reveals',    stageColor: 'var(--s4)', Icon: IconZap },
-  { value: 's5-validation',  label: 'S5 · Validation',       stageColor: 'var(--s5)', Icon: IconCheck },
-]
+function Tab({ label, Icon, isActive, isOpen, onClick }: TabProps) {
+  const lit = isActive || isOpen
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="oc-bottom-nav-item"
+      data-active={lit ? 'true' : 'false'}
+      style={{ flex: 1 }}
+    >
+      <Icon size={22} />
+      <span>{label}</span>
+      {lit && <span className="oc-bottom-nav-pip" />}
+    </button>
+  )
+}
 
-export function BottomNav({ activeView, setActiveView, onOpenPromptLibrary }: BottomNavProps) {
-  const [moreOpen, setMoreOpen] = useState(false)
-  const moreActive = MORE_ITEMS.some((i) => i.value === activeView)
+export function BottomNav({
+  activeView, setActiveView,
+  companyCounts: rawCounts,
+  stats: rawStats,
+}: BottomNavProps) {
+  const counts = rawCounts ?? MOCK_COMPANY_COUNTS
+  const stats  = rawStats  ?? MOCK_STATS
+
+  const [openSheet, setOpenSheet] = useState<OpenSheet>(null)
+
+  function toggle(sheet: OpenSheet) {
+    setOpenSheet((prev) => (prev === sheet ? null : sheet))
+  }
+
+  function navigate(view: ActiveView) {
+    setActiveView(view)
+    setOpenSheet(null)
+  }
+
+  // Pipeline items get live counts + dots from mock/real data
+  const pipelineItems: SheetItem[] = [
+    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: counts.uploaded,       isLive: stats.scrape.running > 0 },
+    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: counts.unknown,        isLive: (stats.analysis?.running ?? 0) > 0 },
+    { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: counts.contact_ready,  isLive: (stats.contact_fetch?.running ?? 0) > 0 },
+    { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)',
+      count: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),
+      isLive: (stats.validation?.running ?? 0) > 0 },
+  ]
+
+  const isHomeActive     = HOME_VIEWS.includes(activeView)
+  const isPipelineActive = PIPELINE_VIEWS.includes(activeView)
+  const isToolsActive    = TOOLS_VIEWS.includes(activeView)
+  const isConfigActive   = CONFIG_VIEWS.includes(activeView)
 
   return (
     <>
-      {moreOpen && (
-        <div
-          className="fixed inset-0 md:hidden"
-          style={{ zIndex: 'var(--z-overlay)' }}
-          onClick={() => setMoreOpen(false)}
-          aria-hidden="true"
-        />
+      {/* Pull-up sheets */}
+      {openSheet === 'home' && (
+        <BottomSheet items={HOME_ITEMS} activeView={activeView} onNavigate={navigate} onClose={() => setOpenSheet(null)} />
+      )}
+      {openSheet === 'pipeline' && (
+        <BottomSheet items={pipelineItems} activeView={activeView} onNavigate={navigate} onClose={() => setOpenSheet(null)} />
+      )}
+      {openSheet === 'tools' && (
+        <BottomSheet items={TOOLS_ITEMS} activeView={activeView} onNavigate={navigate} onClose={() => setOpenSheet(null)} />
       )}
 
-      {moreOpen && (
-        <div className="oc-more-popup md:hidden">
-          {MORE_ITEMS.map(({ value, label, stageColor, Icon }) => {
-            const isActive = activeView === value
-            return (
-              <button
-                key={value}
-                type="button"
-                onClick={() => { setActiveView(value); setMoreOpen(false) }}
-                className="oc-more-popup-item"
-                data-active={isActive ? 'true' : 'false'}
-                style={isActive
-                  ? { '--item-accent': stageColor ?? 'var(--oc-accent)' } as React.CSSProperties
-                  : undefined}
-              >
-                <Icon size={16} />
-                {label}
-              </button>
-            )
-          })}
-          <button
-            type="button"
-            onClick={() => { setMoreOpen(false); onOpenPromptLibrary() }}
-            className="oc-more-popup-item"
-          >
-            <IconPencil size={16} />
-            Prompt Library
-          </button>
-        </div>
-      )}
-
+      {/* Bottom bar — 4 tabs */}
       <nav className="oc-bottom-nav" aria-label="Mobile navigation">
-        {NAV_ITEMS.map(({ value, label, Icon }) => {
-          const isActive = activeView === value
-          return (
-            <button
-              key={value}
-              type="button"
-              onClick={() => { setActiveView(value); setMoreOpen(false) }}
-              className="oc-bottom-nav-item"
-              data-active={isActive ? 'true' : 'false'}
-              aria-current={isActive ? 'page' : undefined}
-            >
-              <Icon size={22} />
-              <span>{label}</span>
-              {isActive && <span className="oc-bottom-nav-pip" />}
-            </button>
-          )
-        })}
-
-        <button
-          type="button"
-          onClick={() => setMoreOpen((prev) => !prev)}
-          className="oc-bottom-nav-item"
-          data-active={(moreOpen || moreActive) ? 'true' : 'false'}
-          aria-expanded={moreOpen}
-          aria-label="More navigation options"
-        >
-          <IconDots size={22} />
-          <span>More</span>
-          {(moreOpen || moreActive) && <span className="oc-bottom-nav-pip" />}
-        </button>
+        <Tab id="home"     label="Home"     Icon={IconPulse}    isActive={isHomeActive}     isOpen={openSheet === 'home'}     onClick={() => toggle('home')} />
+        <Tab id="pipeline" label="Pipeline" Icon={IconPipeline} isActive={isPipelineActive} isOpen={openSheet === 'pipeline'} onClick={() => toggle('pipeline')} />
+        <Tab id="tools"    label="Tools"    Icon={IconSliders}  isActive={isToolsActive}    isOpen={openSheet === 'tools'}    onClick={() => toggle('tools')} />
+        <Tab id="config"   label="Config"   Icon={IconCog}      isActive={isConfigActive}   isOpen={false}                   onClick={() => navigate('settings')} />
       </nav>
     </>
   )

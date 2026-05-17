@@ -136,6 +136,11 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes sheet-slide-up {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
 @keyframes progress-indeterminate {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(350%); }
@@ -778,6 +783,58 @@
     background: color-mix(in srgb, var(--item-accent, var(--oc-accent)) 10%, white);
     color: var(--item-accent, var(--oc-accent-ink));
     font-weight: 600;
+  }
+
+  /* ── Bottom sheet (pull-up from bottom nav) ─────────────── */
+
+  .oc-bottom-sheet {
+    position: fixed;
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: calc(var(--oc-bottom-nav-h) + 0.5rem);
+    z-index: var(--z-drawer);
+    border-radius: 1.25rem;
+    background: var(--oc-surface);
+    border: 1px solid var(--oc-border);
+    box-shadow: 0 -8px 40px rgba(20, 18, 16, 0.16), 0 4px 16px rgba(20, 18, 16, 0.08);
+    padding: 0.5rem;
+    animation: sheet-slide-up 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .oc-bottom-sheet-handle {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0 0.25rem;
+  }
+
+  .oc-bottom-sheet-handle-bar {
+    width: 2rem;
+    height: 0.25rem;
+    border-radius: 9999px;
+    background: var(--oc-border);
+  }
+
+  .oc-bottom-sheet-item {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    width: 100%;
+    border-radius: 0.875rem;
+    padding: 0.875rem 1rem;
+    min-height: 56px; /* touch target */
+    border: none;
+    background: none;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--oc-transition);
+  }
+
+  .oc-bottom-sheet-item:hover,
+  .oc-bottom-sheet-item:active { background: var(--oc-surface-dim); }
+
+  .oc-bottom-sheet-item[data-active='true'] {
+    background: color-mix(in srgb, var(--item-accent, var(--oc-accent)) 10%, white);
   }
 
   /* ── App Shell Headers ───────────────────────────────────── */
