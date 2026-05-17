@@ -9,27 +9,11 @@ from sqlmodel import SQLModel
 from app.core.config import settings
 
 # Import models so SQLModel metadata is populated for autogenerate.
-from app.models import (  # noqa: F401
-    AnalysisJob,
-    ClassificationResult,
-    Company,
-    ContactFetchBatch,
-    ContactFetchJob,
-    ContactFetchRuntimeControl,
-    ContactProviderAttempt,
-    ContactRevealBatch,
-    ContactVerifyJob,
-    CrawlArtifact,
-    CrawlJob,
-    JobEvent,
-    Prompt,
-    ScrapeJob,
-    ScrapePage,
-    ScrapeRun,
-    ScrapeRunItem,
-    TitleMatchRule,
-    Upload,
-)
+from app.models.core import Campaign, Upload, UploadedDomain  # noqa: F401
+from app.models.scrape import ScrapeSettings, ScrapeBatch, ScrapeResult  # noqa: F401
+from app.models.classification import DecisionSettings, ClassificationBatch, ClassificationResult  # noqa: F401
+from app.models.contacts import RoleFetchCriteria, EmailFetchBatch, VerificationBatch, Contact  # noqa: F401
+from app.models.settings import IntegrationSecret  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -47,35 +31,27 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 target_metadata = SQLModel.metadata
 
-PIPELINE_TABLES = {
+MANAGED_TABLES = {
+    "campaigns",
     "uploads",
-    "companies",
-    "crawl_jobs",
-    "crawl_artifacts",
-    "prompts",
-    "analysis_jobs",
+    "uploaded_domains",
+    "scrape_settings",
+    "scrape_batches",
+    "scrape_results",
+    "decision_settings",
+    "classification_batches",
     "classification_results",
-    "job_events",
-    "scrapejob",
-    "scrapepage",
-    "scrape_runs",
-    "scrape_run_items",
-    "contact_fetch_batches",
-    "contact_fetch_jobs",
-    "contact_fetch_runtime_controls",
-    "contact_provider_attempts",
-    "contact_reveal_batches",
-    "contact_verify_jobs",
-    "discovered_contacts",
-    "prospect_contacts",
-    "prospect_contact_emails",
-    "title_match_rules",
+    "role_fetch_criteria",
+    "email_fetch_batches",
+    "contacts",
+    "verification_batches",
+    "integration_secrets",
 }
 
 
 def include_object(object_, name, type_, reflected, compare_to):  # type: ignore[no-untyped-def]
     if type_ == "table":
-        return name in PIPELINE_TABLES
+        return name in MANAGED_TABLES
     return True
 
 # other values from the config, defined by the needs of env.py,

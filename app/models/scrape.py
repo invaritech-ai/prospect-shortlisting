@@ -1,142 +1,72 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import StrEnum
-from typing import Optional
+from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
-import sqlalchemy as sa
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, Text
 from sqlmodel import Field, SQLModel
 
-from app.models.pipeline import utc_datetime_field
+from app.models.base import utc_datetime_field, utcnow
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+class ScrapeSettings(SQLModel, table=True):
+    """
+    Append-only scrape config. Create a new row when settings change; never mutate.
+    campaign_id=None means global default.
+    """
 
-
-class ScrapeJob(SQLModel, table=True):
-    __table_args__ = (
-        # Partial unique index: only one active (non-terminal) job per URL.
-        sa.Index(
-            "uq_scrapejob_active_normalized_url",
-            "normalized_url",
-            unique=True,
-            postgresql_where=sa.text("terminal_state = false"),
-            sqlite_where=sa.text("terminal_state = 0"),
-        ),
-    )
+    __tablename__ = "scrape_settings"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
-    pipeline_run_id: UUID | None = Field(default=None, foreign_key="pipeline_runs.id", index=True)
-    website_url: str
-    normalized_url: str
-    domain: str
-
-    # Lifecycle: created → running → succeeded / failed
-    state: str = Field(default="created", index=True)
-    terminal_state: bool = Field(default=False)
-    failure_reason: Optional[str] = Field(default=None, max_length=128, index=True)
-
-    # Per-job model config
-    js_fallback: bool = Field(default=True)
-    include_sitemap: bool = Field(default=True)
-    general_model: str = Field(default="openai/gpt-5-nano")
-    classify_model: str = Field(default="inception/mercury-2")
-
-    # Counters
-    discovered_urls_count: int = Field(default=0)
-    pages_fetched_count: int = Field(default=0)
-    fetch_failures_count: int = Field(default=0)
-    markdown_pages_count: int = Field(default=0)
-    llm_used_count: int = Field(default=0)
-    llm_failed_count: int = Field(default=0)
-
-    last_error_code: Optional[str] = Field(default=None)
-    last_error_message: Optional[str] = Field(default=None)
-
-    # Number of times the reconciler has reset and re-queued this job.
-    # Used to cap infinite retry loops for consistently failing sites.
-    reconcile_count: int = Field(default=0)
-
-    # Ownership lock — set atomically at task-start via CAS; cleared on finish.
-    # Guards against duplicate workers writing results when Celery re-delivers
-    # a task (e.g. after soft_time_limit expiry or worker respawn).
-    lock_token: Optional[str] = Field(default=None, max_length=64)
-    lock_expires_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
-
-    created_at: datetime = utc_datetime_field(default_factory=utcnow)
-    updated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
-    started_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
-    finished_at: Optional[datetime] = utc_datetime_field(default=None, nullable=True)
+    campaign_id: UUID | None = Field(default=None, foreign_key="campaigns.id", index=True)
+    name: str = Field(max_length=255)
+    instruction_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    structured_rules_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    settings_hash: str = Field(max_length=64, index=True)
+    is_active: bool = Field(default=True, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
 
 
-class ScrapeRunStatus(StrEnum):
-    ACCEPTED = "accepted"
-    DISPATCHING = "dispatching"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class ScrapeBatch(SQLModel, table=True):
+    """One operator action to scrape a set of domains in a campaign."""
 
+    __tablename__ = "scrape_batches"
 
-class ScrapeRunItemStatus(StrEnum):
-    PENDING     = "pending"
-    JOB_CREATED = "job_created"   # ScrapeJob row exists; defer not yet attempted
-    QUEUED      = "queued"
-    SKIPPED     = "skipped"
-    FAILED      = "failed"
-
-
-class ScrapeRun(SQLModel, table=True):
-    __tablename__ = "scrape_runs"
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
     campaign_id: UUID = Field(foreign_key="campaigns.id", index=True)
-    status: str = Field(default=ScrapeRunStatus.ACCEPTED, index=True)
-    requested_count: int = Field(default=0)
-    queued_count: int = Field(default=0)
-    skipped_count: int = Field(default=0)
-    failed_count: int = Field(default=0)
-    scrape_rules: dict | None = Field(default=None, sa_column=Column(JSON))
-    error_message: str | None = Field(default=None)
-    created_at: datetime = utc_datetime_field(default_factory=utcnow)
-    started_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+    scrape_settings_id: UUID | None = Field(default=None, foreign_key="scrape_settings.id", index=True)
+    settings_snapshot_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    settings_hash: str | None = Field(default=None, max_length=64)
+    state: str = Field(default="queued", max_length=32, index=True)
+    selected_domain_count: int = Field(default=0, ge=0)
+    queued_count: int = Field(default=0, ge=0)
+    success_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
     finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
 
 
-class ScrapeRunItem(SQLModel, table=True):
-    __tablename__ = "scrape_run_items"
+class ScrapeResult(SQLModel, table=True):
+    """Per-domain outcome for one scrape batch. Source input for S2 classification."""
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    run_id: UUID = Field(foreign_key="scrape_runs.id", index=True)
-    company_id: UUID = Field(foreign_key="companies.id", index=True)
-    scrape_job_id: UUID | None = Field(default=None, foreign_key="scrapejob.id")
-    status: str = Field(default=ScrapeRunItemStatus.PENDING, index=True)
-    error_code: str | None = Field(default=None)
-    created_at: datetime = utc_datetime_field(default_factory=utcnow)
-    updated_at: datetime = utc_datetime_field(default_factory=utcnow)
+    __tablename__ = "scrape_results"
 
-
-class ScrapePage(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    job_id: UUID = Field(foreign_key="scrapejob.id", index=True)
-
-    url: str
-    canonical_url: str
-    depth: int = Field(default=0)
-    page_kind: str = Field(default="other")
-    fetch_mode: str = Field(default="none")
-    status_code: int = Field(default=0)
-
-    title: str = Field(default="")
-    description: str = Field(default="")
-    text_len: int = Field(default=0)
-    raw_text: str = Field(default="")
-
-    markdown_content: str = Field(default="")
-
-    fetch_error_code: str = Field(default="")
-    fetch_error_message: str = Field(default="")
-
-    created_at: datetime = utc_datetime_field(default_factory=utcnow)
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    campaign_id: UUID = Field(foreign_key="campaigns.id", index=True)
+    domain_id: UUID = Field(foreign_key="uploaded_domains.id", index=True)
+    scrape_batch_id: UUID | None = Field(default=None, foreign_key="scrape_batches.id", index=True)
+    state: str = Field(default="queued", max_length=32, index=True)
+    pages_attempted_count: int = Field(default=0, ge=0)
+    pages_success_count: int = Field(default=0, ge=0)
+    markdown_pages_count: int = Field(default=0, ge=0)
+    scraped_pages_json: list[dict[str, Any]] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    error_code: str | None = Field(default=None, max_length=128)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
     updated_at: datetime = utc_datetime_field(default_factory=utcnow)
