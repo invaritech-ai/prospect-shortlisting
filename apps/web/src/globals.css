@@ -784,32 +784,27 @@
 
   .oc-mobile-header {
     display: flex; flex-shrink: 0; align-items: center; gap: 0.75rem;
-    height: 52px;
+    height: 56px;
+    border-top: 3px solid var(--current-stage, var(--oc-border));
     border-bottom: 1px solid var(--oc-border);
     background: color-mix(in srgb, var(--oc-surface) 96%, transparent);
     backdrop-filter: blur(12px);
     padding: 0 1rem;
+    transition: border-top-color var(--oc-transition-slow);
   }
   @media (min-width: 768px) { .oc-mobile-header { display: none; } }
 
   .oc-desktop-header {
-    display: none; flex-shrink: 0; align-items: center; gap: 1rem;
-    min-height: 52px;
-    border-bottom: 1px solid var(--oc-border);
-    /* Stage-colored top stripe */
+    display: none; flex-shrink: 0; align-items: center; gap: 1.25rem;
+    min-height: 58px;
     border-top: 3px solid var(--current-stage, var(--oc-border));
+    border-bottom: 1px solid var(--oc-border);
     background: color-mix(in srgb, var(--oc-surface) 97%, transparent);
     backdrop-filter: blur(12px);
-    padding: 0.5rem 1.75rem;
+    padding: 0.625rem 1.75rem;
     transition: border-top-color var(--oc-transition-slow);
   }
   @media (min-width: 768px) { .oc-desktop-header { display: flex; } }
-
-  /* Mobile header also gets stage top stripe */
-  .oc-mobile-header {
-    border-top: 3px solid var(--current-stage, var(--oc-border));
-    transition: border-top-color var(--oc-transition-slow);
-  }
 
   .oc-header-divider { width: 1px; height: 1.25rem; flex-shrink: 0; background: var(--oc-border); }
 
