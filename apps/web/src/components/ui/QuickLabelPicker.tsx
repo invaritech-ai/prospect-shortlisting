@@ -1,9 +1,21 @@
 import type { ManualLabel } from '../../lib/types'
 
-const LABEL_OPTIONS: Array<{ value: ManualLabel; short: string; title: string; cls: string }> = [
-  { value: 'possible', short: 'P', title: 'Mark as Possible', cls: 'text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100' },
-  { value: 'unknown', short: 'U', title: 'Mark as Unknown', cls: 'text-slate-600 border-slate-300 bg-slate-50 hover:bg-slate-100' },
-  { value: 'crap', short: 'C', title: 'Mark as Crap', cls: 'text-rose-700 border-rose-300 bg-rose-50 hover:bg-rose-100' },
+const LABEL_OPTIONS: Array<{ value: ManualLabel; short: string; title: string; activeStyle: React.CSSProperties; inactiveStyle: React.CSSProperties }> = [
+  {
+    value: 'possible', short: 'P', title: 'Mark as Possible',
+    activeStyle:   { background: 'var(--oc-success-bg)', color: 'var(--oc-success-text)', borderColor: 'var(--oc-success-text)' },
+    inactiveStyle: { background: 'var(--oc-success-bg)', color: 'var(--oc-success-text)', borderColor: 'color-mix(in srgb, var(--oc-success-text) 30%, white)', opacity: 0.5 },
+  },
+  {
+    value: 'unknown', short: 'U', title: 'Mark as Unknown',
+    activeStyle:   { background: 'var(--oc-surface)', color: 'var(--oc-muted)', borderColor: 'var(--oc-border)' },
+    inactiveStyle: { background: 'var(--oc-surface)', color: 'var(--oc-muted)', borderColor: 'var(--oc-border)', opacity: 0.5 },
+  },
+  {
+    value: 'crap', short: 'C', title: 'Mark as Crap',
+    activeStyle:   { background: 'var(--oc-fail-bg)', color: 'var(--oc-fail-text)', borderColor: 'var(--oc-fail-text)' },
+    inactiveStyle: { background: 'var(--oc-fail-bg)', color: 'var(--oc-fail-text)', borderColor: 'color-mix(in srgb, var(--oc-fail-text) 30%, white)', opacity: 0.5 },
+  },
 ]
 
 interface QuickLabelPickerProps {
@@ -14,23 +26,26 @@ interface QuickLabelPickerProps {
 
 export function QuickLabelPicker({ current, disabled = false, onSelect }: QuickLabelPickerProps) {
   return (
-    <span className="ml-1 flex items-center gap-0.5">
-      {LABEL_OPTIONS.map(({ value, short, title, cls }) => (
+    <span style={{ marginLeft: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.125rem' }}>
+      {LABEL_OPTIONS.map(({ value, short, title, activeStyle, inactiveStyle }) => (
         <button
           key={value}
           type="button"
           title={current === value ? `Remove manual label (${value})` : title}
           aria-label={current === value ? `Remove manual label ${value}` : title}
           disabled={disabled}
-          onClick={(e) => {
-            e.stopPropagation()
-            onSelect(current === value ? null : value)
+          onClick={(e) => { e.stopPropagation(); onSelect(current === value ? null : value) }}
+          style={{
+            height: '1rem', width: '1rem',
+            borderRadius: '0.25rem', border: '1px solid',
+            fontSize: '0.5625rem', fontWeight: 700, lineHeight: 1,
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            transition: 'opacity 160ms',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'inherit',
+            ...(current === value ? activeStyle : { ...inactiveStyle, opacity: disabled ? 0.4 : undefined }),
+            ...(disabled ? { opacity: 0.4 } : {}),
           }}
-          className={`h-4 w-4 rounded border text-[9px] font-bold leading-none transition ${
-            current === value
-              ? `${cls} ring-1 ring-current opacity-100`
-              : `${cls} opacity-60 hover:opacity-100`
-          } ${disabled ? 'cursor-not-allowed opacity-40 hover:opacity-40' : ''}`}
         >
           {short}
         </button>

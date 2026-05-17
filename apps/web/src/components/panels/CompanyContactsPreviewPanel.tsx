@@ -160,7 +160,7 @@ export function CompanyContactsPreviewPanel({
             disabled={matchGapFilter !== 'all'}
             className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
               matchedOnly
-                ? 'bg-emerald-600 text-white'
+                ? 'oc-badge oc-badge-success'
                 : 'border border-(--oc-border) bg-white text-(--oc-muted) hover:text-(--oc-text)'
             } ${matchGapFilter !== 'all' ? 'opacity-50' : ''}`}
           >
@@ -181,7 +181,7 @@ export function CompanyContactsPreviewPanel({
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
-          {error ? <p className="px-4 py-3 text-xs text-rose-600">{error}</p> : null}
+          {error ? <p className="px-4 py-3 text-xs text-[var(--oc-fail-text)]">{error}</p> : null}
           {isLoading ? (
             <div className="flex h-32 items-center justify-center">
               <p className="text-sm text-(--oc-muted)">Loading contacts…</p>

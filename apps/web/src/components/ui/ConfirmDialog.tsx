@@ -35,16 +35,12 @@ export function ConfirmDialog({
     document.body.style.overflow = 'hidden'
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        if (!isConfirming) onClose()
-      }
+      if (e.key === 'Escape') { e.preventDefault(); if (!isConfirming) onClose() }
     }
     document.addEventListener('keydown', onKeyDown)
 
     const t = window.setTimeout(() => {
-      const root = panelRef.current
-      const focusable = root?.querySelector<HTMLElement>(
+      const focusable = panelRef.current?.querySelector<HTMLElement>(
         'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
       )
       focusable?.focus()
@@ -61,14 +57,11 @@ export function ConfirmDialog({
   if (!open) return null
 
   return (
-    <div
-      className="fixed inset-0 z-[var(--z-overlay)] flex items-end justify-center p-4 sm:items-center"
-      role="presentation"
-    >
+    <div className="oc-confirm-root" role="presentation">
       <button
         type="button"
         aria-label="Close dialog"
-        className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+        className="oc-confirm-backdrop"
         onClick={() => !isConfirming && onClose()}
       />
       <div
@@ -76,23 +69,15 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative z-[1] w-full max-w-md rounded-2xl border border-(--oc-border) bg-(--oc-surface-strong) p-5 shadow-xl"
-        style={{ boxShadow: 'var(--oc-shadow)' }}
+        className="oc-confirm-dialog"
       >
-        <h2 id={titleId} className="text-base font-extrabold tracking-tight text-(--oc-accent-ink) md:text-lg">
-          {title}
-        </h2>
-        <div className="mt-3 text-sm leading-relaxed text-(--oc-text)">{children}</div>
-        <div className="mt-6 flex flex-wrap justify-end gap-2">
+        <h2 id={titleId} className="oc-confirm-title">{title}</h2>
+        <div className="oc-confirm-body">{children}</div>
+        <div className="oc-confirm-actions">
           <Button variant="secondary" size="sm" onClick={onClose} disabled={isConfirming}>
             {cancelLabel}
           </Button>
-          <Button
-            variant={confirmVariant}
-            size="sm"
-            loading={isConfirming}
-            onClick={() => void onConfirm()}
-          >
+          <Button variant={confirmVariant} size="sm" loading={isConfirming} onClick={() => void onConfirm()}>
             {confirmLabel}
           </Button>
         </div>

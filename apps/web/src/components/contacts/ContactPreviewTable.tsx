@@ -2,62 +2,45 @@ import type { ContactStage, ProspectContactRead } from '../../lib/types'
 
 function contactStageMeta(stage: ContactStage): { label: string; cls: string } {
   switch (stage) {
-    case 'fetched':
-      return { label: 'Fetched', cls: 'bg-slate-100 text-slate-700' }
-    case 'email_revealed':
-      return { label: 'Email revealed', cls: 'bg-amber-100 text-amber-700' }
-    case 'campaign_ready':
-      return { label: 'Campaign Ready', cls: 'bg-emerald-100 text-emerald-700' }
-    default:
-      return { label: stage, cls: 'bg-slate-100 text-slate-700' }
+    case 'fetched':       return { label: 'Fetched',        cls: 'oc-badge oc-badge-neutral' }
+    case 'email_revealed':return { label: 'Email revealed', cls: 'oc-badge oc-badge-warn'    }
+    case 'campaign_ready':return { label: 'Campaign Ready', cls: 'oc-badge oc-badge-success' }
+    default:              return { label: stage,            cls: 'oc-badge oc-badge-neutral' }
   }
 }
 
 function verificationMeta(status: string): { label: string; cls: string } {
   const normalized = (status || 'unknown').toLowerCase()
   switch (normalized) {
-    case 'unverified':
-      return { label: 'Unverified', cls: 'bg-slate-100 text-slate-700' }
-    case 'valid':
-      return { label: 'Valid', cls: 'bg-emerald-100 text-emerald-700' }
+    case 'unverified': return { label: 'Unverified', cls: 'oc-badge oc-badge-neutral' }
+    case 'valid':      return { label: 'Valid',       cls: 'oc-badge oc-badge-success' }
     case 'invalid':
-    case 'not_valid':
-      return { label: 'Invalid', cls: 'bg-rose-100 text-rose-700' }
-    case 'catch_all':
-      return { label: 'Catch-all', cls: 'bg-amber-100 text-amber-700' }
-    case 'unknown':
-      return { label: 'Unknown', cls: 'bg-slate-100 text-slate-500' }
-    default:
-      return { label: normalized.replace(/_/g, ' '), cls: 'bg-slate-100 text-slate-700' }
+    case 'not_valid':  return { label: 'Invalid',     cls: 'oc-badge oc-badge-fail'    }
+    case 'catch_all':  return { label: 'Catch-all',   cls: 'oc-badge oc-badge-warn'    }
+    case 'unknown':    return { label: 'Unknown',     cls: 'oc-badge oc-badge-neutral' }
+    default:           return { label: normalized.replace(/_/g, ' '), cls: 'oc-badge oc-badge-neutral' }
   }
 }
 
 function providerStatusMeta(status: string | null): { label: string; cls: string } | null {
   if (!status) return null
   switch (status.toLowerCase()) {
-    case 'email_revealed':
-      return { label: 'Provider ok', cls: 'bg-sky-100 text-sky-700' }
-    case 'unknown':
-      return { label: 'Provider unknown', cls: 'bg-slate-100 text-slate-500' }
-    default:
-      return { label: status.replace(/_/g, ' '), cls: 'bg-slate-100 text-slate-700' }
+    case 'email_revealed': return { label: 'Provider ok',      cls: 'oc-badge oc-badge-info'    }
+    case 'unknown':        return { label: 'Provider unknown', cls: 'oc-badge oc-badge-neutral' }
+    default:               return { label: status.replace(/_/g, ' '), cls: 'oc-badge oc-badge-neutral' }
   }
 }
 
 function sourceProviderMeta(provider: string | null | undefined): { label: string; cls: string } | null {
   const normalized = (provider ?? '').trim().toLowerCase()
   if (!normalized) return null
-  if (normalized === 'snov') return { label: 'SNOV', cls: 'bg-sky-100 text-sky-700' }
-  if (normalized === 'apollo') return { label: 'APOLLO', cls: 'bg-violet-100 text-violet-700' }
-  return { label: normalized.toUpperCase(), cls: 'bg-slate-100 text-slate-700' }
+  if (normalized === 'snov')   return { label: 'SNOV',   cls: 'oc-badge oc-badge-info' }
+  if (normalized === 'apollo') return { label: 'APOLLO', cls: 'oc-badge oc-badge-info' }
+  return { label: normalized.toUpperCase(), cls: 'oc-badge oc-badge-neutral' }
 }
 
 function StatusBadge({ label, cls }: { label: string; cls: string }) {
-  return (
-    <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${cls}`}>
-      {label}
-    </span>
-  )
+  return <span className={cls} style={{ fontSize: '0.5625rem', padding: '0.125rem 0.375rem' }}>{label}</span>
 }
 
 function ContactRow({ contact }: { contact: ProspectContactRead }) {
@@ -69,19 +52,22 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
   const emailList = (contact.emails && contact.emails.length > 0 ? contact.emails : contact.email ? [contact.email] : []) as string[]
 
   return (
-    <tr className={`border-b border-(--oc-border) transition-colors hover:bg-(--oc-surface) ${isMatch ? 'bg-emerald-50/40' : ''}`}>
+    <tr
+      className="border-b border-(--oc-border) transition-colors hover:bg-(--oc-surface)"
+      style={isMatch ? { backgroundColor: 'color-mix(in srgb, var(--oc-success-bg) 40%, white)' } : undefined}
+    >
       <td className="px-3 py-2.5 text-xs font-medium text-(--oc-text)">
         <span>{contact.first_name} {contact.last_name}</span>
-        {isMatch ? (
-          <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
+        {isMatch && (
+          <span className="oc-badge oc-badge-success" style={{ marginLeft: '0.375rem', fontSize: '0.5625rem', padding: '0.125rem 0.375rem' }}>
             Match
           </span>
-        ) : null}
-        {sourceProvider ? (
-          <span className={`ml-1.5 inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${sourceProvider.cls}`}>
+        )}
+        {sourceProvider && (
+          <span className={sourceProvider.cls} style={{ marginLeft: '0.375rem', fontSize: '0.5625rem', padding: '0.125rem 0.375rem' }}>
             {sourceProvider.label}
           </span>
-        ) : null}
+        )}
       </td>
       <td className="max-w-[180px] truncate px-3 py-2.5 text-xs text-(--oc-muted)" title={contact.title ?? ''}>
         {contact.title ?? <span className="opacity-30">—</span>}
@@ -90,41 +76,30 @@ function ContactRow({ contact }: { contact: ProspectContactRead }) {
         {emailList.length > 0 ? (
           <div className="flex flex-col gap-1">
             {emailList.slice(0, 2).map((email) => (
-              <a
-                key={email}
-                href={`mailto:${email}`}
-                className="text-(--oc-accent-ink) underline decoration-dotted hover:no-underline"
-              >
+              <a key={email} href={`mailto:${email}`} className="text-(--oc-accent-ink) underline decoration-dotted hover:no-underline">
                 {email}
               </a>
             ))}
-            {emailList.length > 2 ? (
+            {emailList.length > 2 && (
               <span className="text-[10px] text-(--oc-muted)">+{emailList.length - 2} more</span>
-            ) : null}
+            )}
           </div>
         ) : isMatch ? (
-          <span className="text-[11px] text-amber-500/70">not found</span>
+          <span style={{ fontSize: '0.6875rem', color: 'var(--oc-warn-text)', opacity: 0.7 }}>not found</span>
         ) : (
           <span className="opacity-20">—</span>
         )}
       </td>
-      <td className="px-3 py-2.5">
-        <StatusBadge label={stage.label} cls={stage.cls} />
-      </td>
+      <td className="px-3 py-2.5"><StatusBadge label={stage.label} cls={stage.cls} /></td>
       <td className="px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusBadge label={verification.label} cls={verification.cls} />
-          {provider ? <StatusBadge label={provider.label} cls={provider.cls} /> : null}
+          {provider && <StatusBadge label={provider.label} cls={provider.cls} />}
         </div>
       </td>
       <td className="px-3 py-2.5 text-xs">
         {contact.linkedin_url ? (
-          <a
-            href={contact.linkedin_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-(--oc-accent-ink) underline hover:no-underline"
-          >
+          <a href={contact.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-(--oc-accent-ink) underline hover:no-underline">
             LinkedIn
           </a>
         ) : (

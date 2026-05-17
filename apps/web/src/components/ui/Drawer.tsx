@@ -6,10 +6,10 @@ interface DrawerProps {
   onClose: () => void
   title: string
   subtitle?: string
-  headerMeta?: ReactNode   // badges, tabs, etc. below the title
-  headerActions?: ReactNode // top-right area
+  headerMeta?: ReactNode
+  headerActions?: ReactNode
   children: ReactNode
-  size?: 'md' | 'lg'      // md=480px, lg=720px on desktop
+  size?: 'md' | 'lg'
 }
 
 export function Drawer({
@@ -22,7 +22,6 @@ export function Drawer({
   children,
   size = 'md',
 }: DrawerProps) {
-  // ESC key closes
   useEffect(() => {
     if (!isOpen) return
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -32,69 +31,44 @@ export function Drawer({
 
   if (!isOpen) return null
 
-  const panelWidth = size === 'lg' ? 'md:w-[720px]' : 'md:w-[480px]'
+  const panelSizeClass = size === 'lg' ? 'oc-drawer-panel-lg' : 'oc-drawer-panel-md'
 
   return (
-    <div className="fixed inset-0 z-[var(--z-drawer)] flex items-end justify-end md:items-stretch">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-slate-950/20 backdrop-blur-[2px]"
+    <div className="oc-drawer-root">
+      <button
+        type="button"
+        className="oc-drawer-backdrop"
         onClick={onClose}
-        aria-hidden="true"
+        aria-label="Close"
       />
 
-      {/* Panel — bottom sheet on mobile, right slide on desktop */}
       <div
-        className={`
-          relative z-10 flex w-full flex-col overflow-hidden
-          rounded-t-[28px] md:rounded-none
-          max-h-[88vh] md:max-h-none md:h-full
-          ${panelWidth}
-          border-t border-[var(--oc-border)] md:border-t-0 md:border-l
-          bg-[var(--oc-surface-strong)]
-          shadow-[0_-8px_40px_rgba(10,31,24,0.12)] md:shadow-[-8px_0_40px_rgba(10,31,24,0.12)]
-        `}
+        className={`oc-drawer-panel ${panelSizeClass}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        {/* Drag handle (mobile) */}
-        <div className="flex justify-center pt-3 pb-1 md:hidden">
-          <div className="h-1 w-10 rounded-full bg-[var(--oc-border)]" />
+        <div className="oc-drawer-handle">
+          <div className="oc-drawer-handle-bar" />
         </div>
 
-        {/* Header */}
-        <div className="border-b border-[var(--oc-border)] px-5 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              {subtitle && (
-                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--oc-muted)]">
-                  {subtitle}
-                </p>
-              )}
-              <h2 className="text-xl font-extrabold tracking-tight text-[var(--oc-text)] md:text-2xl">
-                {title}
-              </h2>
+        <div className="oc-drawer-header">
+          <div className="oc-drawer-header-row">
+            <div style={{ minWidth: 0 }}>
+              {subtitle && <span className="oc-drawer-subtitle">{subtitle}</span>}
+              <h2 className="oc-drawer-title">{title}</h2>
             </div>
-            <div className="flex flex-shrink-0 items-center gap-2">
+            <div style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: '0.5rem' }}>
               {headerActions}
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--oc-border)] bg-white text-[var(--oc-muted)] transition hover:border-[var(--oc-accent)] hover:text-[var(--oc-accent-ink)]"
-                aria-label="Close"
-              >
+              <button type="button" onClick={onClose} className="oc-drawer-close" aria-label="Close">
                 <IconX size={16} />
               </button>
             </div>
           </div>
-          {headerMeta && <div className="mt-3">{headerMeta}</div>}
+          {headerMeta && <div style={{ marginTop: '0.75rem' }}>{headerMeta}</div>}
         </div>
 
-        {/* Scrollable body */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {children}
-        </div>
+        <div className="oc-drawer-body">{children}</div>
       </div>
     </div>
   )

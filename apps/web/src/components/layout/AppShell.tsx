@@ -36,10 +36,9 @@ function hasPipelineActivity(stats: StatsResponse): boolean {
   )
 }
 
-/** Per-stage queue rows for the desktop top bar (only busy stages). */
 function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
   if (!stats) {
-    return <span className="truncate text-xs text-(--oc-muted)">Loading activity…</span>
+    return <span style={{ fontSize: '0.75rem', color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Loading activity…</span>
   }
   const { scrape, analysis, contact_fetch: cf, validation: v } = stats
   const rows: { key: string; label: string; color: string; s: typeof scrape }[] = []
@@ -49,15 +48,15 @@ function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
   if (sliceQueueBusy(v)) rows.push({ key: 's5', label: 'S5', color: 'var(--s5)', s: v! })
   if (rows.length === 0) {
     return (
-      <span className="truncate text-xs text-(--oc-muted)">
+      <span style={{ fontSize: '0.75rem', color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Updated {new Date(stats.as_of).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </span>
     )
   }
   return (
-    <div className="flex max-h-16 min-w-0 flex-col gap-0.5 overflow-y-auto">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem', minWidth: 0, maxHeight: '4rem', overflowY: 'auto' }}>
       {rows.map((r) => (
-        <span key={r.key} className="truncate text-xs font-medium" style={{ color: r.color }}>
+        <span key={r.key} style={{ fontSize: '0.75rem', fontWeight: 500, color: r.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {r.label} {r.s.running} run · {r.s.queued} q{r.s.stuck_count ? ` · ${r.s.stuck_count} stuck` : ''}
         </span>
       ))}
@@ -66,17 +65,17 @@ function DesktopLiveSummary({ stats }: { stats: StatsResponse | null }) {
 }
 
 const VIEW_TITLES: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
-  dashboard: { label: 'Dashboard', Icon: IconPulse },
-  operations: { label: 'Operations', Icon: IconTimeline },
-  campaigns: { label: 'Campaigns', Icon: IconBuilding },
-  settings: { label: 'Settings', Icon: IconCog },
-  'full-pipeline': { label: 'Full Pipeline', Icon: IconSliders },
-  's1-scraping': { label: 'S1 · Scraping', Icon: IconGlobe },
-  's2-ai': { label: 'S2 · AI Decision', Icon: IconChart },
-  's3-contacts': { label: 'S3 · Contacts & Emails', Icon: IconUsers },
-  's4-reveal': { label: 'S4 · Retry Reveals', Icon: IconZap },
-  's5-validation': { label: 'S5 · Validation', Icon: IconCheck },
-  'queue-history': { label: 'Queue History', Icon: IconHistory },
+  dashboard:       { label: 'Dashboard',           Icon: IconPulse },
+  operations:      { label: 'Operations',           Icon: IconTimeline },
+  campaigns:       { label: 'Campaigns',            Icon: IconBuilding },
+  settings:        { label: 'Settings',             Icon: IconCog },
+  'full-pipeline': { label: 'Full Pipeline',        Icon: IconSliders },
+  's1-scraping':   { label: 'S1 · Scraping',        Icon: IconGlobe },
+  's2-ai':         { label: 'S2 · AI Decision',     Icon: IconChart },
+  's3-contacts':   { label: 'S3 · Contacts & Emails', Icon: IconUsers },
+  's4-reveal':     { label: 'S4 · Retry Reveals',   Icon: IconZap },
+  's5-validation': { label: 'S5 · Validation',      Icon: IconCheck },
+  'queue-history': { label: 'Queue History',        Icon: IconHistory },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'
@@ -97,11 +96,8 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
-    } catch {
-      return false
-    }
+    try { return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true' }
+    catch { return false }
   })
 
   const toggleCollapsed = () => {
@@ -113,12 +109,10 @@ export function AppShell({
   }
 
   const { label, Icon } = VIEW_TITLES[activeView]
-
   const activity = stats && hasPipelineActivity(stats)
 
   return (
     <div className={`flex h-full min-h-0 flex-1 overflow-hidden ${className}`.trim()}>
-      {/* Desktop sidebar */}
       <Sidebar
         activeView={activeView}
         setActiveView={setActiveView}
@@ -129,107 +123,81 @@ export function AppShell({
         onToggleCollapsed={toggleCollapsed}
       />
 
-      {/* Main area — column header(s) stay fixed; only <main> scrolls */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {/* Mobile top bar */}
-        <header
-          className="flex shrink-0 items-center gap-3 border-b border-(--oc-border) bg-(--oc-surface-strong) px-4 md:hidden"
-          style={{ height: '52px' }}
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <img
-              src="/prospect-console-mark.svg"
-              alt="Prospect Console"
-              className="h-7 w-7 shrink-0 rounded-md"
-            />
-            <div className="min-w-0">
-              <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-(--oc-muted)">Prospect</p>
-              <p className="truncate text-[11px] font-extrabold text-(--oc-accent-ink) leading-none">Console</p>
+        {/* Mobile header */}
+        <header className="oc-mobile-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+            <img src="/prospect-console-mark.svg" alt="Prospect Console" style={{ height: '1.75rem', width: '1.75rem', flexShrink: 0, borderRadius: '0.375rem' }} />
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: '0.625rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Prospect</p>
+              <p style={{ fontSize: '0.6875rem', fontWeight: 800, color: 'var(--oc-accent-ink)', lineHeight: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Console</p>
             </div>
           </div>
-          <span className="h-5 w-px bg-(--oc-border)" />
-          <div className="flex items-center gap-1.5 min-w-0 ml-0.5">
-            <Icon size={16} className="text-(--oc-accent) shrink-0" />
-            <div className="min-w-0">
-              <span className="block truncate text-sm font-bold text-(--oc-accent-ink)">{label}</span>
-              <span className="block truncate text-[10px] font-medium text-(--oc-muted)">
+          <span className="oc-header-divider" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', minWidth: 0, marginLeft: '0.125rem' }}>
+            <Icon size={16} className="oc-icon-accent" />
+            <div style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: '0.875rem', fontWeight: 700, color: 'var(--oc-accent-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+              <span style={{ display: 'block', fontSize: '0.625rem', fontWeight: 500, color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Campaign: {activeCampaignName ?? 'none selected'}
               </span>
             </div>
           </div>
           {activity && (
-            <span className="ml-auto relative flex h-2.5 w-2.5 shrink-0">
-              <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-(--oc-accent) opacity-60" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-(--oc-accent)" />
+            <span className="oc-live-dot" style={{ marginLeft: 'auto' }}>
+              <span className="oc-live-dot-ring oc-motion-ping" />
+              <span className="oc-live-dot-core" />
             </span>
           )}
           {authEnabled && onLogout ? (
-            <button
-              type="button"
-              onClick={onLogout}
-              className="ml-1 rounded-md border border-(--oc-border) bg-white px-2 py-1 text-[10px] font-semibold text-(--oc-muted)"
-            >
+            <button type="button" onClick={onLogout} className="oc-header-logout-btn" style={{ marginLeft: '0.25rem' }}>
               Logout
             </button>
           ) : null}
         </header>
 
-        {/* Desktop top bar — outside scroll region so title + live stats stay visible */}
-        <header
-          className="hidden shrink-0 items-center gap-4 border-b border-(--oc-border) bg-(--oc-surface-strong)/95 px-6 py-2.5 backdrop-blur-sm md:flex"
-          style={{ minHeight: '52px' }}
-        >
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <Icon size={18} className="shrink-0 text-(--oc-accent)" />
-              <span className="truncate text-sm font-bold text-(--oc-accent-ink)">{label}</span>
+        {/* Desktop header */}
+        <header className="oc-desktop-header">
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+              <Icon size={18} className="oc-icon-accent" />
+              <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--oc-accent-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
             </div>
-            <p className="truncate text-[10px] font-medium text-(--oc-muted)">
+            <p style={{ fontSize: '0.625rem', fontWeight: 500, color: 'var(--oc-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Campaign: {activeCampaignName ?? 'none selected'}
             </p>
           </div>
-          <span className="h-5 w-px shrink-0 bg-(--oc-border)" />
-          <div className="min-w-0 flex-1">
+          <span className="oc-header-divider" />
+          <div style={{ minWidth: 0, flex: 1 }}>
             <DesktopLiveSummary stats={stats} />
           </div>
           {authEnabled && userDisplayName ? (
-            <span className="rounded-full border border-(--oc-border) bg-white px-3 py-1 text-[11px] font-semibold text-(--oc-muted)">
-              <span className="inline-flex items-center gap-1.5">
-                <IconUsers size={12} />
-                {userDisplayName}
-              </span>
+            <span className="oc-header-user-chip">
+              <IconUsers size={12} />
+              {userDisplayName}
             </span>
           ) : null}
           {authEnabled && onLogout ? (
-            <button
-              type="button"
-              onClick={onLogout}
-              className="rounded-lg border border-(--oc-border) bg-white px-3 py-1.5 text-xs font-semibold text-(--oc-muted) transition hover:border-(--oc-accent)"
-            >
+            <button type="button" onClick={onLogout} className="oc-header-logout-btn">
               Logout
             </button>
           ) : null}
           {activity && (
-            <span className="relative flex h-2.5 w-2.5 shrink-0">
-              <span className="oc-motion-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-(--oc-accent) opacity-60" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-(--oc-accent)" />
+            <span className="oc-live-dot">
+              <span className="oc-live-dot-ring oc-motion-ping" />
+              <span className="oc-live-dot-core" />
             </span>
           )}
         </header>
 
         {/* Scrollable content */}
-        <main
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-3 md:px-6 md:pb-6 md:pt-3"
-          style={{ paddingBottom: 'calc(var(--oc-bottom-nav-h) + 16px)' }}
-          id="main-content"
-        >
+        <main className="oc-content-scroll" id="main-content">
           <div className="flex min-h-0 w-full flex-1 flex-col">
             {children}
           </div>
         </main>
       </div>
 
-      {/* Mobile bottom nav */}
       <BottomNav
         activeView={activeView}
         setActiveView={setActiveView}

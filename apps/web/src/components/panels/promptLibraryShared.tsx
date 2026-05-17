@@ -48,8 +48,8 @@ function PromptLibraryAsideEmpty({ message }: { message: string }) {
 
 export function PromptLibraryFormError({ message }: { message: string }) {
   return (
-    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3">
-      <p className="text-sm font-medium text-rose-800">{message}</p>
+    <div className="oc-alert-error" style={{ marginTop: '1rem' }}>
+      <p style={{ fontWeight: 500 }}>{message}</p>
     </div>
   )
 }
@@ -225,7 +225,7 @@ export function DeleteConfirmButtonGroup({
             onConfirmDelete()
           }}
           disabled={isDeleting}
-          className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+          className="oc-btn-danger-xs"
         >
           {isDeleting ? '…' : 'Confirm'}
         </button>
@@ -245,7 +245,7 @@ export function DeleteConfirmButtonGroup({
       type="button"
       onClick={() => setConfirmDelete(true)}
       disabled={disabled}
-      className="rounded-lg border border-rose-200 px-2.5 py-1 text-[11px] font-bold text-rose-600 transition hover:border-rose-400 hover:bg-rose-50 disabled:opacity-50"
+      className="oc-btn-danger-xs"
     >
       Delete
     </button>

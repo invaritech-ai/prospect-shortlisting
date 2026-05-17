@@ -78,7 +78,7 @@ export function MarkdownPreviewPanel({
               onClick={() => onCopyMarkdown(activePage.markdown_content)}
             >
               {markdownCopyState === 'Copied' ? (
-                <IconCheck size={13} className="text-emerald-600" />
+                <IconCheck size={13} className="text-[var(--oc-success-text)]" />
               ) : (
                 <IconCopy size={13} />
               )}

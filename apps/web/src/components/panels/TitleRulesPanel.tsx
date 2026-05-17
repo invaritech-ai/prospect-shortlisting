@@ -163,15 +163,15 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
 
         {/* "New rules since last visit" banner */}
         {newRulesSinceLastSeen > 0 && !noticeDismissed && (
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
-            <span className="text-amber-900">
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-[color-mix(in_srgb,var(--oc-warn-text)_30%,white)] bg-[var(--oc-warn-bg)] px-4 py-3 text-sm">
+            <span className="text-[var(--oc-warn-text)]">
               <span className="font-bold">{newRulesSinceLastSeen}</span>{' '}
               {newRulesSinceLastSeen === 1 ? 'rule was' : 'rules were'} added since you last opened this panel.
             </span>
             <button
               type="button"
               onClick={() => setNoticeDismissed(true)}
-              className="rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 hover:cursor-pointer"
+              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--oc-warn-text)] transition hover:bg-[var(--oc-warn-bg)] hover:cursor-pointer"
               aria-label="Dismiss"
             >
               Dismiss
@@ -181,16 +181,16 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
 
         {/* Stats header */}
         {(stats || isLoadingStats) && (
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[color-mix(in_srgb,var(--oc-success-text)_25%,white)] bg-[var(--oc-success-bg)] px-4 py-3 text-sm">
             {isLoadingStats && !stats ? (
-              <span className="text-emerald-600">Computing stats…</span>
+              <span className="text-[var(--oc-success-text)]">Computing stats…</span>
             ) : stats ? (
               <>
-                <span className="font-black text-emerald-800">{stats.total_matched.toLocaleString()}</span>
-                <span className="text-emerald-700">
+                <span className="font-black text-[var(--oc-success-text)]">{stats.total_matched.toLocaleString()}</span>
+                <span className="text-[var(--oc-success-text)]">
                   of {stats.total_contacts.toLocaleString()} contacts match current rules
                 </span>
-                {isLoadingStats && <span className="text-[10px] text-emerald-500">updating…</span>}
+                {isLoadingStats && <span className="text-[10px] text-[var(--oc-success-text)]">updating…</span>}
               </>
             ) : null}
           </div>
@@ -208,13 +208,13 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
               onChange={(e) => setTestTitleValue(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && void onTest()}
               placeholder="VP of Marketing"
-              className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+              className="flex-1 rounded-xl border border-(--oc-border) bg-white px-3 py-2 text-sm outline-none transition focus:border-[var(--oc-accent)] focus:ring-2 focus:ring-[var(--oc-accent-soft)]"
             />
             <button
               type="button"
               onClick={() => void onTest()}
               disabled={isTesting || !testTitleValue.trim()}
-              className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
+              className="rounded-xl border border-[var(--oc-accent)] bg-[var(--oc-accent-soft)] px-3 py-2 text-xs font-bold text-[var(--oc-success-text)] transition hover:bg-emerald-100 disabled:opacity-50"
             >
               {isTesting ? '…' : 'Test'}
             </button>
@@ -223,21 +223,21 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
             <div
               className={`mt-2 rounded-xl border p-3 text-xs ${
                 testResult.matched
-                  ? 'border-emerald-200 bg-emerald-50'
-                  : 'border-rose-200 bg-rose-50'
+                  ? 'border-[color-mix(in_srgb,var(--oc-success-text)_25%,white)] bg-[var(--oc-success-bg)]'
+                  : 'border-[color-mix(in_srgb,var(--oc-fail-text)_20%,white)] bg-[var(--oc-fail-bg)]'
               }`}
             >
-              <p className={`font-bold ${testResult.matched ? 'text-emerald-800' : 'text-rose-700'}`}>
+              <p className={`font-bold ${testResult.matched ? 'text-[var(--oc-success-text)]' : 'text-[var(--oc-fail-text)]'}`}>
                 {testResult.matched ? '✓ Matched' : '✗ Not matched'}
               </p>
               <p className="mt-0.5 font-mono text-[10px] text-(--oc-muted)">{testResult.normalized_title}</p>
               {testResult.matching_rules.length > 0 && (
-                <p className="mt-1 text-emerald-700">
+                <p className="mt-1 text-[var(--oc-success-text)]">
                   Rules: {testResult.matching_rules.join(', ')}
                 </p>
               )}
               {testResult.excluded_by.length > 0 && (
-                <p className="mt-1 text-rose-700">
+                <p className="mt-1 text-[var(--oc-fail-text)]">
                   Excluded by: {testResult.excluded_by.join(', ')}
                 </p>
               )}
@@ -246,7 +246,7 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
         </section>
 
         {error && (
-          <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          <p className="rounded-xl border border-[color-mix(in_srgb,var(--oc-fail-text)_20%,white)] bg-[var(--oc-fail-bg)] px-3 py-2 text-xs text-[var(--oc-fail-text)]">
             {error}
           </p>
         )}
@@ -269,16 +269,16 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
             {includeRules.map((r) => (
               <div
                 key={r.id}
-                className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-1.5"
+                className="flex items-center gap-2 rounded-xl border border-[var(--oc-success-bg)] bg-[var(--oc-success-bg)] px-3 py-1.5"
               >
-                <span className="flex-1 text-xs text-emerald-900">{r.keywords}</span>
+                <span className="flex-1 text-xs text-[var(--oc-success-text)]">{r.keywords}</span>
                 {r.match_type !== 'keyword' && (
-                  <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-600">
+                  <span className="rounded-full bg-[var(--oc-border)] px-1.5 py-0.5 text-[9px] font-bold uppercase text-[var(--oc-muted)]">
                     {r.match_type}
                   </span>
                 )}
                 {getMatchCount(r.id) !== null && (
-                  <span className="rounded-full bg-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                  <span className="rounded-full bg-[color-mix(in_srgb,var(--oc-success-text)_20%,white)] px-2 py-0.5 text-[10px] font-bold text-[var(--oc-success-text)]">
                     {getMatchCount(r.id)}
                   </span>
                 )}
@@ -422,7 +422,7 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
             type="button"
             onClick={() => void onReapply()}
             disabled={isLoading || isBusy}
-            className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded-xl border border-[var(--oc-accent)] bg-[var(--oc-accent-soft)] px-3 py-1.5 text-xs font-medium text-[var(--oc-success-text)] transition hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isRematching ? 'Re-applying…' : 'Re-apply to contacts'}
           </button>
@@ -430,13 +430,13 @@ export function TitleRulesPanel({ campaignId, isOpen, newRulesSinceLastSeen = 0,
             type="button"
             onClick={() => void onSeedRules()}
             disabled={isLoading || isBusy}
-            className="rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded-xl border border-(--oc-border) px-3 py-1.5 text-xs font-medium text-(--oc-muted) transition hover:border-emerald-400 hover:text-[var(--oc-success-text)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSeeding ? 'Seeding…' : 'Seed default rules'}
           </button>
         </div>
         {rematchResult && (
-          <p className="text-xs text-emerald-700">{rematchResult}</p>
+          <p className="text-xs text-[var(--oc-success-text)]">{rematchResult}</p>
         )}
       </div>
     </Drawer>

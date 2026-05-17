@@ -13,7 +13,7 @@ interface PagerProps {
 
 export function Pager({ offset, pageSize, total, hasMore, onPrev, onNext, onPageSizeChange, disabled = false }: PagerProps) {
   const from = offset + 1
-  const to = offset + pageSize // actual row count comes from the table, so this is the max
+  const to = offset + pageSize
   const canPrev = offset > 0
   const canNext = hasMore
 
@@ -22,14 +22,14 @@ export function Pager({ offset, pageSize, total, hasMore, onPrev, onNext, onPage
     : `${from.toLocaleString()}–${to.toLocaleString()}`
 
   return (
-    <div className="flex items-center gap-2">
-      <label className="flex items-center gap-1 text-[11px] font-semibold text-(--oc-muted)">
+    <div className="oc-pager">
+      <label className="oc-pager-label">
         Rows
         <select
           value={pageSize}
           disabled={disabled}
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
-          className="ml-1 rounded-md border border-(--oc-border) bg-(--oc-surface-strong) px-1.5 py-0.5 text-xs font-semibold text-(--oc-text) disabled:cursor-not-allowed disabled:opacity-60"
+          className="oc-pager-select"
         >
           {PAGE_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
@@ -38,17 +38,17 @@ export function Pager({ offset, pageSize, total, hasMore, onPrev, onNext, onPage
         type="button"
         onClick={onPrev}
         disabled={disabled || !canPrev}
-        className="flex h-6 w-6 items-center justify-center rounded-md border border-(--oc-border) bg-(--oc-surface-strong) text-(--oc-text) text-xs transition hover:bg-(--oc-surface) disabled:cursor-not-allowed disabled:opacity-40"
+        className="oc-pager-btn"
         aria-label="Previous page"
       >
         ‹
       </button>
-      <span className="min-w-[90px] text-center text-[11px] font-medium text-(--oc-muted)">{rangeLabel}</span>
+      <span className="oc-pager-range">{rangeLabel}</span>
       <button
         type="button"
         onClick={onNext}
         disabled={disabled || !canNext}
-        className="flex h-6 w-6 items-center justify-center rounded-md border border-(--oc-border) bg-(--oc-surface-strong) text-(--oc-text) text-xs transition hover:bg-(--oc-surface) disabled:cursor-not-allowed disabled:opacity-40"
+        className="oc-pager-btn"
         aria-label="Next page"
       >
         ›
