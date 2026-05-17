@@ -217,6 +217,53 @@ export const MOCK_SERVICES_HEALTH: IntegrationHealthItem[] = [
   },
 ]
 
+// ── Scraping view rows ────────────────────────────────────────
+
+export type ScrapeStatus = 'pending' | 'running' | 'done' | 'failed'
+
+export interface MockScrapeRow {
+  id: string
+  domain: string
+  url: string
+  status: ScrapeStatus
+  pagesCount: number
+  errorCode: string | null
+  durationSec: number | null
+  updatedAt: string
+}
+
+const t = (minAgo: number) => new Date(Date.now() - minAgo * 60_000).toISOString()
+
+export const MOCK_SCRAPE_ROWS: MockScrapeRow[] = [
+  { id: 'sc-01', domain: 'linear.app',       url: 'https://linear.app',        status: 'done',    pagesCount: 8,  errorCode: null,      durationSec: 12, updatedAt: t(2)  },
+  { id: 'sc-02', domain: 'rippling.com',     url: 'https://rippling.com',      status: 'running', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(0) },
+  { id: 'sc-03', domain: 'deel.com',         url: 'https://deel.com',          status: 'failed',  pagesCount: 0,  errorCode: 'TIMEOUT', durationSec: 30, updatedAt: t(6)  },
+  { id: 'sc-04', domain: 'notion.so',        url: 'https://notion.so',         status: 'done',    pagesCount: 14, errorCode: null,      durationSec: 18, updatedAt: t(4)  },
+  { id: 'sc-05', domain: 'figma.com',        url: 'https://figma.com',         status: 'done',    pagesCount: 11, errorCode: null,      durationSec: 9,  updatedAt: t(5)  },
+  { id: 'sc-06', domain: 'vercel.com',       url: 'https://vercel.com',        status: 'running', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(1) },
+  { id: 'sc-07', domain: 'stripe.com',       url: 'https://stripe.com',        status: 'pending', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(60) },
+  { id: 'sc-08', domain: 'github.com',       url: 'https://github.com',        status: 'pending', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(60) },
+  { id: 'sc-09', domain: 'retool.com',       url: 'https://retool.com',        status: 'done',    pagesCount: 9,  errorCode: null,      durationSec: 14, updatedAt: t(8)  },
+  { id: 'sc-10', domain: 'airtable.com',     url: 'https://airtable.com',      status: 'failed',  pagesCount: 0,  errorCode: 'BOT_BLOCK', durationSec: 8, updatedAt: t(12) },
+  { id: 'sc-11', domain: 'planetscale.com',  url: 'https://planetscale.com',   status: 'done',    pagesCount: 6,  errorCode: null,      durationSec: 7,  updatedAt: t(9)  },
+  { id: 'sc-12', domain: 'loom.com',         url: 'https://loom.com',          status: 'pending', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(60) },
+  { id: 'sc-13', domain: 'supabase.com',     url: 'https://supabase.com',      status: 'running', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(0) },
+  { id: 'sc-14', domain: 'turso.tech',       url: 'https://turso.tech',        status: 'done',    pagesCount: 5,  errorCode: null,      durationSec: 6,  updatedAt: t(11) },
+  { id: 'sc-15', domain: 'neon.tech',        url: 'https://neon.tech',         status: 'done',    pagesCount: 7,  errorCode: null,      durationSec: 8,  updatedAt: t(13) },
+  { id: 'sc-16', domain: 'cal.com',          url: 'https://cal.com',           status: 'failed',  pagesCount: 0,  errorCode: 'TIMEOUT', durationSec: 30, updatedAt: t(20) },
+  { id: 'sc-17', domain: 'dub.co',           url: 'https://dub.co',            status: 'pending', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(60) },
+  { id: 'sc-18', domain: 'resend.com',       url: 'https://resend.com',        status: 'done',    pagesCount: 4,  errorCode: null,      durationSec: 5,  updatedAt: t(15) },
+  { id: 'sc-19', domain: 'posthog.com',      url: 'https://posthog.com',       status: 'done',    pagesCount: 12, errorCode: null,      durationSec: 16, updatedAt: t(16) },
+  { id: 'sc-20', domain: 'mintlify.com',     url: 'https://mintlify.com',      status: 'pending', pagesCount: 0,  errorCode: null,      durationSec: null, updatedAt: t(60) },
+]
+
+export const MOCK_SCRAPE_STATS = {
+  pending: MOCK_SCRAPE_ROWS.filter((r) => r.status === 'pending').length,
+  running: MOCK_SCRAPE_ROWS.filter((r) => r.status === 'running').length,
+  done:    MOCK_SCRAPE_ROWS.filter((r) => r.status === 'done').length,
+  failed:  MOCK_SCRAPE_ROWS.filter((r) => r.status === 'failed').length,
+}
+
 // ── Recent uploads ────────────────────────────────────────────
 
 import type { UploadRead } from './types'
