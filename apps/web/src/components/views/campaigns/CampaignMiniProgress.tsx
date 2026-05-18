@@ -1,4 +1,4 @@
-import type { CampaignPipelineSummary } from '../../../lib/mockData'
+import type { CampaignPipelineSummary } from '../../../lib/useAppData'
 
 interface CampaignMiniProgressProps {
   summary: CampaignPipelineSummary

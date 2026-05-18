@@ -71,6 +71,7 @@ function summaryToCompanyStub(summary: ContactCompanySummary): CompanyListItem {
     discovered_contact_count: summary.total_count,
     discovered_title_matched_count: summary.title_matched_count,
     revealed_contact_count: summary.email_count,
+    revealed_title_matched_count: summary.title_matched_count ?? 0,
     contact_fetch_status: null,
   }
 }

@@ -39,7 +39,9 @@ export function MobileHeader({
 
       {/* View identity */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0, flex: 1 }}>
-        <Icon size={15} style={{ color: accentColor, flexShrink: 0 } as React.CSSProperties} />
+        <span style={{ color: accentColor, flexShrink: 0, display: 'flex' }}>
+          <Icon size={15} />
+        </span>
         <div style={{ minWidth: 0 }}>
           <span style={{
             display: 'block',

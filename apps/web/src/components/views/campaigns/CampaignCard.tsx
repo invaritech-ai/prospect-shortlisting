@@ -1,5 +1,5 @@
 import type { CampaignRead } from '../../../lib/types'
-import type { CampaignPipelineSummary } from '../../../lib/mockData'
+import type { CampaignPipelineSummary } from '../../../lib/useAppData'
 import { CampaignMiniProgress } from './CampaignMiniProgress'
 
 function relativeTime(iso: string): string {

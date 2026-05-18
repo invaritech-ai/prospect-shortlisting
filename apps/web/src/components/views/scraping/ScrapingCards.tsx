@@ -1,4 +1,4 @@
-import type { MockScrapeRow } from '../../../lib/mockData'
+import type { MockScrapeRow } from '../../../lib/useAppData'
 import { ScrapeStatusBadge } from '../shared/ScrapeStatusBadge'
 
 function relTime(iso: string): string {

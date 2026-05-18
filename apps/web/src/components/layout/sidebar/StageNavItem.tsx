@@ -13,7 +13,7 @@ interface StageNavItemProps {
   onClick: () => void
 }
 
-export function StageNavItem({ view, label, stageColor, Icon, isActive, count, isLive, collapsed, onClick }: StageNavItemProps) {
+export function StageNavItem({ view: _view, label, stageColor, Icon, isActive, count, isLive, collapsed, onClick }: StageNavItemProps) {
   return (
     <button
       type="button"

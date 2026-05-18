@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ActiveView } from '../../lib/navigation'
 import type { CompanyCounts, StatsResponse } from '../../lib/types'
-import { MOCK_COMPANY_COUNTS, MOCK_STATS } from '../../lib/mockData'
+import { MOCK_COMPANY_COUNTS, MOCK_STATS } from '../../lib/useAppData'
 import { BottomSheet } from './bottom-nav/BottomSheet'
 import type { SheetItem } from './bottom-nav/BottomSheet'
 import {

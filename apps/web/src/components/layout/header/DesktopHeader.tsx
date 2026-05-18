@@ -26,10 +26,9 @@ export function DesktopHeader({
       {/* Left — view identity */}
       <div style={{ minWidth: 0, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Icon
-            size={16}
-            style={{ color: accentColor, flexShrink: 0 } as React.CSSProperties}
-          />
+          <span style={{ color: accentColor, flexShrink: 0, display: 'flex' }}>
+            <Icon size={16} />
+          </span>
           <span style={{
             fontFamily: 'var(--font-display)',
             fontSize: '1.125rem',

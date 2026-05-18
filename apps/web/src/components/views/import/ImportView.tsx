@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CampaignRead } from '../../../lib/types'
-import { MOCK_CAMPAIGNS, MOCK_RECENT_UPLOADS } from '../../../lib/mockData'
+import { MOCK_CAMPAIGNS, MOCK_RECENT_UPLOADS } from '../../../lib/useAppData'
 import { DropZone }       from './DropZone'
 import type { DropZoneState } from './DropZone'
 import { FormatGuide }    from './FormatGuide'

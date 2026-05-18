@@ -8,8 +8,10 @@ interface DrawerProps {
   subtitle?: string
   headerMeta?: ReactNode
   headerActions?: ReactNode
+  footer?: ReactNode
   children: ReactNode
   size?: 'md' | 'lg'
+  accentColor?: string
 }
 
 export function Drawer({
@@ -19,8 +21,10 @@ export function Drawer({
   subtitle,
   headerMeta,
   headerActions,
+  footer,
   children,
   size = 'md',
+  accentColor,
 }: DrawerProps) {
   useEffect(() => {
     if (!isOpen) return
@@ -47,6 +51,7 @@ export function Drawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        style={accentColor ? { '--drawer-accent': accentColor } as React.CSSProperties : undefined}
       >
         <div className="oc-drawer-handle">
           <div className="oc-drawer-handle-bar" />
@@ -65,10 +70,11 @@ export function Drawer({
               </button>
             </div>
           </div>
-          {headerMeta && <div style={{ marginTop: '0.75rem' }}>{headerMeta}</div>}
+          {headerMeta && <div style={{ marginTop: '0.875rem' }}>{headerMeta}</div>}
         </div>
 
         <div className="oc-drawer-body">{children}</div>
+        {footer && <div className="oc-drawer-footer">{footer}</div>}
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import type { ScrapeStatus } from '../../../lib/mockData'
+import type { ScrapeStatus } from '../../../lib/useAppData'
 import { LiveDot } from '../../ui/LiveDot'
 
 const STATUS_CONFIG: Record<ScrapeStatus, { label: string; color: string; bg: string; border: string }> = {

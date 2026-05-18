@@ -1,6 +1,6 @@
 import type { CampaignRead, CompanyCounts, StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
-import { MOCK_COMPANY_COUNTS, MOCK_STATS, MOCK_CAMPAIGNS } from '../../lib/mockData'
+import { MOCK_COMPANY_COUNTS, MOCK_STATS, MOCK_CAMPAIGNS } from '../../lib/useAppData'
 import { CampaignPicker } from './sidebar/CampaignPicker'
 import { NavSection }    from './sidebar/NavSection'
 import { StageNavItem }  from './sidebar/StageNavItem'

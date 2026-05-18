@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CampaignRead } from '../../../lib/types'
-import { MOCK_CAMPAIGNS, MOCK_CAMPAIGN_SUMMARIES } from '../../../lib/mockData'
+import { MOCK_CAMPAIGNS, MOCK_CAMPAIGN_SUMMARIES } from '../../../lib/useAppData'
 import { CampaignCard }  from './CampaignCard'
 import { EmptyState }    from './EmptyState'
 import { CampaignPanel } from '../../panels/CampaignPanel'

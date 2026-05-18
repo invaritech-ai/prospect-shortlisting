@@ -1,4 +1,5 @@
 import type { StatsResponse } from '../../../lib/types'
+import { MOCK_STATS } from '../../../lib/useAppData'
 import { LiveDot } from '../../ui/LiveDot'
 
 interface LiveStatusProps {
@@ -20,10 +21,8 @@ function fmtEta(secs: number | null): string | null {
   return `~${Math.ceil(secs / 3600)}h left`
 }
 
-export function LiveStatus({ stats, stageColor, activeView }: LiveStatusProps) {
-  if (!stats) {
-    return <span style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)' }}>Loading…</span>
-  }
+export function LiveStatus({ stats: rawStats, stageColor: _stageColor, activeView }: LiveStatusProps) {
+  const stats = rawStats ?? MOCK_STATS
 
   // If we're on a stage view, show that stage's status specifically
   const stageInfo = STAGE_MAP[activeView]

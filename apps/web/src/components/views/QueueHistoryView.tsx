@@ -17,7 +17,7 @@ const STAGE_LABELS: Record<string, string> = {
   s1: 'S1 · Scrape',
   s2: 'S2 · AI',
   s3: 'S3 · Contacts',
-  s5: 'S5 · Verify',
+  s5: 'S4 · Verify',
 }
 
 const STAGE_COLORS: Record<string, string> = {

@@ -52,9 +52,9 @@
   /* ── Z-index ─────────────────────────────────────────────── */
   --z-toolbar:  10;
   --z-bulk-bar: 30;
-  --z-overlay:  40;
   --z-drawer:   50;
-  --z-toast:    60;
+  --z-overlay:  60;
+  --z-toast:    70;
 
   /* ── Motion ─────────────────────────────────────────────── */
   --oc-transition:       160ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -144,6 +144,15 @@
 @keyframes progress-indeterminate {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(350%); }
+}
+
+@keyframes oc-drawer-up {
+  from { transform: translateY(100%); opacity: 0.7; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes oc-drawer-in {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
 }
 
 /* ── Component Classes ──────────────────────────────────────── */
@@ -424,8 +433,8 @@
 
   .oc-drawer-backdrop {
     position: absolute; inset: 0;
-    background: rgba(20, 18, 16, 0.32);
-    backdrop-filter: blur(3px);
+    background: rgba(20, 18, 16, 0.38);
+    backdrop-filter: blur(4px);
     border: none; cursor: default;
   }
 
@@ -434,64 +443,123 @@
     display: flex; flex-direction: column; overflow: hidden;
     width: 100%;
     border-radius: 1.5rem 1.5rem 0 0;
-    max-height: 90dvh;
+    max-height: 92dvh;
     border-top: 1px solid var(--oc-border);
-    background: var(--oc-surface);
-    box-shadow: 0 -12px 48px rgba(20, 18, 16, 0.14);
+    background: var(--oc-bg);
+    box-shadow: 0 -24px 64px rgba(20, 18, 16, 0.18), 0 -4px 16px rgba(20, 18, 16, 0.08);
+    animation: oc-drawer-up 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
   @media (min-width: 768px) {
     .oc-drawer-panel {
       border-radius: 0; max-height: none; height: 100%;
       border-top: none; border-left: 1px solid var(--oc-border);
-      box-shadow: -12px 0 48px rgba(20, 18, 16, 0.10);
+      box-shadow: -24px 0 64px rgba(20, 18, 16, 0.14), -4px 0 16px rgba(20, 18, 16, 0.06);
+      animation: oc-drawer-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
-    .oc-drawer-panel-md { width: 480px; }
-    .oc-drawer-panel-lg { width: 720px; }
+    .oc-drawer-panel-md { width: 500px; }
+    .oc-drawer-panel-lg { width: 740px; }
   }
 
   .oc-drawer-handle {
-    display: flex; justify-content: center; padding: 0.75rem 0 0.375rem;
+    display: flex; justify-content: center; padding: 0.75rem 0 0.25rem;
   }
   @media (min-width: 768px) { .oc-drawer-handle { display: none; } }
 
   .oc-drawer-handle-bar {
-    height: 0.25rem; width: 2.5rem; border-radius: 9999px; background: var(--oc-border);
+    height: 0.25rem; width: 2.75rem; border-radius: 9999px;
+    background: color-mix(in srgb, var(--drawer-accent, var(--oc-accent)) 25%, var(--oc-border));
   }
 
-  .oc-drawer-header { border-bottom: 1px solid var(--oc-border); padding: 1.125rem 1.375rem; }
-  .oc-drawer-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+  /* Header */
+  .oc-drawer-header {
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--oc-border);
+    padding: 1.25rem 1.5rem 1.25rem 1.875rem;
+    position: relative;
+    background: color-mix(in srgb, var(--drawer-accent, var(--oc-accent)) 4%, var(--oc-bg));
+  }
+  .oc-drawer-header::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--drawer-accent, var(--oc-accent));
+  }
+  .oc-drawer-header-row {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 0.875rem;
+  }
 
   .oc-drawer-subtitle {
-    display: block; margin-bottom: 0.25rem;
+    display: block; margin-bottom: 0.3rem;
     font-size: 0.625rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.18em; color: var(--oc-muted);
+    text-transform: uppercase; letter-spacing: 0.2em;
+    color: var(--drawer-accent, var(--oc-accent));
     font-family: var(--font-body);
   }
 
   .oc-drawer-title {
     font-family: var(--font-display);
-    font-size: 1.375rem;
+    font-size: 1.5rem;
     letter-spacing: -0.01em;
     color: var(--oc-text);
-    line-height: 1.2;
+    line-height: 1.15;
   }
-  @media (min-width: 768px) { .oc-drawer-title { font-size: 1.625rem; } }
+  @media (min-width: 768px) { .oc-drawer-title { font-size: 1.75rem; } }
 
   .oc-drawer-close {
     display: flex; align-items: center; justify-content: center;
-    width: 2rem; height: 2rem; flex-shrink: 0;
+    width: 2.25rem; height: 2.25rem; flex-shrink: 0;
     border-radius: 0.5rem;
-    border: 1px solid var(--oc-border);
-    background: var(--oc-surface-dim);
+    border: 1.5px solid var(--oc-border);
+    background: var(--oc-surface);
     color: var(--oc-muted);
     cursor: pointer;
-    transition: border-color var(--oc-transition), background var(--oc-transition), transform var(--oc-spring);
+    transition: border-color var(--oc-transition), background var(--oc-transition), color var(--oc-transition), transform var(--oc-spring);
   }
-  .oc-drawer-close:hover { border-color: var(--oc-text); background: var(--oc-surface); color: var(--oc-text); }
-  .oc-drawer-close:active { transform: scale(0.92); }
+  .oc-drawer-close:hover {
+    border-color: var(--oc-text); background: var(--oc-surface-strong); color: var(--oc-text);
+  }
+  .oc-drawer-close:active { transform: scale(0.9); }
 
-  .oc-drawer-body { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+  /* Body */
+  .oc-drawer-body {
+    min-height: 0; flex: 1;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding: 1.375rem 1.5rem 2.5rem;
+  }
+
+  /* Sticky footer for save actions */
+  .oc-drawer-footer {
+    flex-shrink: 0;
+    padding: 0.875rem 1.5rem;
+    border-top: 1px solid var(--oc-border);
+    background: color-mix(in srgb, var(--oc-surface) 80%, var(--oc-bg));
+    display: flex; align-items: center; justify-content: flex-end; gap: 0.625rem;
+  }
+
+  /* Tab bar inside drawer */
+  .oc-drawer-tabs {
+    display: flex; gap: 0;
+    margin: -0.25rem 0 1.5rem;
+    border-bottom: 1.5px solid var(--oc-border);
+  }
+  .oc-drawer-tab {
+    padding: 0.5rem 1.125rem;
+    border: none; background: none;
+    font-family: var(--font-body);
+    font-size: 0.875rem; font-weight: 500;
+    color: var(--oc-muted);
+    border-bottom: 2px solid transparent;
+    cursor: pointer; white-space: nowrap;
+    transition: color 140ms, border-color 140ms;
+    margin-bottom: -1.5px;
+  }
+  .oc-drawer-tab:hover { color: var(--oc-text); }
+  .oc-drawer-tab[data-active='true'] {
+    font-weight: 700;
+    color: var(--drawer-accent, var(--oc-accent));
+    border-bottom-color: var(--drawer-accent, var(--oc-accent));
+  }
 
   /* ── Confirm Dialog ──────────────────────────────────────── */
 

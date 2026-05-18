@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react'
 import type { CompanyCounts, IntegrationHealthItem, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
-import { MOCK_COMPANY_COUNTS, MOCK_STATS, MOCK_RECENT_SCRAPE_JOBS, MOCK_RECENT_RUNS, MOCK_SERVICES_HEALTH, MOCK_ACTIVE_CAMPAIGN, buildFunnelSummary } from '../../../lib/mockData'
+import { MOCK_COMPANY_COUNTS, MOCK_STATS, MOCK_RECENT_SCRAPE_JOBS, MOCK_RECENT_RUNS, MOCK_SERVICES_HEALTH, MOCK_ACTIVE_CAMPAIGN, buildFunnelSummary } from '../../../lib/useAppData'
 import { CampaignHeader }  from '../dashboard/CampaignHeader'
 import { PipelineFunnel }  from '../dashboard/PipelineFunnel'
 import { StageCards }      from '../dashboard/StageCards'
@@ -100,7 +100,7 @@ export function DashboardView({
       isLive: (stats.contact_fetch?.running ?? 0) > 0, liveLabel: `${stats.contact_fetch?.running ?? 0} running`,
     },
     {
-      view: 's5-validation' as const, stageNum: 'S5', label: 'Validation',
+      view: 's5-validation' as const, stageNum: 'S4', label: 'Validation',
       color: 'var(--s5)', bg: 'var(--s5-bg)', textColor: 'var(--s5-text)', glow: 'var(--s5-glow)',
       count: stats.validation ? (stats.validation.total - stats.validation.succeeded - stats.validation.failed) : 0,
       hint: 'emails to verify',

@@ -149,7 +149,7 @@ export function S4ValidationView({
       <div className="rounded-xl px-3 py-2.5" style={{ borderLeft: '3px solid var(--s5)', backgroundColor: 'var(--s5-bg)' }}>
         <div className="flex items-center gap-2">
           <div className="flex-1">
-            <h2 className="text-base font-bold" style={{ color: 'var(--s5-text)' }}>S5 · Validation</h2>
+            <h2 className="text-base font-bold" style={{ color: 'var(--s5-text)' }}>S4 · Validation</h2>
             <p className="text-xs" style={{ color: 'var(--s5-text)', opacity: 0.7 }}>
               Validate contact emails with ZeroBounce ·{' '}
               {contacts != null ? `${displayCount.toLocaleString()} contacts` : '—'}

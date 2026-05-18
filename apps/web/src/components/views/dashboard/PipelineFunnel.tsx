@@ -1,4 +1,4 @@
-import type { FunnelSummary } from '../../../lib/mockData'
+import type { FunnelSummary } from '../../../lib/useAppData'
 
 function pct(a: number, b: number): string {
   if (!b) return '—'

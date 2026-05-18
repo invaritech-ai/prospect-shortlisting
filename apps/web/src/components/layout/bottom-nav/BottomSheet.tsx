@@ -54,7 +54,9 @@ export function BottomSheet({ items, activeView, onNavigate, onClose }: BottomSh
               )}
 
               {/* Icon */}
-              <item.Icon size={20} style={{ color: isActive ? accent : 'var(--oc-muted)', flexShrink: 0 } as React.CSSProperties} />
+              <span style={{ color: isActive ? accent : 'var(--oc-muted)', flexShrink: 0, display: 'flex' }}>
+                <item.Icon size={20} />
+              </span>
 
               {/* Label */}
               <span style={{ flex: 1, fontSize: '1rem', fontWeight: isActive ? 600 : 500, color: isActive ? accent : 'var(--oc-text)' }}>
