@@ -7,28 +7,11 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
-from app.models import (  # noqa: F401
-    AnalysisJob,
-    Campaign,
-    ClassificationResult,
-    Company,
-    CompanyFeedback,
-    Contact,
-    ContactFetchBatch,
-    ContactFetchJob,
-    ContactFetchRuntimeControl,
-    ContactProviderAttempt,
-    ContactVerifyJob,
-    CrawlArtifact,
-    CrawlJob,
-    IntegrationSecret,
-    JobEvent,
-    Prompt,
-    ScrapeJob,
-    ScrapePage,
-    TitleMatchRule,
-    Upload,
-)
+import app.models.core           # noqa: F401
+import app.models.scrape         # noqa: F401
+import app.models.classification  # noqa: F401
+import app.models.contacts       # noqa: F401
+import app.models.settings       # noqa: F401
 
 
 _is_sqlite = settings.database_url.startswith("sqlite")

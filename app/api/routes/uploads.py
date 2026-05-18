@@ -1,151 +1,193 @@
-"""Upload CRUD: create upload, list uploads, get upload, list companies in upload."""
 from __future__ import annotations
 
-from uuid import UUID
+import hashlib
+import io
+import logging
+import re
+from urllib.parse import urlparse
+from uuid import UUID, uuid4
 
+import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import case, func
+from sqlalchemy import func, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import Session, col, select
 
-from app.api.schemas.upload import (
-    CompanyRead,
-    UploadCompanyList,
-    UploadCreateResult,
-    UploadDetail,
-    UploadList,
-    UploadRead,
-    UploadValidationError,
-)
+from app.api.schemas.upload import DomainList, DomainRead, UploadCreateResult, UploadList, UploadRead
 from app.db.session import get_session
-from app.models import Campaign, Company, Upload
-from app.services.upload_service import UploadIssue, UploadService
+from app.models.base import utcnow
+from app.models.core import Campaign, Upload, UploadedDomain
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["uploads"])
-upload_service = UploadService()
+
+# URL heuristic: has a dot in the right place, no spaces, no @
+_URL_PAT = re.compile(r'^(https?://)?[a-zA-Z0-9][\w.-]*\.[a-z]{2,}(/\S*)?$', re.I)
 
 
-def _as_upload_read(upload: Upload) -> UploadRead:
-    return UploadRead.model_validate(upload, from_attributes=True)
+def _looks_like_url(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    return 3 < len(v) < 512 and ' ' not in v and '@' not in v and bool(_URL_PAT.match(v))
 
 
-def _as_issues(items: list[UploadIssue]) -> list[UploadValidationError]:
-    return [
-        UploadValidationError(
-            row_number=item.row_number,
-            raw_value=item.raw_value,
-            error_code=item.error_code,
-            error_message=item.error_message,
-        )
-        for item in items
-    ]
+def _normalize(raw: str) -> tuple[str, str, str]:
+    """Returns (normalized_url, domain, dedupe_key)."""
+    v = raw.strip()
+    if not re.match(r'^https?://', v, re.I):
+        v = 'https://' + v
+    parsed = urlparse(v)
+    host = (parsed.hostname or '').lower()
+    domain = re.sub(r'^www\.', '', host)
+    path = parsed.path.rstrip('/')
+    normalized = f"https://{host}{path}"
+    return normalized, domain, domain  # dedupe_key == domain
 
 
-def _issues_from_upload(upload: Upload) -> list[UploadValidationError]:
-    items: list[UploadValidationError] = []
-    for raw in upload.validation_errors_json or []:
-        try:
-            row_number = int(raw.get("row_number", 0))
-            if row_number < 1:
-                continue
-            items.append(
-                UploadValidationError(
-                    row_number=row_number,
-                    raw_value=str(raw.get("raw_value", "") or ""),
-                    error_code=str(raw.get("error_code", "") or ""),
-                    error_message=str(raw.get("error_message", "") or ""),
-                )
-            )
-        except Exception:  # noqa: BLE001
-            continue
-    return items
+def _extract_urls(content: bytes, filename: str) -> list[str]:
+    """Read CSV/XLSX; return one URL-like string per row (first match), file-level deduplicated."""
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'csv'
+    if ext in ('xlsx', 'xls'):
+        df = pd.read_excel(io.BytesIO(content), header=None, dtype=str)
+    else:
+        df = pd.read_csv(io.BytesIO(content), header=None, dtype=str, on_bad_lines='skip')
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for _, row in df.iterrows():
+        for cell in row:
+            if _looks_like_url(cell):
+                v = str(cell).strip()
+                if v not in seen:
+                    seen.add(v)
+                    urls.append(v)
+                break  # first URL-like cell per row wins
+    return urls
 
 
 @router.post("/uploads", response_model=UploadCreateResult, status_code=status.HTTP_201_CREATED)
 async def create_upload(
+    campaign_id: UUID = Form(...),
     file: UploadFile = File(...),
-    campaign_id: UUID | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> UploadCreateResult:
+    """Parse a CSV/XLSX of company URLs and bulk-insert into the campaign."""
+    content = await file.read()
+    filename = file.filename or "upload"
+    checksum = hashlib.sha256(content).hexdigest()
+
     try:
-        if campaign_id is not None and session.get(Campaign, campaign_id) is None:
-            raise ValueError("Campaign not found.")
-        raw_bytes = await file.read()
-        upload, issues, already_in_campaign_count = upload_service.create_upload_from_file(
-            session=session,
-            filename=file.filename or "upload",
-            raw_bytes=raw_bytes,
-            campaign_id=campaign_id,
+        raw_urls = _extract_urls(content, filename)
+    except Exception as exc:
+        logger.warning("upload_parse_error filename=%s exc=%s", filename, exc)
+        raise HTTPException(status_code=422, detail=f"Could not parse file: {exc}") from exc
+
+    if not raw_urls:
+        raise HTTPException(status_code=422, detail="No URL-like values found in the file.")
+
+    row_count = len(raw_urls)
+
+    # Verify campaign exists
+    campaign = session.get(Campaign, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+
+    # Insert Upload record first (get its id)
+    upload = Upload(
+        campaign_id=campaign_id,
+        filename=filename,
+        checksum=checksum,
+        row_count=row_count,
+    )
+    session.add(upload)
+    session.flush()  # populate upload.id without committing
+
+    # Normalize + in-file deduplicate
+    domain_values: list[dict] = []
+    seen_dedupe: set[str] = set()
+    for raw in raw_urls:
+        try:
+            normalized, domain, dedupe_key = _normalize(raw)
+        except Exception:
+            continue
+        if dedupe_key in seen_dedupe:
+            continue
+        seen_dedupe.add(dedupe_key)
+        domain_values.append({
+            "id": uuid4(),
+            "campaign_id": campaign_id,
+            "upload_id": upload.id,
+            "raw_url": raw,
+            "normalized_url": normalized,
+            "domain": domain,
+            "dedupe_key": dedupe_key,
+            "created_at": utcnow(),
+        })
+
+    new_count = 0
+    if domain_values:
+        # Find which dedupe_keys already exist in this campaign
+        all_keys = [r["dedupe_key"] for r in domain_values]
+        existing_keys: set[str] = set(
+            session.exec(
+                select(UploadedDomain.dedupe_key).where(
+                    col(UploadedDomain.campaign_id) == campaign_id,
+                    col(UploadedDomain.dedupe_key).in_(all_keys),
+                )
+            ).all()
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        new_rows = [r for r in domain_values if r["dedupe_key"] not in existing_keys]
+        new_count = len(new_rows)
+
+        if new_rows:
+            session.execute(
+                pg_insert(UploadedDomain.__table__)
+                .values(new_rows)
+                .on_conflict_do_nothing(constraint="uq_uploaded_domains_campaign_dedupe")
+            )
+
+    dupe_count = row_count - new_count
+
+    session.commit()
+    session.refresh(upload)
+
     return UploadCreateResult(
-        upload=_as_upload_read(upload),
-        validation_errors=_as_issues(issues),
-        already_in_campaign_count=already_in_campaign_count,
+        upload=UploadRead.model_validate(upload),
+        new_count=new_count,
+        dupe_count=dupe_count,
     )
 
 
 @router.get("/uploads", response_model=UploadList)
 def list_uploads(
-    session: Session = Depends(get_session),
-    limit: int = Query(default=20, ge=1, le=200),
+    campaign_id: UUID = Query(...),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
 ) -> UploadList:
-    items = list(
-        session.exec(
-            select(Upload)
-            .order_by(col(Upload.created_at).desc())
-            .offset(offset)
-            .limit(limit)
-        )
-    )
-    total = session.exec(select(func.count()).select_from(Upload)).one()
-    return UploadList(
-        total=total,
-        limit=limit,
-        offset=offset,
-        items=[_as_upload_read(item) for item in items],
-    )
+    base_q = select(Upload).where(col(Upload.campaign_id) == campaign_id)
+    total = session.exec(select(func.count()).select_from(base_q.subquery())).one()
+    items = session.exec(
+        base_q.order_by(col(Upload.created_at).desc()).limit(limit).offset(offset)
+    ).all()
+    return UploadList(total=total, limit=limit, offset=offset, items=list(items))
 
 
-@router.get("/uploads/{upload_id}", response_model=UploadDetail)
-def get_upload(upload_id: UUID, session: Session = Depends(get_session)) -> UploadDetail:
-    upload = session.get(Upload, upload_id)
-    if not upload:
-        raise HTTPException(status_code=404, detail="Upload not found.")
-    return UploadDetail(upload=_as_upload_read(upload), validation_errors=_issues_from_upload(upload))
-
-
-@router.get("/uploads/{upload_id}/companies", response_model=UploadCompanyList)
-def list_upload_companies(
+@router.delete("/uploads/{upload_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_upload(
     upload_id: UUID,
     session: Session = Depends(get_session),
-    limit: int = Query(default=25, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-) -> UploadCompanyList:
+) -> None:
     upload = session.get(Upload, upload_id)
-    if not upload:
+    if upload is None:
         raise HTTPException(status_code=404, detail="Upload not found.")
-
-    items = list(
-        session.exec(
-            select(Company)
-            .where(col(Company.upload_id) == upload_id)
-            .order_by(
-                case((col(Company.source_row_number).is_(None), 1), else_=0).asc(),
-                col(Company.source_row_number).asc(),
-                col(Company.created_at).asc(),
-                col(Company.domain).asc(),
-            )
-            .offset(offset)
-            .limit(limit)
-        )
+    # Preserve domains in the campaign — just sever the upload link
+    session.execute(
+        update(UploadedDomain)
+        .where(col(UploadedDomain.upload_id) == upload_id)
+        .values(upload_id=None)
     )
-    return UploadCompanyList(
-        upload_id=upload_id,
-        total=upload.valid_count,
-        limit=limit,
-        offset=offset,
-        items=[CompanyRead.model_validate(item, from_attributes=True) for item in items],
-    )
+    session.delete(upload)
+    session.commit()

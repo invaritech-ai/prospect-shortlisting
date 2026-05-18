@@ -13,19 +13,11 @@ from app.api.schemas.analysis import AnalysisJobDetailRead, AnalysisPipelineJobR
 from app.api.schemas.prompt import PromptCreate, PromptRead, PromptUpdate
 from app.api.schemas.scrape_prompt import ScrapePromptCreate, ScrapePromptRead, ScrapePromptUpdate
 from app.api.schemas.upload import (
-    CompanyList,
-    CompanyDeleteRequest,
-    CompanyDeleteResult,
-    CompanyListItem,
-    CompanyRead,
-    CompanyScrapeRequest,
-    CompanyScrapeResult,
-    UploadCompanyList,
+    DomainList,
+    DomainRead,
     UploadCreateResult,
-    UploadDetail,
     UploadList,
     UploadRead,
-    UploadValidationError,
 )
 
 __all__ = [
@@ -44,17 +36,9 @@ __all__ = [
     "ScrapePromptUpdate",
     "AnalysisPipelineJobRead",
     "AnalysisJobDetailRead",
-    "UploadValidationError",
-    "CompanyRead",
-    "CompanyListItem",
-    "CompanyList",
-    "CompanyDeleteRequest",
-    "CompanyDeleteResult",
-    "CompanyScrapeRequest",
-    "CompanyScrapeResult",
-    "UploadCompanyList",
+    "DomainList",
+    "DomainRead",
     "UploadList",
     "UploadRead",
     "UploadCreateResult",
-    "UploadDetail",
 ]

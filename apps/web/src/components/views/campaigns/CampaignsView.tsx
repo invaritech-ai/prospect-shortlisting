@@ -1,10 +1,23 @@
 import { useState } from 'react'
 import type { CampaignRead } from '../../../lib/types'
-import { MOCK_CAMPAIGNS, MOCK_CAMPAIGN_SUMMARIES } from '../../../lib/useAppData'
+import type { CampaignPipelineSummary } from '../../../lib/useAppData'
 import { CampaignCard }  from './CampaignCard'
 import { EmptyState }    from './EmptyState'
 import { CampaignPanel } from '../../panels/CampaignPanel'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
+
+function summaryFromCampaign(c: CampaignRead): CampaignPipelineSummary {
+  return {
+    total: c.company_count,
+    notScraped: Math.max(0, c.company_count - c.scrape_count),
+    scraped: c.scrape_count,
+    classified: c.classified_count,
+    possible: c.possible_count,
+    contactsFound: c.contact_count,
+    validEmails: 0,
+    lastActivity: c.updated_at,
+  }
+}
 
 interface CampaignsViewProps {
   campaigns: CampaignRead[]
@@ -17,7 +30,7 @@ interface CampaignsViewProps {
 }
 
 export function CampaignsView({
-  campaigns: rawCampaigns,
+  campaigns,
   selectedCampaignId,
   onSelectCampaign,
   onNavigateToDashboard,
@@ -25,7 +38,6 @@ export function CampaignsView({
   onEdit,
   onDelete,
 }: CampaignsViewProps) {
-  const campaigns = rawCampaigns.length ? rawCampaigns : MOCK_CAMPAIGNS
 
   const [panelOpen, setPanelOpen]       = useState(false)
   const [editTarget, setEditTarget]     = useState<CampaignRead | null>(null)
@@ -81,12 +93,7 @@ export function CampaignsView({
               <CampaignCard
                 key={c.id}
                 campaign={c}
-                summary={MOCK_CAMPAIGN_SUMMARIES[c.id] ?? {
-                  total: c.company_count, notScraped: c.company_count,
-                  scraped: 0, classified: 0, possible: 0,
-                  contactsFound: 0, validEmails: 0,
-                  lastActivity: c.updated_at,
-                }}
+                summary={summaryFromCampaign(c)}
                 isActive={c.id === selectedCampaignId}
                 onOpen={() => handleOpen(c)}
                 onEdit={() => openEdit(c)}

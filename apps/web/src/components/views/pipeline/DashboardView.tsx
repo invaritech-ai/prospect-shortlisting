@@ -1,4 +1,3 @@
-import type { FormEvent } from 'react'
 import type { CompanyCounts, IntegrationHealthItem, StatsResponse, ScrapeJobRead, RunRead } from '../../../lib/types'
 import { MOCK_COMPANY_COUNTS, MOCK_STATS, MOCK_RECENT_SCRAPE_JOBS, MOCK_RECENT_RUNS, MOCK_SERVICES_HEALTH, MOCK_ACTIVE_CAMPAIGN, buildFunnelSummary } from '../../../lib/useAppData'
 import { CampaignHeader }  from '../dashboard/CampaignHeader'
@@ -8,7 +7,6 @@ import { AttentionItems }  from '../dashboard/AttentionItems'
 import type { AttentionItem } from '../dashboard/AttentionItems'
 import { ServicesHealth }  from '../dashboard/ServicesHealth'
 import { RecentActivity }  from '../dashboard/RecentActivity'
-import { UploadZone }      from '../dashboard/UploadZone'
 
 type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's5-validation'
 
@@ -19,15 +17,10 @@ interface DashboardViewProps {
   recentRuns: RunRead[]
   servicesHealth: IntegrationHealthItem[] | null
   isLoadingHealth: boolean
-  file: File | null
-  isUploading: boolean
-  isDragActive: boolean
-  onSetFile: (f: File | null) => void
-  onSetIsDragActive: (v: boolean) => void
-  onUpload: (e: FormEvent) => void
   hasSelectedCampaign: boolean
   activeCampaignName?: string | null
   onNavigate: (view: PipelineStageView) => void
+  onNavigateToUploads: () => void
   onOpenCampaigns: () => void
   onOpenOperations: () => void
   onOpenSettings: () => void
@@ -40,13 +33,10 @@ export function DashboardView({
   recentRuns: rawRuns,
   servicesHealth: rawHealth,
   isLoadingHealth,
-  file, isUploading, isDragActive,
-  onSetFile, onSetIsDragActive, onUpload,
   hasSelectedCampaign,
   activeCampaignName,
-  onNavigate, onOpenCampaigns, onOpenOperations, onOpenSettings,
+  onNavigate, onNavigateToUploads, onOpenCampaigns, onOpenOperations, onOpenSettings,
 }: DashboardViewProps) {
-  // Fall back to mock data while backend isn't wired
   const counts     = rawCounts ?? MOCK_COMPANY_COUNTS
   const stats      = rawStats  ?? MOCK_STATS
   const scrapeJobs = rawScrapeJobs.length ? rawScrapeJobs : MOCK_RECENT_SCRAPE_JOBS
@@ -56,7 +46,6 @@ export function DashboardView({
 
   const funnel = buildFunnelSummary(counts, stats)
 
-  // Attention items — only show what's actually actionable
   const attentionItems: AttentionItem[] = [
     counts.unknown > 0 && {
       key: 'unknown', color: 'var(--s2)', bg: 'var(--s2-bg)', icon: '◎',
@@ -114,7 +103,7 @@ export function DashboardView({
         campaignName={campaign}
         totalCompanies={counts.total}
         lastUpdated={stats.as_of}
-        onUploadClick={() => {}}
+        onNavigateToUploads={onNavigateToUploads}
       />
       <PipelineFunnel funnel={funnel} />
       <StageCards cards={stageCards} hasSelectedCampaign={hasSelectedCampaign} onNavigate={onNavigate} onOpenCampaigns={onOpenCampaigns} />
@@ -123,7 +112,6 @@ export function DashboardView({
         <ServicesHealth services={health} isLoading={isLoadingHealth} onOpenSettings={onOpenSettings} />
         <RecentActivity scrapeJobs={scrapeJobs} runs={runs} onViewAll={onOpenOperations} />
       </div>
-      <UploadZone file={file} isUploading={isUploading} isDragActive={isDragActive} onSetFile={onSetFile} onSetIsDragActive={onSetIsDragActive} onUpload={onUpload} />
     </div>
   )
 }

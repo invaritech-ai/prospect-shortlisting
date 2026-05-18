@@ -24,6 +24,10 @@ class CampaignRead(UTCReadModel):
     description: str | None = None
     upload_count: int = 0
     company_count: int = 0
+    scrape_count: int = 0
+    classified_count: int = 0
+    possible_count: int = 0
+    contact_count: int = 0
     created_at: datetime
     updated_at: datetime
 

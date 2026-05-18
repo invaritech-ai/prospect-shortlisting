@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
 import {
   ApiError,
   configureApiSession,
@@ -23,6 +22,7 @@ import {
   startPipelineRun,
   uploadFileToCampaign,
 } from './lib/api'
+import { ImportView } from './components/views/import/ImportView'
 import type {
   CampaignRead,
   CompanyCounts,
@@ -63,7 +63,7 @@ import { OperationsLogView } from './components/views/OperationsLogView'
 import { QueueHistoryView } from './components/views/QueueHistoryView'
 import { LoginView } from './components/views/auth/LoginView'
 import { SettingsView } from './components/views/settings/SettingsView'
-import { MOCK_CAMPAIGNS, MOCK_RECENT_UPLOADS, MOCK_STATS, MOCK_COMPANY_COUNTS } from './lib/useAppData'
+import { MOCK_STATS, MOCK_COMPANY_COUNTS } from './lib/useAppData'
 import { buildOperationsEvents } from './lib/telemetry'
 import { useCampaignEventStream } from './lib/useCampaignEventStream'
 
@@ -106,11 +106,6 @@ function App() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [noticeAction, setNoticeAction] = useState<ToastNoticeAction | null>(null)
-
-  // ── Upload ────────────────────────────────────────────────────────────────
-  const [file, setFile] = useState<File | null>(null)
-  const [isUploading, setIsUploading] = useState(false)
-  const [isDragActive, setIsDragActive] = useState(false)
 
   // ── Stats + Counts ────────────────────────────────────────────────────────
   const [stats, setStats] = useState<StatsResponse | null>(null)
@@ -285,10 +280,7 @@ function App() {
       setRecentRuns([])
       return
     }
-    const scopedUploadIds = new Set(
-      uploads.filter((upload) => upload.campaign_id === selectedCampaignId).map((upload) => upload.id),
-    )
-    if (scopedUploadIds.size === 0) {
+    if (uploads.length === 0) {
       setRecentScrapeJobs([])
       setRecentRuns([])
       return
@@ -311,32 +303,33 @@ function App() {
       return
     }
     setIsCampaignLoading(true)
+    let activeCampaignId: string | null = selectedCampaignId
     try {
-      const [campaignRows, uploadRows] = await Promise.all([
-        listCampaigns(200, 0),
-        listUploads(200, 0),
-      ])
+      const campaignRows = await listCampaigns(200, 0)
       setCampaigns(campaignRows.items)
-      setUploads(uploadRows.items)
       if (campaignRows.items.length > 0) {
         if (selectedCampaignId && campaignRows.items.some((c) => c.id === selectedCampaignId)) {
           // keep current selection
         } else {
           const pilot = campaignRows.items.find((c) => c.name.toLowerCase().includes('pilot'))
-          setSelectedCampaignIdAndCancel((pilot ?? campaignRows.items[0]).id)
+          activeCampaignId = (pilot ?? campaignRows.items[0]).id
+          setSelectedCampaignIdAndCancel(activeCampaignId)
         }
-      } else if (selectedCampaignId) {
-        setSelectedCampaignIdAndCancel(null)
+      } else {
+        activeCampaignId = null
+        if (selectedCampaignId) setSelectedCampaignIdAndCancel(null)
       }
     } catch {
-      // Backend unreachable — fall back to mock data so the UI stays navigable
-      setCampaigns(MOCK_CAMPAIGNS)
-      setUploads(MOCK_RECENT_UPLOADS)
-      if (!selectedCampaignId) {
-        setSelectedCampaignIdAndCancel(MOCK_CAMPAIGNS[0].id)
-      }
+      setCampaigns([])
+      activeCampaignId = null
     } finally {
       setIsCampaignLoading(false)
+    }
+    // Uploads loaded separately so a failure doesn't poison campaign loading
+    if (activeCampaignId) {
+      listUploads(activeCampaignId, 200, 0).then((r) => setUploads(r.items)).catch(() => setUploads([]))
+    } else {
+      setUploads([])
     }
   }, [authRequestsEnabled, selectedCampaignId, setSelectedCampaignIdAndCancel])
 
@@ -557,34 +550,13 @@ function App() {
 
   // ── Upload ────────────────────────────────────────────────────────────────
 
-  const onUpload = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!file) { setError('Choose a file first.'); return }
-    setError(''); setNotice(''); setIsUploading(true)
-    setBusyMessage('Uploading file…')
-    try {
-      const result = await uploadFileToCampaign(file, selectedCampaignId || undefined)
-      setFile(null)
-      void loadCompanyCounts()
-      refreshPipelineView()
-      void loadRecentActivity()
-      void loadCampaignData()
-      const reused = result.already_in_campaign_count ?? 0
-      const newCount = (result.upload.valid_count ?? 0) - reused
-      if (selectedCampaignId && reused > 0) {
-        setNotice(`${newCount} new domain${newCount !== 1 ? 's' : ''} added, ${reused} already in campaign and skipped.`)
-      } else {
-        setNotice(
-          selectedCampaignId
-            ? 'Upload assigned to selected campaign and companies refreshed.'
-            : 'Upload parsed and companies refreshed.',
-        )
-      }
-    } catch (err) { setError(parseApiError(err)) }
-    finally {
-      setBusyMessage(null)
-      setIsUploading(false)
-    }
+  const onUploadFromView = async (file: File, campaignId: string): Promise<{ new_count: number; dupe_count: number }> => {
+    const result = await uploadFileToCampaign(file, campaignId)
+    void loadCompanyCounts()
+    refreshPipelineView()
+    void loadRecentActivity()
+    void loadCampaignData()
+    return { new_count: result.new_count, dupe_count: result.dupe_count }
   }
 
   const onCreateCampaign = async (name: string, description: string) => {
@@ -690,10 +662,10 @@ function App() {
     syncUrlState({ view: activeView, campaignId }, 'push')
   }, [activeView, setSelectedCampaignIdAndCancel, syncUrlState])
 
-  const requiresCampaignScope = activeView !== 'dashboard' && activeView !== 'campaigns' && activeView !== 'settings'
+  const requiresCampaignScope = activeView !== 'dashboard' && activeView !== 'campaigns' && activeView !== 'uploads' && activeView !== 'settings'
 
   const navigateToView = useCallback((view: ActiveView) => {
-    const viewNeedsCampaign = view !== 'dashboard' && view !== 'campaigns' && view !== 'settings'
+    const viewNeedsCampaign = view !== 'dashboard' && view !== 'campaigns' && view !== 'uploads' && view !== 'settings'
     if (viewNeedsCampaign && !selectedCampaignId) {
       setActiveViewAndCancel('campaigns')
       syncUrlState({ view: 'campaigns', campaignId: selectedCampaignId }, 'push')
@@ -817,14 +789,9 @@ function App() {
             recentRuns={recentRuns}
             servicesHealth={servicesHealth}
             isLoadingHealth={isLoadingHealth}
-            file={file}
-            isUploading={isUploading}
-            isDragActive={isDragActive}
-            onSetFile={setFile}
-            onSetIsDragActive={setIsDragActive}
-            onUpload={onUpload}
             hasSelectedCampaign={Boolean(selectedCampaignId)}
             onNavigate={(view) => navigateToView(view)}
+            onNavigateToUploads={() => navigateToView('uploads')}
             onOpenCampaigns={() => navigateToView('campaigns')}
             onOpenOperations={() => navigateToView('operations')}
             onOpenSettings={() => navigateToView('settings')}
@@ -872,6 +839,16 @@ function App() {
             onCreate={(name, description) => void onCreateCampaign(name, description)}
             onEdit={() => Promise.resolve()}
             onDelete={(campaignId) => void onDeleteCampaign(campaignId)}
+          />
+        )}
+
+        {activeView === 'uploads' && (
+          <ImportView
+            campaigns={campaigns}
+            selectedCampaignId={selectedCampaignId}
+            uploads={uploads}
+            onUpload={onUploadFromView}
+            onNavigateToPipeline={() => navigateToView('s1-scraping')}
           />
         )}
 

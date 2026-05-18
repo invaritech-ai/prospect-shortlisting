@@ -8,7 +8,7 @@ import { MobileHeader }   from './header/MobileHeader'
 import { DesktopHeader }  from './header/DesktopHeader'
 import {
   IconBuilding, IconGlobe, IconChart, IconPulse,
-  IconUsers, IconTimeline, IconSliders, IconCheck, IconCog, IconHistory,
+  IconUsers, IconTimeline, IconSliders, IconCheck, IconCog, IconHistory, IconUpload,
 } from '../ui/icons'
 
 const STAGE_COLOR: Partial<Record<ActiveView, string>> = {
@@ -22,6 +22,7 @@ const VIEW_META: Record<ActiveView, { label: string; Icon: React.FC<{ size?: num
   dashboard:       { label: 'Dashboard',        Icon: IconPulse    },
   operations:      { label: 'Operations',        Icon: IconTimeline },
   campaigns:       { label: 'Campaigns',         Icon: IconBuilding },
+  uploads:         { label: 'Uploads',           Icon: IconUpload   },
   settings:        { label: 'Config',            Icon: IconCog      },
   'full-pipeline': { label: 'Full Pipeline',     Icon: IconSliders  },
   's1-scraping':   { label: 'Scraping',          Icon: IconGlobe    },

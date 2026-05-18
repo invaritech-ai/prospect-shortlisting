@@ -2,6 +2,7 @@ export type ActiveView =
   | 'dashboard'
   | 'operations'
   | 'campaigns'
+  | 'uploads'
   | 'settings'
   | 'full-pipeline'
   | 's1-scraping'
@@ -22,6 +23,7 @@ const ACTIVE_VIEW_VALUES: ActiveView[] = [
   'dashboard',
   'operations',
   'campaigns',
+  'uploads',
   'settings',
   'full-pipeline',
   's1-scraping',

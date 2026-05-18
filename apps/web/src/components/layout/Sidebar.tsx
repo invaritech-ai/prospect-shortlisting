@@ -1,12 +1,12 @@
 import type { CampaignRead, CompanyCounts, StatsResponse } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
-import { MOCK_COMPANY_COUNTS, MOCK_STATS, MOCK_CAMPAIGNS } from '../../lib/useAppData'
+import { MOCK_COMPANY_COUNTS, MOCK_STATS } from '../../lib/useAppData'
 import { CampaignPicker } from './sidebar/CampaignPicker'
 import { NavSection }    from './sidebar/NavSection'
 import { StageNavItem }  from './sidebar/StageNavItem'
 import {
   IconPulse, IconBuilding, IconGlobe, IconChart, IconUsers, IconCheck,
-  IconSliders, IconCog, IconChevronLeft, IconChevronRight,
+  IconSliders, IconCog, IconChevronLeft, IconChevronRight, IconUpload,
 } from '../ui/icons'
 
 interface SidebarProps {
@@ -29,8 +29,7 @@ export function Sidebar({
   companyCounts: rawCounts,
   stats: rawStats,
 }: SidebarProps) {
-  // Fall back to mock data while backend isn't wired
-  const campaigns = rawCampaigns.length ? rawCampaigns : MOCK_CAMPAIGNS
+  const campaigns = rawCampaigns
   const counts    = rawCounts ?? MOCK_COMPANY_COUNTS
   const stats     = rawStats  ?? MOCK_STATS
 
@@ -101,6 +100,12 @@ export function Sidebar({
               style={{ '--item-accent': 'var(--oc-accent)', justifyContent: collapsed ? 'center' : undefined } as React.CSSProperties}>
               <IconBuilding size={16} className="oc-icon-shrink" />
               <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', transition: 'max-width 200ms, opacity 200ms', maxWidth: collapsed ? 0 : 200, opacity: collapsed ? 0 : 1 }}>Campaigns</span>
+            </button>
+            <button type="button" onClick={nav('uploads')} title={collapsed ? 'Uploads' : undefined}
+              className="oc-nav-item" data-active={isActive('uploads') ? 'true' : 'false'}
+              style={{ '--item-accent': 'var(--oc-accent)', justifyContent: collapsed ? 'center' : undefined } as React.CSSProperties}>
+              <IconUpload size={16} className="oc-icon-shrink" />
+              <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', transition: 'max-width 200ms, opacity 200ms', maxWidth: collapsed ? 0 : 200, opacity: collapsed ? 0 : 1 }}>Uploads</span>
             </button>
           </NavSection>
 

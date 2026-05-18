@@ -1,42 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.api.schemas.base import UTCReadModel
-from app.api.schemas.scrape import ScrapeRules
-
-
-class UploadValidationError(BaseModel):
-    row_number: int = Field(ge=1)
-    raw_value: str
-    error_code: str
-    error_message: str
 
 
 class UploadRead(UTCReadModel):
     id: UUID
-    campaign_id: UUID | None = None
+    campaign_id: UUID
     filename: str
-    checksum: str
     row_count: int
-    valid_count: int
-    invalid_count: int
     created_at: datetime
 
 
 class UploadCreateResult(BaseModel):
     upload: UploadRead
-    validation_errors: list[UploadValidationError]
-    already_in_campaign_count: int = 0
-
-
-class UploadDetail(BaseModel):
-    upload: UploadRead
-    validation_errors: list[UploadValidationError]
+    new_count: int
+    dupe_count: int
 
 
 class UploadList(BaseModel):
@@ -46,128 +29,22 @@ class UploadList(BaseModel):
     items: list[UploadRead]
 
 
-class CompanyRead(UTCReadModel):
+class DomainRead(UTCReadModel):
     id: UUID
-    upload_id: UUID
+    campaign_id: UUID
+    upload_id: UUID | None
     raw_url: str
     normalized_url: str
     domain: str
-    pipeline_stage: str
+    scrape_status: str | None
+    decision_status: str | None
+    fetch_status: str | None
+    verify_status: str | None
     created_at: datetime
 
 
-class UploadCompanyList(BaseModel):
-    upload_id: UUID
+class DomainList(BaseModel):
     total: int
     limit: int
     offset: int
-    items: list[CompanyRead]
-
-
-class CompanyListItem(UTCReadModel):
-    id: UUID
-    upload_id: UUID
-    upload_filename: str
-    raw_url: str
-    normalized_url: str
-    domain: str
-    pipeline_stage: str
-    created_at: datetime
-    last_activity: datetime
-    latest_decision: str | None = None
-    latest_confidence: Decimal | None = None
-    latest_scrape_job_id: UUID | None = None
-    latest_scrape_status: str | None = None
-    latest_scrape_terminal: bool | None = None
-    latest_analysis_pipeline_run_id: UUID | None = None
-    latest_analysis_job_id: UUID | None = None
-    latest_analysis_status: str | None = None
-    latest_analysis_terminal: bool | None = None
-    feedback_thumbs: str | None = None
-    feedback_comment: str | None = None
-    feedback_manual_label: str | None = None
-    latest_scrape_error_code: str | None = None
-    latest_scrape_failure_reason: str | None = None
-    contact_count: int = 0
-    discovered_contact_count: int = 0
-    discovered_title_matched_count: int = 0
-    revealed_contact_count: int = 0
-    revealed_title_matched_count: int = 0
-    contact_fetch_status: str | None = None
-
-
-class CompanyList(BaseModel):
-    total: int | None = None
-    has_more: bool
-    limit: int
-    offset: int
-    items: list[CompanyListItem]
-
-
-class CompanyDeleteRequest(BaseModel):
-    campaign_id: UUID
-    company_ids: list[UUID] = Field(min_length=1)
-
-
-class CompanyDeleteResult(BaseModel):
-    requested_count: int
-    deleted_count: int
-    deleted_ids: list[UUID]
-    missing_ids: list[UUID]
-
-
-class CompanyScrapeRequest(BaseModel):
-    campaign_id: UUID
-    company_ids: list[UUID] = Field(min_length=1)
-    scrape_rules: ScrapeRules | None = None
-    upload_id: UUID | None = None
-
-
-class CompanyScrapeAllRequest(BaseModel):
-    upload_id: UUID | None = None
-    scrape_rules: ScrapeRules | None = None
-
-
-class CompanyScrapeResult(BaseModel):
-    requested_count: int
-    queued_count: int
-    skipped_count: int = 0
-    queue_depth: int = 0
-    queued_job_ids: list[UUID]
-    failed_company_ids: list[UUID]
-    idempotency_key: str | None = None
-    idempotency_replayed: bool = False
-
-
-class CompanyDeleteQueued(BaseModel):
-    queued_count: int
-    queued_ids: list[UUID]
-
-
-class CompanyIdsResult(BaseModel):
-    ids: list[UUID]
-    total: int
-
-
-class CompanyCounts(BaseModel):
-    total: int
-    scrape_not_started: int
-    scrape_in_progress: int
-    scrape_cancelled: int
-    scrape_permanent_fail: int
-    scrape_soft_fail: int
-    uploaded: int
-    scraped: int
-    classified: int
-    contact_ready: int
-    unlabeled: int
-    possible: int
-    unknown: int
-    crap: int
-    scrape_done: int
-    scrape_failed: int
-    not_scraped: int
-
-
-class LetterCounts(BaseModel):
-    counts: dict[str, int]  # 26 entries, 'a'..'z', zeros included
+    items: list[DomainRead]

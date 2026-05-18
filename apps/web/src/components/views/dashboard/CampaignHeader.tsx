@@ -2,10 +2,10 @@ interface CampaignHeaderProps {
   campaignName: string
   totalCompanies: number
   lastUpdated: string
-  onUploadClick: () => void
+  onNavigateToUploads: () => void
 }
 
-export function CampaignHeader({ campaignName, totalCompanies, lastUpdated, onUploadClick }: CampaignHeaderProps) {
+export function CampaignHeader({ campaignName, totalCompanies, lastUpdated, onNavigateToUploads }: CampaignHeaderProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
       <div>
@@ -18,7 +18,7 @@ export function CampaignHeader({ campaignName, totalCompanies, lastUpdated, onUp
           {' '}companies · updated {new Date(lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </p>
       </div>
-      <button type="button" onClick={onUploadClick} className="oc-btn oc-btn-secondary oc-btn-sm" style={{ flexShrink: 0 }}>
+      <button type="button" onClick={onNavigateToUploads} className="oc-btn oc-btn-secondary oc-btn-sm" style={{ flexShrink: 0 }}>
         + Upload companies
       </button>
     </div>

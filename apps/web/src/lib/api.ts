@@ -23,6 +23,7 @@ import type {
   DiscoveredContactCountsResponse,
   DiscoveredContactIdsResult,
   DiscoveredContactListResponse,
+  DomainList,
   DrainQueueResult,
   FeedbackRead,
   FeedbackUpsert,
@@ -183,18 +184,31 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-export async function uploadFileToCampaign(file: File, campaignId?: string): Promise<UploadCreateResult> {
+export async function uploadFileToCampaign(file: File, campaignId: string): Promise<UploadCreateResult> {
   const form = new FormData()
   form.append('file', file)
-  if (campaignId) form.append('campaign_id', campaignId)
+  form.append('campaign_id', campaignId)
   return request<UploadCreateResult>('/v1/uploads', {
     method: 'POST',
     body: form,
   })
 }
 
-export async function listUploads(limit = 20, offset = 0): Promise<UploadList> {
-  return request<UploadList>(`/v1/uploads?limit=${limit}&offset=${offset}`)
+export async function listUploads(campaignId: string, limit = 50, offset = 0): Promise<UploadList> {
+  return request<UploadList>(`/v1/uploads?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}`)
+}
+
+export async function deleteUpload(uploadId: string): Promise<void> {
+  return request<void>(`/v1/uploads/${uploadId}`, { method: 'DELETE' })
+}
+
+export async function listDomains(
+  campaignId: string,
+  { uploadId, limit = 50, offset = 0 }: { uploadId?: string; limit?: number; offset?: number } = {},
+): Promise<DomainList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (uploadId) params.set('upload_id', uploadId)
+  return request<DomainList>(`/v1/companies?${params.toString()}`)
 }
 
 export async function listCampaigns(limit = 50, offset = 0): Promise<CampaignList> {

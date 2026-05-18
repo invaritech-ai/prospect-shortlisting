@@ -1,25 +1,15 @@
-type UploadValidationError = {
-  row_number: number
-  raw_value: string
-  error_code: string
-  error_message: string
-}
-
 export type UploadRead = {
   id: string
-  campaign_id: string | null
+  campaign_id: string
   filename: string
-  checksum: string
   row_count: number
-  valid_count: number
-  invalid_count: number
   created_at: string
 }
 
 export type UploadCreateResult = {
   upload: UploadRead
-  validation_errors: UploadValidationError[]
-  already_in_campaign_count: number
+  new_count: number
+  dupe_count: number
 }
 
 export type UploadList = {
@@ -29,12 +19,37 @@ export type UploadList = {
   items: UploadRead[]
 }
 
+export type DomainRead = {
+  id: string
+  campaign_id: string
+  upload_id: string | null
+  raw_url: string
+  normalized_url: string
+  domain: string
+  scrape_status: string | null
+  decision_status: string | null
+  fetch_status: string | null
+  verify_status: string | null
+  created_at: string
+}
+
+export type DomainList = {
+  total: number
+  limit: number
+  offset: number
+  items: DomainRead[]
+}
+
 export type CampaignRead = {
   id: string
   name: string
   description: string | null
   upload_count: number
   company_count: number
+  scrape_count: number
+  classified_count: number
+  possible_count: number
+  contact_count: number
   created_at: string
   updated_at: string
 }

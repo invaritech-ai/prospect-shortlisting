@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, update
+from sqlalchemy import case, func, update
 from sqlmodel import Session, col, select
 
 from app.api.schemas.campaign import (
@@ -15,12 +13,31 @@ from app.api.schemas.campaign import (
     CampaignRead,
     CampaignUpdate,
 )
-from app.api.schemas.pipeline_run import PipelineCostSummaryRead, PipelineStageCostRead
+from app.api.schemas.pipeline_run import PipelineCostSummaryRead
 from app.db.session import get_session
-from app.models import AiUsageEvent, Campaign, Company, Upload
-from app.models.pipeline import utcnow
+from app.models.core import Campaign, Upload, UploadedDomain
+from app.models.base import utcnow
 
 router = APIRouter(prefix="/v1", tags=["campaigns"])
+
+
+def _domain_stats_subquery():
+    """Single subquery: all per-campaign domain counts in one GROUP BY pass."""
+    return (
+        select(
+            col(UploadedDomain.campaign_id).label("campaign_id"),
+            func.count().label("company_count"),
+            func.count(col(UploadedDomain.scrape_status)).label("scrape_count"),
+            func.count(col(UploadedDomain.decision_status)).label("classified_count"),
+            func.sum(
+                case((col(UploadedDomain.decision_status) == "Possible", 1), else_=0)
+            ).label("possible_count"),
+            func.count(col(UploadedDomain.fetch_status)).label("contact_count"),
+        )
+        .where(col(UploadedDomain.campaign_id).is_not(None))
+        .group_by(col(UploadedDomain.campaign_id))
+        .subquery()
+    )
 
 
 def _as_campaign_read(
@@ -28,6 +45,10 @@ def _as_campaign_read(
     campaign: Campaign,
     upload_count: int = 0,
     company_count: int = 0,
+    scrape_count: int = 0,
+    classified_count: int = 0,
+    possible_count: int = 0,
+    contact_count: int = 0,
 ) -> CampaignRead:
     return CampaignRead(
         id=campaign.id,
@@ -35,22 +56,32 @@ def _as_campaign_read(
         description=campaign.description,
         upload_count=upload_count,
         company_count=company_count,
+        scrape_count=scrape_count,
+        classified_count=classified_count,
+        possible_count=possible_count,
+        contact_count=contact_count,
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,
     )
 
 
-def _get_campaign_counts(session: Session, campaign_id: UUID) -> tuple[int, int]:
+def _get_campaign_counts(session: Session, campaign_id: UUID) -> dict:
     upload_count = session.exec(
         select(func.count()).select_from(Upload).where(col(Upload.campaign_id) == campaign_id)
     ).one()
-    company_count = session.exec(
-        select(func.count())
-        .select_from(Company)
-        .join(Upload, col(Upload.id) == col(Company.upload_id))
-        .where(col(Upload.campaign_id) == campaign_id)
-    ).one()
-    return int(upload_count), int(company_count)
+    sq = _domain_stats_subquery()
+    row = session.execute(select(sq).where(sq.c.campaign_id == campaign_id)).first()
+    if row:
+        return dict(
+            upload_count=int(upload_count),
+            company_count=int(row.company_count),
+            scrape_count=int(row.scrape_count),
+            classified_count=int(row.classified_count),
+            possible_count=int(row.possible_count or 0),
+            contact_count=int(row.contact_count),
+        )
+    return dict(upload_count=int(upload_count), company_count=0, scrape_count=0,
+                classified_count=0, possible_count=0, contact_count=0)
 
 
 @router.post("/campaigns", response_model=CampaignRead, status_code=status.HTTP_201_CREATED)
@@ -82,6 +113,7 @@ def list_campaigns(
     limit: int = Query(default=25, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> CampaignList:
+    domain_stats = _domain_stats_subquery()
     upload_counts = (
         select(
             col(Upload.campaign_id).label("campaign_id"),
@@ -91,25 +123,19 @@ def list_campaigns(
         .group_by(col(Upload.campaign_id))
         .subquery()
     )
-    company_counts = (
-        select(
-            col(Upload.campaign_id).label("campaign_id"),
-            func.count(col(Company.id)).label("company_count"),
-        )
-        .join(Company, col(Company.upload_id) == col(Upload.id))
-        .where(col(Upload.campaign_id).is_not(None))
-        .group_by(col(Upload.campaign_id))
-        .subquery()
-    )
 
     statement = (
         select(
             Campaign,
             func.coalesce(upload_counts.c.upload_count, 0).label("upload_count"),
-            func.coalesce(company_counts.c.company_count, 0).label("company_count"),
+            func.coalesce(domain_stats.c.company_count, 0).label("company_count"),
+            func.coalesce(domain_stats.c.scrape_count, 0).label("scrape_count"),
+            func.coalesce(domain_stats.c.classified_count, 0).label("classified_count"),
+            func.coalesce(domain_stats.c.possible_count, 0).label("possible_count"),
+            func.coalesce(domain_stats.c.contact_count, 0).label("contact_count"),
         )
         .outerjoin(upload_counts, upload_counts.c.campaign_id == col(Campaign.id))
-        .outerjoin(company_counts, company_counts.c.campaign_id == col(Campaign.id))
+        .outerjoin(domain_stats, domain_stats.c.campaign_id == col(Campaign.id))
         .order_by(col(Campaign.updated_at).desc(), col(Campaign.created_at).desc())
     )
     rows = list(session.exec(statement.offset(offset).limit(limit + 1)))
@@ -122,8 +148,16 @@ def list_campaigns(
         offset=offset,
         has_more=has_more,
         items=[
-            _as_campaign_read(campaign=campaign, upload_count=int(upload_count), company_count=int(company_count))
-            for campaign, upload_count, company_count in page_rows
+            _as_campaign_read(
+                campaign=campaign,
+                upload_count=int(upload_count),
+                company_count=int(company_count),
+                scrape_count=int(scrape_count),
+                classified_count=int(classified_count),
+                possible_count=int(possible_count or 0),
+                contact_count=int(contact_count),
+            )
+            for campaign, upload_count, company_count, scrape_count, classified_count, possible_count, contact_count in page_rows
         ],
     )
 
@@ -133,8 +167,8 @@ def get_campaign(campaign_id: UUID, session: Session = Depends(get_session)) -> 
     campaign = session.get(Campaign, campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
-    upload_count, company_count = _get_campaign_counts(session, campaign_id)
-    return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)
+    counts = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, **counts)
 
 
 @router.get("/campaigns/{campaign_id}/costs", response_model=PipelineCostSummaryRead)
@@ -142,52 +176,8 @@ def get_campaign_costs(campaign_id: UUID, session: Session = Depends(get_session
     campaign = session.get(Campaign, campaign_id)
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
-
-    rows: list[tuple[Any, Any, Any, Any, Any]] = list(
-        session.exec(
-            select(  # type: ignore[call-overload]
-                col(AiUsageEvent.stage),
-                func.coalesce(func.sum(col(AiUsageEvent.billed_cost_usd)), Decimal("0")).label("cost_usd"),
-                func.count(col(AiUsageEvent.id)).label("event_count"),
-                func.coalesce(func.sum(col(AiUsageEvent.input_tokens)), 0).label("input_tokens"),
-                func.coalesce(func.sum(col(AiUsageEvent.output_tokens)), 0).label("output_tokens"),
-            )
-            .where(col(AiUsageEvent.campaign_id) == campaign_id)
-            .group_by(col(AiUsageEvent.stage))
-        )
-    )
-
-    by_stage: dict[str, PipelineStageCostRead] = {}
-    total_cost = Decimal("0")
-    event_count = 0
-    input_tokens = 0
-    output_tokens = 0
-    for stage, cost, events, in_tokens, out_tokens in rows:
-        stage_cost = cost if isinstance(cost, Decimal) else Decimal(str(cost or 0))
-        stage_events = int(events or 0)
-        stage_input_tokens = int(in_tokens or 0)
-        stage_output_tokens = int(out_tokens or 0)
-        by_stage[str(stage)] = PipelineStageCostRead(
-            cost_usd=stage_cost,
-            event_count=stage_events,
-            input_tokens=stage_input_tokens,
-            output_tokens=stage_output_tokens,
-        )
-        total_cost += stage_cost
-        event_count += stage_events
-        input_tokens += stage_input_tokens
-        output_tokens += stage_output_tokens
-
-    return PipelineCostSummaryRead(
-        pipeline_run_id=None,
-        campaign_id=campaign_id,
-        company_id=None,
-        total_cost_usd=total_cost,
-        event_count=event_count,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        by_stage=by_stage,
-    )
+    # AI usage tracking not yet implemented in new schema
+    return PipelineCostSummaryRead(campaign_id=campaign_id)
 
 
 @router.patch("/campaigns/{campaign_id}", response_model=CampaignRead)
@@ -217,7 +207,8 @@ def update_campaign(
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
-    return _as_campaign_read(campaign=campaign)
+    counts = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, **counts)
 
 
 @router.delete("/campaigns/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -226,6 +217,7 @@ def delete_campaign(campaign_id: UUID, session: Session = Depends(get_session)) 
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
     session.execute(update(Upload).where(col(Upload.campaign_id) == campaign_id).values(campaign_id=None))
+    session.execute(update(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id).values(campaign_id=None))
     session.delete(campaign)
     session.commit()
 
@@ -251,15 +243,13 @@ def assign_uploads_to_campaign(
     ).one()
     if already_claimed:
         raise HTTPException(status_code=409, detail="One or more uploads are already assigned to another campaign.")
-    session.execute(
-        update(Upload).where(col(Upload.id).in_(upload_ids)).values(campaign_id=campaign_id)
-    )
+    session.execute(update(Upload).where(col(Upload.id).in_(upload_ids)).values(campaign_id=campaign_id))
     campaign.updated_at = utcnow()
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
-    upload_count, company_count = _get_campaign_counts(session, campaign_id)
-    return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)
+    counts = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, **counts)
 
 
 @router.post("/campaigns/{campaign_id}/unassign-uploads", response_model=CampaignRead)
@@ -272,12 +262,10 @@ def unassign_uploads_from_campaign(
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaign not found.")
     upload_ids = list(dict.fromkeys(payload.upload_ids))
-    session.execute(
-        update(Upload).where(col(Upload.id).in_(upload_ids)).values(campaign_id=None)
-    )
+    session.execute(update(Upload).where(col(Upload.id).in_(upload_ids)).values(campaign_id=None))
     campaign.updated_at = utcnow()
     session.add(campaign)
     session.commit()
     session.refresh(campaign)
-    upload_count, company_count = _get_campaign_counts(session, campaign_id)
-    return _as_campaign_read(campaign=campaign, upload_count=upload_count, company_count=company_count)
+    counts = _get_campaign_counts(session, campaign_id)
+    return _as_campaign_read(campaign=campaign, **counts)
