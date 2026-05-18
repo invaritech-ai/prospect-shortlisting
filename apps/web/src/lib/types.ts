@@ -493,6 +493,72 @@ export type LetterCounts = {
   counts: Record<string, number>
 }
 
+// ── S1 Scraping ─────────────────────────────────────────────────────────────
+
+export type ScrapeBatchRead = {
+  id: string
+  campaign_id: string
+  state: string  // 'queued' | 'dispatching' | 'running' | 'completed' | 'failed'
+  selected_domain_count: number
+  queued_count: number
+  success_count: number
+  failed_count: number
+  created_at: string
+  finished_at: string | null
+  eta_seconds: number | null
+}
+
+export type ScrapeBatchCreate = {
+  campaign_id: string
+  domain_ids?: string[]
+  filter?: {
+    scrape_status?: string
+    letter?: string
+  }
+}
+
+export type ScrapeBatchList = {
+  total: number
+  items: ScrapeBatchRead[]
+}
+
+export type ScrapeSettingsRead = {
+  id: string
+  campaign_id: string | null
+  name: string
+  instruction_text: string | null
+  structured_rules_json: Record<string, unknown> | null
+  is_active: boolean
+  created_at: string
+}
+
+export type ScrapeResultRead = {
+  id: string
+  campaign_id: string
+  domain_id: string
+  scrape_batch_id: string | null
+  state: string
+  pages_attempted_count: number
+  pages_success_count: number
+  markdown_pages_count: number
+  scraped_pages_json: Array<{
+    kind: string
+    url: string
+    fetch_mode: string
+    success: boolean
+    status_code: number
+    error_code: string | null
+    markdown?: string
+  }> | null
+  error_code: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type DomainLetterCounts = {
+  counts: Record<string, number>
+}
+
 export type AnalysisJobDetailRead = {
   analysis_job_id: string
   pipeline_run_id: string | null

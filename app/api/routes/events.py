@@ -136,6 +136,29 @@ async def stream_campaign_events(
                 if resolved != target_campaign:
                     continue
 
+                # scrape_batch events carry campaign_id directly — no DB join needed
+                if job_type == "scrape_batch":
+                    if str(payload.get("campaign_id") or "") != target_campaign:
+                        continue
+                    out = {
+                        "stage": "s1",
+                        "event_type": "scrape_batch",
+                        "batch_id": payload.get("batch_id"),
+                        "campaign_id": payload.get("campaign_id"),
+                        "state": payload.get("state"),
+                        "selected_domain_count": payload.get("selected_domain_count"),
+                        "success_count": payload.get("success_count"),
+                        "failed_count": payload.get("failed_count"),
+                        "queued_count": payload.get("queued_count"),
+                        "finished_at": payload.get("finished_at"),
+                    }
+                    yield _format_sse(out)
+                    continue
+
+                resolved = _resolve_campaign(session, job_type, job_id)
+                if resolved != target_campaign:
+                    continue
+
                 out = {
                     "id": payload.get("id"),
                     "stage": _STAGE_LABEL.get(job_type, job_type),

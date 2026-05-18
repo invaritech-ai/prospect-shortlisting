@@ -1,140 +1,98 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from app.api.schemas.base import UTCReadModel
 
 ScrapePageKind = Literal[
-    "home",
-    "about",
-    "products",
-    "contact",
-    "team",
-    "leadership",
-    "services",
-    "pricing",
+    "home", "about", "products", "contact", "team", "leadership", "services", "pricing"
 ]
 
+DEFAULT_PAGE_KINDS: list[str] = [
+    "home", "about", "products", "services", "pricing", "contact", "team", "leadership"
+]
 
-class ScrapeRules(BaseModel):
-    page_kinds: list[ScrapePageKind] = Field(default_factory=list)
-    classifier_prompt_text: str | None = None
-    fallback_enabled: bool = True
-    fallback_limit: int = Field(default=1, ge=0, le=3)
-    fallback_priority: list[ScrapePageKind] = Field(default_factory=list)
-    js_fallback: bool | None = None
-    include_sitemap: bool | None = None
-
-
-class ScrapeJobCreate(BaseModel):
-    website_url: str = Field(min_length=3, max_length=2048)
-    js_fallback: bool = True
-    include_sitemap: bool = True
-    general_model: str | None = Field(
-        default=None, min_length=2, max_length=128
-    )
-    classify_model: str | None = Field(
-        default=None, min_length=2, max_length=128
-    )
-    scrape_rules: ScrapeRules | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _map_legacy_markdown_model(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "general_model" not in data and "markdown_model" in data:
-            data = dict(data)
-            data["general_model"] = data["markdown_model"]
-        return data
+DEFAULT_STRUCTURED_RULES: dict[str, Any] = {
+    "page_kinds": DEFAULT_PAGE_KINDS,
+    "fallback_enabled": True,
+    "fallback_limit": 1,
+    "js_fallback": True,
+    "include_sitemap": True,
+}
 
 
-class ScrapeJobRead(UTCReadModel):
+# ── Settings ────────────────────────────────────────────────────────────────
+
+class ScrapeSettingsRead(UTCReadModel):
     id: UUID
-    website_url: str
-    normalized_url: str
-    domain: str
+    campaign_id: UUID | None
+    name: str
+    instruction_text: str | None
+    structured_rules_json: dict[str, Any] | None
+    is_active: bool
+    created_at: datetime
+
+
+class ScrapeSettingsCreate(BaseModel):
+    campaign_id: UUID
+    name: str = Field(default="Default", max_length=255)
+    instruction_text: str | None = None
+    structured_rules_json: dict[str, Any] | None = None
+
+
+# ── Batches ──────────────────────────────────────────────────────────────────
+
+class ScrapeBatchFilter(BaseModel):
+    scrape_status: str | None = None   # 'pending' | 'failed' | 'done' | 'running'
+    letter: str | None = None          # 'A'-'Z' | '#' | None = all
+
+
+class ScrapeBatchCreate(BaseModel):
+    campaign_id: UUID
+    domain_ids: list[UUID] = Field(default_factory=list)
+    filter: ScrapeBatchFilter | None = None
+
+
+class ScrapeBatchRead(UTCReadModel):
+    id: UUID
+    campaign_id: UUID
     state: str
-    terminal_state: bool
-    failure_reason: str | None = None
-    js_fallback: bool
-    include_sitemap: bool
-    general_model: str
-    classify_model: str
-    discovered_urls_count: int
-    pages_fetched_count: int
-    fetch_failures_count: int
-    markdown_pages_count: int
-    llm_used_count: int
-    llm_failed_count: int
-    last_error_code: str | None = None
-    last_error_message: str | None = None
-    created_at: datetime
-    updated_at: datetime
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    selected_page_kinds: list[ScrapePageKind] | None = None
-    effective_page_plan_count: int | None = None
-    effective_page_plan_json: list[dict[str, str]] | None = None
-
-
-class ScrapePageRead(UTCReadModel):
-    id: int
-    job_id: UUID
-    url: str
-    canonical_url: str
-    depth: int
-    page_kind: str
-    fetch_mode: str
-    status_code: int
-    title: str
-    description: str
-    text_len: int
-    fetch_error_code: str
-    fetch_error_message: str
-    updated_at: datetime
-
-
-class ScrapePageContentRead(UTCReadModel):
-    id: int
-    job_id: UUID
-    url: str
-    canonical_url: str
-    page_kind: str
-    fetch_mode: str
-    status_code: int
-    title: str
-    description: str
-    markdown_content: str
-    fetch_error_code: str
-    fetch_error_message: str
-    created_at: datetime
-    updated_at: datetime
-
-
-class JobActionResult(BaseModel):
-    job: ScrapeJobRead
-    message: str
-
-
-class JobEnqueueResult(BaseModel):
-    job_id: UUID
-    task_id: str
-    message: str
-    idempotency_key: str | None = None
-    idempotency_replayed: bool = False
-
-
-class ScrapeRunRead(UTCReadModel):
-    id: UUID
-    status: str
-    requested_count: int
+    selected_domain_count: int
     queued_count: int
-    skipped_count: int
+    success_count: int
     failed_count: int
     created_at: datetime
-    started_at: datetime | None
-    finished_at: datetime | None
+    finished_at: datetime | None = None
+    eta_seconds: float | None = None
+
+
+class ScrapeBatchList(BaseModel):
+    total: int
+    items: list[ScrapeBatchRead]
+
+
+# ── Results (per-domain scraped content) ─────────────────────────────────────
+
+class ScrapeResultRead(UTCReadModel):
+    id: UUID
+    campaign_id: UUID
+    domain_id: UUID
+    scrape_batch_id: UUID | None
+    state: str
+    pages_attempted_count: int
+    pages_success_count: int
+    markdown_pages_count: int
+    scraped_pages_json: list[dict[str, Any]] | None
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ── Letter counts ─────────────────────────────────────────────────────────────
+
+class LetterCountsResponse(BaseModel):
+    counts: dict[str, int]

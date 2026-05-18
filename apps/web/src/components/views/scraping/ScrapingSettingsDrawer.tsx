@@ -1,12 +1,15 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Drawer } from '../../ui/Drawer'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
+import { getScrapeSettings, saveScrapeSettings } from '../../../lib/api'
 
 const DEFAULT_RULES = `# Pages to include
 - Homepage (/)
 - About / Company (/about, /company, /who-we-are)
 - Product / Platform (/product, /platform, /features, /solutions)
 - Pricing (/pricing)
+- Contact (/contact)
+- Team / Leadership (/team, /leadership, /about/team)
 
 # Pages to exclude
 - Blog posts and news articles
@@ -14,22 +17,6 @@ const DEFAULT_RULES = `# Pages to include
 - Legal pages (terms, privacy, cookies)
 - Login / signup pages
 - Career / jobs pages`
-
-const DEFAULT_INTENT = `You are classifying B2B SaaS companies for outbound sales targeting.
-
-Classify as **Possible** if the company:
-- Sells software or SaaS to other businesses (B2B)
-- Has a clear enterprise or mid-market tier
-- Operates in a segment we serve (HR, finance, analytics, productivity, dev tools)
-- Has strong growth signals (funding, headcount, press mentions)
-
-Classify as **Unknown** if you cannot determine B2B fit from the scraped content.
-
-Classify as **Crap** if:
-- Primarily B2C or consumer product
-- No enterprise offering
-- Irrelevant industry (gaming, media, e-commerce retail)
-- Site is too thin or incomplete to judge`
 
 function Spinner() {
   return (
@@ -43,18 +30,28 @@ function Spinner() {
 interface ScrapingSettingsDrawerProps {
   isOpen: boolean
   onClose: () => void
+  campaignId: string
 }
 
-export function ScrapingSettingsDrawer({ isOpen, onClose }: ScrapingSettingsDrawerProps) {
-  const [rules, setRules]   = useState(DEFAULT_RULES)
-  const [intent, setIntent] = useState(DEFAULT_INTENT)
-  const [activeTab, setActiveTab] = useState<'pages' | 'intent'>('pages')
-
+export function ScrapingSettingsDrawer({ isOpen, onClose, campaignId }: ScrapingSettingsDrawerProps) {
+  const [rules, setRules]             = useState(DEFAULT_RULES)
   const [isDirty, setIsDirty]         = useState(false)
   const [isSaving, setIsSaving]       = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [showUnsaved, setShowUnsaved] = useState(false)
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Load existing settings when drawer opens
+  useEffect(() => {
+    if (!isOpen) return
+    getScrapeSettings(campaignId).then((settings) => {
+      if (settings?.instruction_text) {
+        setRules(settings.instruction_text)
+      }
+    }).catch(() => { /* use defaults */ })
+    setIsDirty(false)
+    setSaveSuccess(false)
+  }, [isOpen, campaignId])
 
   function markDirty() { setIsDirty(true); setSaveSuccess(false) }
 
@@ -64,18 +61,18 @@ export function ScrapingSettingsDrawer({ isOpen, onClose }: ScrapingSettingsDraw
 
   async function handleSave() {
     setIsSaving(true)
-    await new Promise((r) => setTimeout(r, 600))
-    setIsDirty(false)
-    setIsSaving(false)
-    setSaveSuccess(true)
-    if (successTimer.current) clearTimeout(successTimer.current)
-    successTimer.current = setTimeout(() => setSaveSuccess(false), 2000)
+    try {
+      await saveScrapeSettings(campaignId, rules)
+      setIsDirty(false)
+      setSaveSuccess(true)
+      if (successTimer.current) clearTimeout(successTimer.current)
+      successTimer.current = setTimeout(() => setSaveSuccess(false), 2000)
+    } catch {
+      // leave dirty so user can retry
+    } finally {
+      setIsSaving(false)
+    }
   }
-
-  const tabs: { id: 'pages' | 'intent'; label: string }[] = [
-    { id: 'pages',  label: 'Page rules' },
-    { id: 'intent', label: 'AI intent' },
-  ]
 
   return (
     <>
@@ -105,44 +102,18 @@ export function ScrapingSettingsDrawer({ isOpen, onClose }: ScrapingSettingsDraw
           </button>
         }
       >
-        <div className="oc-drawer-tabs">
-          {tabs.map((t) => (
-            <button key={t.id} type="button" className="oc-drawer-tab"
-              data-active={activeTab === t.id ? 'true' : 'false'}
-              onClick={() => setActiveTab(t.id)}
-            >{t.label}</button>
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--oc-muted)', lineHeight: 1.55 }}>
+            Define which pages to scrape and which to skip. These rules apply to all future scrape batches in this campaign.
+          </p>
+          <textarea
+            value={rules}
+            onChange={(e) => { setRules(e.target.value); markDirty() }}
+            className="oc-textarea"
+            rows={18}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem', resize: 'vertical' }}
+          />
         </div>
-
-        {activeTab === 'pages' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-            <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--oc-muted)', lineHeight: 1.55 }}>
-              Define which pages to scrape and which to skip. Uses URL pattern matching.
-            </p>
-            <textarea
-              value={rules}
-              onChange={(e) => { setRules(e.target.value); markDirty() }}
-              className="oc-textarea"
-              rows={18}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem', resize: 'vertical' }}
-            />
-          </div>
-        )}
-
-        {activeTab === 'intent' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-            <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--oc-muted)', lineHeight: 1.55 }}>
-              High-level intent passed to the AI classifier. Defines what makes a company a fit.
-            </p>
-            <textarea
-              value={intent}
-              onChange={(e) => { setIntent(e.target.value); markDirty() }}
-              className="oc-textarea"
-              rows={18}
-              style={{ fontFamily: 'var(--font-body)', fontSize: '0.8125rem', lineHeight: 1.6, resize: 'vertical' }}
-            />
-          </div>
-        )}
       </Drawer>
 
       <ConfirmDialog

@@ -1,44 +1,146 @@
-import { useState, useMemo } from 'react'
-import { MOCK_SCRAPE_ROWS, MOCK_SCRAPE_STATS, MOCK_STATS } from '../../../lib/useAppData'
-import type { MockScrapeRow } from '../../../lib/useAppData'
-import type { StatsResponse } from '../../../lib/types'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import type { DomainRead, ScrapeBatchRead, DomainLetterCounts } from '../../../lib/types'
+import {
+  getDomainLetterCounts,
+  createScrapeBatch,
+  getActiveBatch,
+} from '../../../lib/api'
 import { StageViewHeader }       from '../shared/StageViewHeader'
 import { ScrapingToolbar }        from './ScrapingToolbar'
 import { ScrapingTable }          from './ScrapingTable'
 import { ScrapingCards }          from './ScrapingCards'
 import { ScrapedContentDrawer }   from './ScrapedContentDrawer'
 import { ScrapingSettingsDrawer } from './ScrapingSettingsDrawer'
-import type { FilterValue }       from './ScrapingToolbar'
+import type { StatusFilter }      from './ScrapingToolbar'
+
+const PAGE_SIZE = 50
+
+const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
 
 interface ScrapingViewProps {
-  stats?: StatsResponse | null
+  campaignId: string
+  sseUrl: string  // /v1/campaigns/{id}/events/stream
 }
 
-export function ScrapingView({ stats: rawStats }: ScrapingViewProps) {
-  const stats = rawStats ?? MOCK_STATS
+export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
+  // ── Filters / selection ──────────────────────────────────────────────────
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [letterFilter, setLetterFilter] = useState<string>('all')
+  const [search, setSearch]             = useState('')
+  // Explicit checked domain IDs (visible-page selections)
+  const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set())
+  // "Select all matching" filter criteria (server-side selection)
+  const [filterSelection, setFilterSelection] = useState<{ scrape_status?: string; letter?: string } | null>(null)
 
-  const [filter, setFilter]   = useState<FilterValue>('all')
-  const [search, setSearch]   = useState('')
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [viewingRow, setViewingRow]     = useState<MockScrapeRow | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // ── Data ────────────────────────────────────────────────────────────────
+  const [domains, setDomains]           = useState<DomainRead[]>([])
+  const [domainTotal, setDomainTotal]   = useState(0)
+  const [page, setPage]                 = useState(0)
+  const [letterCounts, setLetterCounts] = useState<DomainLetterCounts | null>(null)
+  const [activeBatch, setActiveBatch]   = useState<ScrapeBatchRead | null>(null)
+  const [loading, setLoading]           = useState(false)
+  const [batchError, setBatchError]     = useState<string | null>(null)
 
-  const scrapeStats = [
-    { label: 'pending', value: MOCK_SCRAPE_STATS.pending },
-    { label: 'running', value: MOCK_SCRAPE_STATS.running, live: true, color: 'var(--s1)' },
-    { label: 'done',    value: MOCK_SCRAPE_STATS.done,    color: 'var(--oc-success-text)' },
-    { label: 'failed',  value: MOCK_SCRAPE_STATS.failed,  color: 'var(--oc-fail-text)' },
-  ]
+  // ── Drawers ─────────────────────────────────────────────────────────────
+  const [viewingDomain, setViewingDomain]   = useState<DomainRead | null>(null)
+  const [settingsOpen, setSettingsOpen]     = useState(false)
 
-  const filtered = useMemo(() => {
-    let rows = MOCK_SCRAPE_ROWS
-    if (filter !== 'all') rows = rows.filter((r) => r.status === filter)
-    if (search.trim())    rows = rows.filter((r) => r.domain.toLowerCase().includes(search.toLowerCase()))
-    return rows
-  }, [filter, search])
+  // ── Load domain list ──────────────────────────────────────────────────────
+  const loadDomains = useCallback(async (p = 0) => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        campaign_id: campaignId,
+        limit: String(PAGE_SIZE),
+        offset: String(p * PAGE_SIZE),
+      })
+      if (statusFilter !== 'all') params.set('scrape_status', statusFilter)
+      if (letterFilter !== 'all') params.set('letter', letterFilter)
+      if (search.trim()) params.set('search', search.trim())
+      const result = await fetch(`/v1/companies?${params.toString()}`).then((r) => r.json()) as { total: number; items: DomainRead[] }
+      setDomains(result.items)
+      setDomainTotal(result.total)
+    } catch {
+      // keep existing data
+    } finally {
+      setLoading(false)
+    }
+  }, [campaignId, statusFilter, letterFilter, search])
 
+  const loadLetterCounts = useCallback(async () => {
+    try {
+      const counts = await getDomainLetterCounts(
+        campaignId,
+        statusFilter !== 'all' ? statusFilter : undefined,
+      )
+      setLetterCounts(counts)
+    } catch { /* ignore */ }
+  }, [campaignId, statusFilter])
+
+  const loadActiveBatch = useCallback(async () => {
+    try {
+      const batch = await getActiveBatch(campaignId)
+      setActiveBatch(batch)
+    } catch { /* ignore */ }
+  }, [campaignId])
+
+  // Initial load
+  useEffect(() => {
+    void loadDomains(0)
+    void loadLetterCounts()
+    void loadActiveBatch()
+    setPage(0)
+    setSelectedIds(new Set())
+    setFilterSelection(null)
+  }, [loadDomains, loadLetterCounts, loadActiveBatch])
+
+  // ── SSE — scrape_batch updates ──────────────────────────────────────────
+  const sseRef = useRef<EventSource | null>(null)
+  useEffect(() => {
+    const es = new EventSource(sseUrl)
+    sseRef.current = es
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data as string) as Record<string, unknown>
+        if (payload.event_type === 'scrape_batch') {
+          const updated: ScrapeBatchRead = {
+            id: String(payload.batch_id ?? ''),
+            campaign_id: String(payload.campaign_id ?? ''),
+            state: String(payload.state ?? ''),
+            selected_domain_count: Number(payload.selected_domain_count ?? 0),
+            success_count: Number(payload.success_count ?? 0),
+            failed_count: Number(payload.failed_count ?? 0),
+            queued_count: Number(payload.queued_count ?? 0),
+            created_at: '',
+            finished_at: payload.finished_at ? String(payload.finished_at) : null,
+            eta_seconds: null,
+          }
+          setActiveBatch((prev) => {
+            if (['completed', 'failed'].includes(updated.state)) {
+              // batch done — reload domain list to reflect new statuses
+              void loadDomains(page)
+              void loadLetterCounts()
+              return null
+            }
+            return prev?.id === updated.id ? updated : prev ?? updated
+          })
+        }
+      } catch { /* ignore bad payloads */ }
+    }
+    return () => { es.close(); sseRef.current = null }
+  }, [sseUrl, loadDomains, loadLetterCounts, page])
+
+  // ── Pagination ───────────────────────────────────────────────────────────
+  const totalPages = Math.ceil(domainTotal / PAGE_SIZE)
+
+  function goToPage(p: number) {
+    setPage(p)
+    void loadDomains(p)
+  }
+
+  // ── Selection helpers ────────────────────────────────────────────────────
   function toggleSelect(id: string) {
-    setSelected((prev) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
       return next
@@ -46,16 +148,86 @@ export function ScrapingView({ stats: rawStats }: ScrapingViewProps) {
   }
 
   function toggleSelectAll() {
-    if (filtered.every((r) => selected.has(r.id))) {
-      setSelected(new Set())
+    const allVisible = domains.every((d) => selectedIds.has(d.id))
+    if (allVisible) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        domains.forEach((d) => next.delete(d.id))
+        return next
+      })
     } else {
-      setSelected(new Set(filtered.map((r) => r.id)))
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        domains.forEach((d) => next.add(d.id))
+        return next
+      })
     }
   }
 
-  const hasFailed  = MOCK_SCRAPE_STATS.failed > 0
-  const hasPending = MOCK_SCRAPE_STATS.pending > 0
-  const etaSecs    = stats.scrape.eta_seconds ?? null
+  function handleSelectAllMatching() {
+    // Adds current filter criteria as a server-side selection
+    const criteria: { scrape_status?: string; letter?: string } = {}
+    if (statusFilter !== 'all') criteria.scrape_status = statusFilter
+    if (letterFilter !== 'all') criteria.letter = letterFilter
+    setFilterSelection(criteria)
+    // Count: total matching (domainTotal) shown in toolbar
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+    setFilterSelection(null)
+  }
+
+  // ── Batch creation ────────────────────────────────────────────────────────
+  async function handleScrape(overrideFilter?: { scrape_status?: string }) {
+    setBatchError(null)
+    try {
+      const body: { campaign_id: string; domain_ids?: string[]; filter?: Record<string, string | undefined> } = {
+        campaign_id: campaignId,
+      }
+      if (overrideFilter) {
+        body.filter = overrideFilter
+      } else {
+        const ids = [...selectedIds]
+        if (ids.length > 0) body.domain_ids = ids
+        if (filterSelection && Object.keys(filterSelection).length > 0) body.filter = filterSelection
+      }
+      const batch = await createScrapeBatch(body as Parameters<typeof createScrapeBatch>[0])
+      setActiveBatch(batch)
+      clearSelection()
+      // Reload domains to reflect queued status
+      void loadDomains(page)
+      void loadLetterCounts()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to create scrape batch'
+      setBatchError(msg)
+    }
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const statusCounts = useMemo(() => {
+    // Letter counts give per-letter totals; we need per-status totals
+    // We'll use domainTotal as "all" and derive status counts from letter counts
+    // This is approximate — for exact counts, a separate endpoint could be added
+    return {
+      pending: 0,
+      running: activeBatch
+        ? activeBatch.selected_domain_count - activeBatch.success_count - activeBatch.failed_count
+        : 0,
+      done: 0,
+      failed: 0,
+    }
+  }, [activeBatch])
+
+  const scrapeStats = [
+    { label: 'total',   value: domainTotal },
+    { label: 'running', value: statusCounts.running, live: statusCounts.running > 0, color: 'var(--s1)' },
+  ]
+
+  const isBatchActive = activeBatch !== null && ['queued', 'dispatching', 'running'].includes(activeBatch.state)
+
+  // Selected count = explicit IDs + all matching (if filter selection set)
+  const effectiveSelectedCount = filterSelection ? domainTotal : selectedIds.size
 
   return (
     <>
@@ -67,60 +239,162 @@ export function ScrapingView({ stats: rawStats }: ScrapingViewProps) {
           stageColor="var(--s1)"
           stageBg="var(--s1-bg)"
           stats={scrapeStats}
-          etaSeconds={etaSecs}
+          etaSeconds={activeBatch?.eta_seconds ?? null}
           onOpenSettings={() => setSettingsOpen(true)}
           settingsLabel="Rules"
-          primaryAction={hasPending ? {
-            label: `Scrape ${MOCK_SCRAPE_STATS.pending.toLocaleString()} pending`,
-            onClick: () => console.log('Scrape all pending'),
+          primaryAction={!isBatchActive ? {
+            label: `Scrape ${domainTotal.toLocaleString()} pending`,
+            onClick: () => void handleScrape({ scrape_status: 'pending' }),
           } : undefined}
-          secondaryAction={hasFailed ? {
-            label: `Retry ${MOCK_SCRAPE_STATS.failed} failed`,
-            onClick: () => setFilter('failed'),
+          secondaryAction={!isBatchActive ? {
+            label: 'Retry failed',
+            onClick: () => void handleScrape({ scrape_status: 'failed' }),
           } : undefined}
         />
+
+        {/* Active batch progress banner */}
+        {isBatchActive && activeBatch && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.75rem',
+            padding: '0.75rem 1rem', borderRadius: '0.625rem',
+            background: 'var(--s1-bg)', border: '1px solid color-mix(in srgb, var(--s1) 30%, transparent)',
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--s1)" strokeWidth="2.5"
+              style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0 }}>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--s1)' }}>
+              Scraping in progress —{' '}
+              <span style={{ fontFamily: 'var(--font-mono)' }}>
+                {activeBatch.success_count + activeBatch.failed_count}
+              </span>
+              {' '}/ {activeBatch.selected_domain_count.toLocaleString()} done
+              {activeBatch.eta_seconds != null && (
+                <span style={{ fontWeight: 400, color: 'var(--oc-muted)' }}>
+                  {' '}· ~{Math.ceil(activeBatch.eta_seconds / 60)}m remaining
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+
+        {batchError && (
+          <div style={{ padding: '0.75rem 1rem', borderRadius: '0.5rem', background: 'var(--oc-fail-bg)', color: 'var(--oc-fail-text)', fontSize: '0.875rem' }}>
+            {batchError}
+          </div>
+        )}
+
+        {/* Letter pills */}
+        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+          {['all', ...LETTERS].map((l) => {
+            const count = l === 'all' ? domainTotal : (letterCounts?.counts[l] ?? 0)
+            const active = letterFilter === l
+            return (
+              <button
+                key={l}
+                type="button"
+                onClick={() => { setLetterFilter(l); setPage(0); void loadDomains(0) }}
+                style={{
+                  padding: '0.25rem 0.5rem', borderRadius: '0.375rem', fontSize: '0.75rem',
+                  fontWeight: active ? 700 : 500, fontFamily: 'var(--font-mono)',
+                  background: active ? 'var(--s1)' : 'var(--oc-surface)',
+                  color: active ? '#fff' : count > 0 ? 'var(--oc-text)' : 'var(--oc-muted)',
+                  border: active ? '1.5px solid var(--s1)' : '1.5px solid var(--oc-border)',
+                  cursor: count > 0 || l === 'all' ? 'pointer' : 'default',
+                  opacity: count === 0 && l !== 'all' ? 0.4 : 1,
+                  minWidth: '2rem', textAlign: 'center',
+                }}
+              >
+                {l}
+                {count > 0 && (
+                  <span style={{ marginLeft: '0.25rem', fontWeight: 400, opacity: 0.75 }}>
+                    {count > 999 ? `${Math.floor(count / 1000)}k` : count}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
 
         <ScrapingToolbar
-          filter={filter}
+          statusFilter={statusFilter}
           search={search}
-          onFilterChange={setFilter}
-          onSearchChange={setSearch}
-          selectedCount={selected.size}
-          onScrapeSelected={() => { console.log('Scrape selected:', [...selected]); setSelected(new Set()) }}
+          onStatusFilterChange={(f) => { setStatusFilter(f); setPage(0); void loadDomains(0) }}
+          onSearchChange={(s) => { setSearch(s); setPage(0) }}
+          selectedCount={effectiveSelectedCount}
+          hasFilterSelection={filterSelection !== null}
+          onScrapeSelected={() => void handleScrape()}
+          onSelectAllMatching={handleSelectAllMatching}
+          onClearSelection={clearSelection}
+          isBatchActive={isBatchActive}
+          totalMatchingCount={domainTotal}
         />
 
-        {filtered.length === 0 ? (
+        {loading && domains.length === 0 ? (
+          <div className="oc-panel" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--oc-muted)' }}>
+            Loading…
+          </div>
+        ) : domains.length === 0 ? (
           <div className="oc-panel" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--oc-muted)', fontSize: '0.9375rem' }}>
-            No companies match this filter.
+            No domains match this filter.
           </div>
         ) : (
           <>
             <div className="hidden md:block">
               <ScrapingTable
-                rows={filtered}
-                selected={selected}
+                rows={domains}
+                selected={selectedIds}
                 onToggleSelect={toggleSelect}
                 onToggleSelectAll={toggleSelectAll}
-                onRetry={(id) => console.log('Retry:', id)}
-                onViewContent={(row) => setViewingRow(row)}
+                onScrapeOne={() => void handleScrape()}
+                onViewContent={setViewingDomain}
+                hasActiveFilter={statusFilter !== 'all' || letterFilter !== 'all' || !!search}
+                onClearFilter={() => { setStatusFilter('all'); setLetterFilter('all'); setSearch('') }}
               />
             </div>
             <div className="md:hidden">
               <ScrapingCards
-                rows={filtered}
-                selected={selected}
+                rows={domains}
+                selected={selectedIds}
                 onToggleSelect={toggleSelect}
-                onRetry={(id) => console.log('Retry:', id)}
-                onViewDiagnostics={(row) => setViewingRow(row)}
+                onScrapeOne={() => void handleScrape()}
+                onViewContent={setViewingDomain}
               />
             </div>
           </>
         )}
 
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+            <button
+              type="button"
+              disabled={page === 0}
+              onClick={() => goToPage(page - 1)}
+              className="oc-btn oc-btn-secondary oc-btn-sm"
+              style={{ opacity: page === 0 ? 0.4 : 1 }}
+            >← Prev</button>
+            <span style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)', fontFamily: 'var(--font-mono)' }}>
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={page >= totalPages - 1}
+              onClick={() => goToPage(page + 1)}
+              className="oc-btn oc-btn-secondary oc-btn-sm"
+              style={{ opacity: page >= totalPages - 1 ? 0.4 : 1 }}
+            >Next →</button>
+          </div>
+        )}
+
       </div>
 
-      <ScrapedContentDrawer row={viewingRow} onClose={() => setViewingRow(null)} />
-      <ScrapingSettingsDrawer isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ScrapedContentDrawer domain={viewingDomain} onClose={() => setViewingDomain(null)} />
+      <ScrapingSettingsDrawer
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        campaignId={campaignId}
+      />
     </>
   )
 }

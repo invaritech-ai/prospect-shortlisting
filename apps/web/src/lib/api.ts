@@ -1,5 +1,11 @@
 import type {
   AnalysisJobDetailRead,
+  DomainLetterCounts,
+  ScrapeBatchCreate,
+  ScrapeBatchList,
+  ScrapeBatchRead,
+  ScrapeResultRead,
+  ScrapeSettingsRead,
   AnalysisRunJobRead,
   CampaignCreate,
   CampaignList,
@@ -918,6 +924,63 @@ export async function getCurrentUser(): Promise<AuthUserRead> {
 
 export async function logoutSession(): Promise<void> {
   await request<void>('/v1/auth/logout', { method: 'POST' })
+}
+
+// ── S1 Scraping ───────────────────────────────────────────────────────────────
+
+export async function getDomainLetterCounts(
+  campaignId: string,
+  scrapeStatus?: string,
+): Promise<DomainLetterCounts> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (scrapeStatus) params.set('scrape_status', scrapeStatus)
+  return request<DomainLetterCounts>(`/v1/domains/letter-counts?${params.toString()}`)
+}
+
+export async function createScrapeBatch(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
+  return request<ScrapeBatchRead>('/v1/scrape-batches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function listScrapeBatches(campaignId: string, limit = 20): Promise<ScrapeBatchList> {
+  return request<ScrapeBatchList>(
+    `/v1/scrape-batches?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`,
+  )
+}
+
+export async function getActiveBatch(campaignId: string): Promise<ScrapeBatchRead | null> {
+  return request<ScrapeBatchRead | null>(
+    `/v1/scrape-batches/active?campaign_id=${encodeURIComponent(campaignId)}`,
+  )
+}
+
+export async function getScrapeBatch(batchId: string): Promise<ScrapeBatchRead> {
+  return request<ScrapeBatchRead>(`/v1/scrape-batches/${batchId}`)
+}
+
+export async function getScrapeSettings(campaignId: string): Promise<ScrapeSettingsRead | null> {
+  return request<ScrapeSettingsRead | null>(
+    `/v1/scrape-settings?campaign_id=${encodeURIComponent(campaignId)}`,
+  )
+}
+
+export async function saveScrapeSettings(
+  campaignId: string,
+  instructionText: string,
+): Promise<ScrapeSettingsRead> {
+  return request<ScrapeSettingsRead>('/v1/scrape-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ campaign_id: campaignId, instruction_text: instructionText }),
+  })
+}
+
+export async function getScrapeResult(domainId: string, campaignId: string): Promise<ScrapeResultRead | null> {
+  const params = new URLSearchParams({ campaign_id: campaignId, domain_id: domainId })
+  return request<ScrapeResultRead | null>(`/v1/scrape-results?${params.toString()}`).catch(() => null)
 }
 
 /** Parse a date string as UTC.

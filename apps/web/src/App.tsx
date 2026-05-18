@@ -896,7 +896,10 @@ function App() {
         )}
 
         {selectedCampaignId && activeView === 's1-scraping' && (
-          <ScrapingView stats={stats} />
+          <ScrapingView
+            campaignId={selectedCampaignId}
+            sseUrl={`/v1/campaigns/${selectedCampaignId}/events/stream`}
+          />
         )}
 
         {selectedCampaignId && activeView === 's2-ai' && (
