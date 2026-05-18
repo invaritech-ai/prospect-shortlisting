@@ -1,78 +1,25 @@
 import type {
-  AnalysisJobDetailRead,
+  CampaignCreate,
+  CampaignList,
+  CampaignRead,
+  DomainList,
   DomainLetterCounts,
+  IntegrationHealthItem,
+  IntegrationProviderId,
+  IntegrationProviderStatus,
+  IntegrationProviderUpdateRequest,
+  IntegrationTestResponse,
+  IntegrationsStatusResponse,
+  PipelineCostSummaryRead,
+  QueueHistoryResponse,
   ScrapeBatchCreate,
   ScrapeBatchList,
   ScrapeBatchRead,
   ScrapeResultRead,
   ScrapeSettingsRead,
-  AnalysisRunJobRead,
-  CampaignCreate,
-  CampaignList,
-  CampaignRead,
-  CompanyCounts,
-  CompanyIdsResult,
-  CompanyList,
-  CompanyScrapeResult,
-  CompanyStageFilter,
-  CostStatsResponse,
-  ContactCompanyListResponse,
-  ContactCountsResponse,
-  ContactFetchResult,
-  ContactListResponse,
-  ContactRevealRequest,
-  ContactRevealResult,
-  ContactStageFilter,
-  ContactVerifyRequest,
-  ContactVerifyResult,
-  DecisionFilter,
-  DiscoveredContactCountsResponse,
-  DiscoveredContactIdsResult,
-  DiscoveredContactListResponse,
-  DomainList,
-  DrainQueueResult,
-  FeedbackRead,
-  FeedbackUpsert,
-  IntegrationsStatusResponse,
-  IntegrationHealthItem,
-  IntegrationProviderId,
-  QueueHistoryResponse,
-  IntegrationProviderStatus,
-  IntegrationProviderUpdateRequest,
-  IntegrationTestResponse,
-
-  LetterCounts,
-  PromptCreate,
-  PromptRead,
-  PromptUpdate,
-  PipelineCostSummaryRead,
-  PipelineRunProgressRead,
-  PipelineRunStartRequest,
-  PipelineRunStartResponse,
-  ScrapePromptCreate,
-  ScrapePromptRead,
-  ScrapePromptUpdate,
-  ResetStuckResult,
-  RunCreateRequest,
-  RunCreateResult,
-  RunRead,
-  ScrapeFilter,
-  ScrapeJobCreate,
-  ScrapeJobRead,
-  ScrapePageContentRead,
-  ScrapeRules,
-  ScrapeRunRead,
-  StatsResponse,
-  TitleMatchRuleCreate,
-  TitleMatchRuleRead,
-  TitleRuleSeedResult,
-  TitleTestResult,
-  TitleRuleStatsResponse,
   UploadCreateResult,
   UploadList,
-  MatchGapFilter,
 } from './types'
-import type { FullPipelineStatusFilter } from './fullPipelineFilters'
 
 const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env
 const API_BASE_URL = (
@@ -106,62 +53,11 @@ export function configureApiSession(config: ApiSessionConfig): void {
 export class ApiError extends Error {
   status: number
   detail: unknown
-
   constructor(status: number, detail: unknown) {
     super(`API error ${status}`)
     this.status = status
     this.detail = detail
   }
-}
-
-/** Older API builds reject `last_activity` / `updated_at` sort — retry with these. */
-const LEGACY_COMPANY_SORT = { sortBy: 'domain' as const, sortDir: 'asc' as const }
-const LEGACY_CONTACT_SORT = { sortBy: 'domain' as const, sortDir: 'asc' as const }
-
-let companyListLegacySortFallback = false
-let contactsListLegacySortFallback = false
-let sortCompatUserNotice: string | null = null
-
-function is422InvalidSortBy(err: unknown): boolean {
-  if (!(err instanceof ApiError) || err.status !== 422) return false
-  const d = err.detail
-  const text =
-    typeof d === 'string'
-      ? d
-      : Array.isArray(d)
-        ? JSON.stringify(d)
-        : d != null && typeof d === 'object'
-          ? JSON.stringify(d)
-          : ''
-  return /invalid sort_by|sort_by/i.test(text)
-}
-
-/** Call after a successful `listCompanies` if you need to sync UI sort to legacy fields. */
-export function consumeCompanyListLegacySortFallback(): boolean {
-  const v = companyListLegacySortFallback
-  companyListLegacySortFallback = false
-  return v
-}
-
-/** Call after a successful `listContacts` if you need to sync UI sort to legacy fields. */
-export function consumeContactsListLegacySortFallback(): boolean {
-  const v = contactsListLegacySortFallback
-  contactsListLegacySortFallback = false
-  return v
-}
-
-/** One-line notice when we had to fall back (older backend). */
-export function consumeSortCompatUserNotice(): string | null {
-  const m = sortCompatUserNotice
-  sortCompatUserNotice = null
-  return m
-}
-
-function recordSortCompatFallback(kind: 'companies' | 'contacts'): void {
-  sortCompatUserNotice =
-    kind === 'companies'
-      ? 'This API build does not support activity-based company sort; using domain order until the backend is redeployed.'
-      : 'This API build does not support contact “modified” sort; using domain order until the backend is redeployed.'
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -190,32 +86,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-export async function uploadFileToCampaign(file: File, campaignId: string): Promise<UploadCreateResult> {
-  const form = new FormData()
-  form.append('file', file)
-  form.append('campaign_id', campaignId)
-  return request<UploadCreateResult>('/v1/uploads', {
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {
+  return request<AuthLoginResponse>('/v1/auth/login', {
     method: 'POST',
-    body: form,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
   })
 }
 
-export async function listUploads(campaignId: string, limit = 50, offset = 0): Promise<UploadList> {
-  return request<UploadList>(`/v1/uploads?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}`)
+export async function getCurrentUser(): Promise<AuthUserRead> {
+  return request<AuthUserRead>('/v1/auth/me')
 }
 
-export async function deleteUpload(uploadId: string): Promise<void> {
-  return request<void>(`/v1/uploads/${uploadId}`, { method: 'DELETE' })
+export async function logoutSession(): Promise<void> {
+  await request<void>('/v1/auth/logout', { method: 'POST' })
 }
 
-export async function listDomains(
-  campaignId: string,
-  { uploadId, limit = 50, offset = 0 }: { uploadId?: string; limit?: number; offset?: number } = {},
-): Promise<DomainList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (uploadId) params.set('upload_id', uploadId)
-  return request<DomainList>(`/v1/companies?${params.toString()}`)
-}
+// ── Campaigns ─────────────────────────────────────────────────────────────────
 
 export async function listCampaigns(limit = 50, offset = 0): Promise<CampaignList> {
   return request<CampaignList>(`/v1/campaigns?limit=${limit}&offset=${offset}`)
@@ -233,638 +122,91 @@ export async function deleteCampaign(campaignId: string): Promise<void> {
   await request<void>(`/v1/campaigns/${campaignId}`, { method: 'DELETE' })
 }
 
-export async function assignUploadsToCampaign(campaignId: string, uploadIds: string[]): Promise<CampaignRead> {
-  return request<CampaignRead>(`/v1/campaigns/${campaignId}/assign-uploads`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ upload_ids: uploadIds }),
-  })
-}
-
-export async function listCompanies(
-  campaignId: string,
-  limit = 25,
-  offset = 0,
-  decisionFilter: DecisionFilter = 'all',
-  includeTotal = false,
-  scrapeFilter: ScrapeFilter = 'all',
-  stageFilter: CompanyStageFilter = 'all',
-  letter: string | null = null,
-  sortBy = 'last_activity',
-  sortDir: 'asc' | 'desc' = 'desc',
-  uploadId?: string,
-  letters?: string[],
-  statusFilter: FullPipelineStatusFilter = 'all',
-  search = '',
-): Promise<CompanyList> {
-  const buildUrl = (sb: string, sd: string) => {
-    const params = new URLSearchParams({
-      campaign_id: campaignId,
-      limit: String(limit),
-      offset: String(offset),
-      decision_filter: decisionFilter,
-      scrape_filter: scrapeFilter,
-      stage_filter: stageFilter,
-      include_total: includeTotal ? 'true' : 'false',
-      sort_by: sb,
-      sort_dir: sd,
-    })
-    if (letter) params.set('letter', letter)
-    if (letters && letters.length > 0) params.set('letters', letters.join(','))
-    if (uploadId) params.set('upload_id', uploadId)
-    const q = search.trim()
-    if (q) params.set('search', q)
-    if (statusFilter !== 'all') params.set('status_filter', statusFilter)
-    return `/v1/companies?${params.toString()}`
-  }
-
-  companyListLegacySortFallback = false
-  try {
-    return await request<CompanyList>(buildUrl(sortBy, sortDir))
-  } catch (err) {
-    const alreadyLegacy =
-      sortBy === LEGACY_COMPANY_SORT.sortBy && sortDir === LEGACY_COMPANY_SORT.sortDir
-    if (is422InvalidSortBy(err) && !alreadyLegacy) {
-      companyListLegacySortFallback = true
-      recordSortCompatFallback('companies')
-      return await request<CompanyList>(buildUrl(LEGACY_COMPANY_SORT.sortBy, LEGACY_COMPANY_SORT.sortDir))
-    }
-    throw err
-  }
-}
-
-export async function scrapeSelectedCompanies(
-  campaignId: string,
-  companyIds: string[],
-  options: { scrapeRules?: ScrapeRules; uploadId?: string; idempotencyKey?: string } = {},
-): Promise<ScrapeRunRead> {
-  return request<ScrapeRunRead>('/v1/companies/scrape-selected', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
-    },
-    body: JSON.stringify({
-      campaign_id: campaignId,
-      company_ids: companyIds,
-      scrape_rules: options.scrapeRules,
-      upload_id: options.uploadId,
-    }),
-  })
-}
-
-export async function getScrapeRun(runId: string): Promise<ScrapeRunRead> {
-  return request<ScrapeRunRead>(`/v1/scrape-runs/${runId}`)
-}
-
-export async function scrapeAllCompanies(
-  options: { uploadId?: string; idempotencyKey?: string; scrapeRules?: ScrapeRules } = {},
-): Promise<CompanyScrapeResult> {
-  return request<CompanyScrapeResult>('/v1/companies/scrape-all', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
-    },
-    body: JSON.stringify({
-      upload_id: options.uploadId,
-      scrape_rules: options.scrapeRules,
-    }),
-  })
-}
-
-export async function createScrapeJob(payload: ScrapeJobCreate): Promise<ScrapeJobRead> {
-  return request<ScrapeJobRead>('/v1/scrape-jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-
-export async function getScrapeJob(jobId: string): Promise<ScrapeJobRead> {
-  return request<ScrapeJobRead>(`/v1/scrape-jobs/${jobId}`)
-}
-
-export async function listScrapeJobs(campaignId: string, limit = 50): Promise<ScrapeJobRead[]> {
-  return request<ScrapeJobRead[]>(
-    `/v1/scrape-jobs?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`,
-  )
-}
-
-export async function listScrapeJobPageContents(jobId: string, limit = 200, offset = 0): Promise<ScrapePageContentRead[]> {
-  return request<ScrapePageContentRead[]>(`/v1/scrape-jobs/${jobId}/pages-content?limit=${limit}&offset=${offset}`)
-}
-
-export async function listPrompts(enabledOnly = false): Promise<PromptRead[]> {
-  return request<PromptRead[]>(`/v1/prompts?enabled_only=${enabledOnly ? 'true' : 'false'}`)
-}
-
-export async function createPrompt(payload: PromptCreate): Promise<PromptRead> {
-  return request<PromptRead>('/v1/prompts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function updatePrompt(promptId: string, payload: PromptUpdate): Promise<PromptRead> {
-  return request<PromptRead>(`/v1/prompts/${promptId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deletePrompt(promptId: string): Promise<void> {
-  await request<void>(`/v1/prompts/${promptId}`, { method: 'DELETE' })
-}
-
-export async function listScrapePrompts(enabledOnly = false): Promise<ScrapePromptRead[]> {
-  return request<ScrapePromptRead[]>(`/v1/scrape-prompts?enabled_only=${enabledOnly ? 'true' : 'false'}`)
-}
-
-export async function createScrapePrompt(payload: ScrapePromptCreate): Promise<ScrapePromptRead> {
-  return request<ScrapePromptRead>('/v1/scrape-prompts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function updateScrapePrompt(promptId: string, payload: ScrapePromptUpdate): Promise<ScrapePromptRead> {
-  return request<ScrapePromptRead>(`/v1/scrape-prompts/${promptId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deleteScrapePrompt(promptId: string): Promise<void> {
-  await request<void>(`/v1/scrape-prompts/${promptId}`, { method: 'DELETE' })
-}
-
-export async function activateScrapePrompt(promptId: string): Promise<ScrapePromptRead> {
-  return request<ScrapePromptRead>(`/v1/scrape-prompts/${promptId}/activate`, {
-    method: 'POST',
-  })
-}
-
-export async function createRuns(payload: RunCreateRequest): Promise<RunCreateResult> {
-  const response = await startPipelineRun({
-    campaign_id: payload.campaign_id,
-    company_ids: payload.company_ids,
-    analysis_prompt_snapshot: { prompt_id: payload.prompt_id },
-  })
-  const totalJobs = Math.max(0, response.queued_count + response.failed_count)
-  const status =
-    response.queued_count > 0 ? 'running' : response.failed_count > 0 ? 'failed' : 'completed'
-  const createdAt = new Date().toISOString()
-  return {
-    requested_count: response.requested_count,
-    queued_count: response.queued_count,
-    skipped_company_ids: [],
-    runs: [{
-      id: response.pipeline_run_id,
-      upload_id: '',
-      prompt_id: payload.prompt_id,
-      prompt_name: 'Manual S2',
-      general_model: payload.general_model ?? '',
-      classify_model: payload.classify_model ?? '',
-      status,
-      total_jobs: totalJobs,
-      completed_jobs: 0,
-      failed_jobs: response.failed_count,
-      created_at: createdAt,
-      started_at: status === 'running' ? createdAt : null,
-      finished_at: status === 'completed' || status === 'failed' ? createdAt : null,
-    }],
-  }
-}
-
-export async function startPipelineRun(payload: PipelineRunStartRequest): Promise<PipelineRunStartResponse> {
-  return request<PipelineRunStartResponse>('/v1/pipeline-runs/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function getPipelineRunProgress(runId: string): Promise<PipelineRunProgressRead> {
-  return request<PipelineRunProgressRead>(`/v1/pipeline-runs/${encodeURIComponent(runId)}/progress`)
-}
-
-export async function getPipelineRunCosts(runId: string): Promise<PipelineCostSummaryRead> {
-  return request<PipelineCostSummaryRead>(`/v1/pipeline-runs/${encodeURIComponent(runId)}/costs`)
-}
-
 export async function getCampaignCosts(campaignId: string): Promise<PipelineCostSummaryRead> {
   return request<PipelineCostSummaryRead>(`/v1/campaigns/${encodeURIComponent(campaignId)}/costs`)
 }
 
-export async function listRuns(campaignId?: string, limit = 25, offset = 0): Promise<RunRead[]> {
-  void campaignId
-  void limit
-  void offset
-  return []
+// ── Uploads ───────────────────────────────────────────────────────────────────
+
+export async function uploadFileToCampaign(file: File, campaignId: string): Promise<UploadCreateResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('campaign_id', campaignId)
+  return request<UploadCreateResult>('/v1/uploads', { method: 'POST', body: form })
 }
 
-export async function listRunJobs(runId: string, limit = 500, offset = 0): Promise<AnalysisRunJobRead[]> {
-  return request<AnalysisRunJobRead[]>(`/v1/pipeline-runs/${runId}/analysis-jobs?limit=${limit}&offset=${offset}`)
+export async function listUploads(campaignId: string, limit = 50, offset = 0): Promise<UploadList> {
+  return request<UploadList>(`/v1/uploads?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}`)
 }
 
-export async function getAnalysisJobDetail(analysisJobId: string): Promise<AnalysisJobDetailRead> {
-  return request<AnalysisJobDetailRead>(`/v1/analysis-jobs/${analysisJobId}`)
+export async function deleteUpload(uploadId: string): Promise<void> {
+  return request<void>(`/v1/uploads/${uploadId}`, { method: 'DELETE' })
 }
 
-export async function getStats(campaignId: string, uploadId?: string): Promise<StatsResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (uploadId) params.set('upload_id', uploadId)
-  const suffix = params.toString() ? `?${params.toString()}` : ''
-  return request<StatsResponse>(`/v1/stats${suffix}`)
-}
+// ── Domains ───────────────────────────────────────────────────────────────────
 
-export async function getCostStats(
-  options: { campaignId: string; windowDays?: number; uploadId?: string; limit?: number; offset?: number },
-): Promise<CostStatsResponse> {
-  const params = new URLSearchParams()
-  if (options.campaignId) params.set('campaign_id', options.campaignId)
-  if (options.windowDays) params.set('window_days', String(options.windowDays))
-  if (options.uploadId) params.set('upload_id', options.uploadId)
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  return request<CostStatsResponse>(`/v1/stats/costs?${params.toString()}`)
-}
-
-export async function drainQueue(): Promise<DrainQueueResult> {
-  return request<DrainQueueResult>('/v1/queue/drain', { method: 'POST' })
-}
-
-export async function resetStuckJobs(): Promise<ResetStuckResult> {
-  return request<ResetStuckResult>('/v1/jobs/reset-stuck', { method: 'POST' })
-}
-
-export async function resetStuckContactFetchJobs(): Promise<ResetStuckResult> {
-  return request<ResetStuckResult>('/v1/contact-fetch-jobs/reset-stuck', { method: 'POST' })
-}
-
-export async function getCompanyCounts(campaignId: string, uploadId?: string): Promise<CompanyCounts> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (uploadId) params.set('upload_id', uploadId)
-  return request<CompanyCounts>(`/v1/companies/counts?${params.toString()}`)
-}
-
-export function getCompaniesExportUrl(campaignId: string): string {
-  return `${API_BASE_URL}/v1/companies/export.csv?campaign_id=${encodeURIComponent(campaignId)}`
-}
-
-export async function upsertCompanyFeedback(companyId: string, payload: FeedbackUpsert): Promise<FeedbackRead> {
-  return request<FeedbackRead>(`/v1/companies/${companyId}/feedback`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function listCompanyIds(
+export async function listDomains(
   campaignId: string,
-  decisionFilter: DecisionFilter = 'all',
-  scrapeFilter: ScrapeFilter = 'all',
-  stageFilter: CompanyStageFilter = 'all',
-  letter: string | null = null,
-  uploadId?: string,
-  letters?: string[],
-  statusFilter: FullPipelineStatusFilter = 'all',
-  search = '',
-): Promise<CompanyIdsResult> {
-  const params = new URLSearchParams({
-    campaign_id: campaignId,
-    decision_filter: decisionFilter,
-    scrape_filter: scrapeFilter,
-    stage_filter: stageFilter,
-  })
-  if (letter) params.set('letter', letter)
-  if (letters && letters.length > 0) params.set('letters', letters.join(','))
+  { uploadId, limit = 50, offset = 0 }: { uploadId?: string; limit?: number; offset?: number } = {},
+): Promise<DomainList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
   if (uploadId) params.set('upload_id', uploadId)
-  const q = search.trim()
-  if (q) params.set('search', q)
-  if (statusFilter !== 'all') params.set('status_filter', statusFilter)
-  return request<CompanyIdsResult>(`/v1/companies/ids?${params.toString()}`)
+  return request<DomainList>(`/v1/companies?${params.toString()}`)
 }
 
-export async function getLetterCounts(
+export async function getDomainLetterCounts(
   campaignId: string,
-  decisionFilter: DecisionFilter = 'all',
-  scrapeFilter: ScrapeFilter = 'all',
-  stageFilter: CompanyStageFilter = 'all',
-  uploadId?: string,
-  statusFilter: FullPipelineStatusFilter = 'all',
-  search = '',
-): Promise<LetterCounts> {
-  const params = new URLSearchParams({
-    campaign_id: campaignId,
-    decision_filter: decisionFilter,
-    scrape_filter: scrapeFilter,
-    stage_filter: stageFilter,
-  })
-  if (uploadId) params.set('upload_id', uploadId)
-  const q = search.trim()
-  if (q) params.set('search', q)
-  if (statusFilter !== 'all') params.set('status_filter', statusFilter)
-  return request<LetterCounts>(`/v1/companies/letter-counts?${params.toString()}`)
-}
-
-// ── Contacts ──────────────────────────────────────────────────────────────────
-
-export async function fetchContactsForCompany(
-  campaignId: string,
-  companyId: string,
-  options: { forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
+  scrapeStatus?: string,
+): Promise<DomainLetterCounts> {
   const params = new URLSearchParams({ campaign_id: campaignId })
-  if (options.forceRefresh) params.set('force_refresh', 'true')
-  return request<ContactFetchResult>(`/v1/companies/${companyId}/fetch-contacts?${params.toString()}`, { method: 'POST' })
+  if (scrapeStatus) params.set('scrape_status', scrapeStatus)
+  return request<DomainLetterCounts>(`/v1/domains/letter-counts?${params.toString()}`)
 }
 
-export async function fetchContactsSelected(
-  campaignId: string,
-  companyIds: string[],
-  options: { idempotencyKey?: string; forceRefresh?: boolean } = {},
-): Promise<ContactFetchResult> {
-  return request<ContactFetchResult>('/v1/companies/fetch-contacts-selected', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
-    },
-    body: JSON.stringify({ campaign_id: campaignId, company_ids: companyIds, force_refresh: Boolean(options.forceRefresh) }),
-  })
-}
+// ── S1 Scrape Batches ─────────────────────────────────────────────────────────
 
-export async function listDiscoveredContacts(
-  options: {
-    campaignId: string
-    titleMatch?: boolean
-    provider?: string
-    companyId?: string
-    search?: string
-    staleEmailOnly?: boolean
-    limit?: number
-    offset?: number
-    sortBy?: string
-    sortDir?: 'asc' | 'desc'
-    letters?: string[]
-    countByLetters?: boolean
-  },
-): Promise<DiscoveredContactListResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', options.campaignId)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  void options.provider
-  void options.companyId
-  const q = options.search?.trim()
-  if (q) params.set('search', q)
-  if (options.staleEmailOnly) params.set('stale_days', '30')
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  if (options.sortBy) params.set('sort_by', options.sortBy)
-  if (options.sortDir) params.set('sort_dir', options.sortDir)
-  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
-  if (options.countByLetters) params.set('count_by_letters', 'true')
-  return request<DiscoveredContactListResponse>(`/v1/contacts?${params.toString()}`)
-}
-
-export async function listDiscoveredContactIds(
-  options: {
-    campaignId: string
-    titleMatch?: boolean
-    provider?: string
-    companyId?: string
-    search?: string
-    staleEmailOnly?: boolean
-    letters?: string[]
-  },
-): Promise<DiscoveredContactIdsResult> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', options.campaignId)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  void options.provider
-  void options.companyId
-  const q = options.search?.trim()
-  if (q) params.set('search', q)
-  if (options.staleEmailOnly) params.set('stale_days', '30')
-  if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
-  return request<DiscoveredContactIdsResult>(`/v1/contacts/ids?${params.toString()}`)
-}
-
-export async function listDiscoveredCompanies(
-  options: {
-    campaignId: string
-    search?: string
-    titleMatch?: boolean
-    matchGapFilter?: MatchGapFilter
-    limit?: number
-    offset?: number
-  },
-): Promise<ContactCompanyListResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', options.campaignId)
-  if (options.search) params.set('search', options.search)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  return request<ContactCompanyListResponse>(`/v1/contacts/companies?${params.toString()}`)
-}
-
-export async function getDiscoveredContactCounts(campaignId: string): Promise<DiscoveredContactCountsResponse> {
-  return request<DiscoveredContactCountsResponse>(`/v1/contacts/counts?campaign_id=${encodeURIComponent(campaignId)}`)
-}
-
-export async function revealDiscoveredContactEmails(
-  payload: ContactRevealRequest,
-  idempotencyKey?: string,
-): Promise<ContactRevealResult> {
-  return request<ContactRevealResult>('/v1/contacts/reveal', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}),
-    },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function listContacts(
-  options: {
-    campaignId: string
-    titleMatch?: boolean
-    verificationStatus?: string
-    stageFilter?: ContactStageFilter
-    staleDays?: number
-    search?: string
-    limit?: number
-    offset?: number
-    sortBy?: string
-    sortDir?: 'asc' | 'desc'
-    letters?: string[]
-    uploadId?: string
-    countByLetters?: boolean
-  },
-): Promise<ContactListResponse> {
-  const buildQuery = (sortBy: string | undefined, sortDir: 'asc' | 'desc' | undefined) => {
-    const params = new URLSearchParams()
-    params.set('campaign_id', options.campaignId)
-    if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-    if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
-    if (options.stageFilter) params.set('stage_filter', options.stageFilter)
-    if (options.staleDays) params.set('stale_days', String(options.staleDays))
-    if (options.search) params.set('search', options.search)
-    if (options.limit) params.set('limit', String(options.limit))
-    if (options.offset) params.set('offset', String(options.offset))
-    if (sortBy) params.set('sort_by', sortBy)
-    if (sortDir) params.set('sort_dir', sortDir)
-    if (options.letters && options.letters.length > 0) params.set('letters', options.letters.join(','))
-    if (options.uploadId) params.set('upload_id', options.uploadId)
-    if (options.countByLetters) params.set('count_by_letters', 'true')
-    return params.toString()
-  }
-
-  const primarySortBy = options.sortBy
-  const primarySortDir = options.sortDir
-  const path = (sortBy: string | undefined, sortDir: 'asc' | 'desc' | undefined) =>
-    `/v1/contacts?${buildQuery(sortBy, sortDir)}`
-
-  contactsListLegacySortFallback = false
-  try {
-    return await request<ContactListResponse>(path(primarySortBy, primarySortDir))
-  } catch (err) {
-    const alreadyLegacy =
-      primarySortBy === LEGACY_CONTACT_SORT.sortBy &&
-      primarySortDir === LEGACY_CONTACT_SORT.sortDir
-    const hadExplicitSort = Boolean(primarySortBy || primarySortDir)
-    if (is422InvalidSortBy(err) && hadExplicitSort && !alreadyLegacy) {
-      contactsListLegacySortFallback = true
-      recordSortCompatFallback('contacts')
-      return await request<ContactListResponse>(
-        path(LEGACY_CONTACT_SORT.sortBy, LEGACY_CONTACT_SORT.sortDir),
-      )
-    }
-    throw err
-  }
-}
-
-export async function listCompanyContacts(
-  campaignId: string,
-  companyId: string,
-  options: { limit?: number; offset?: number; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter } = {},
-): Promise<ContactListResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
-  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
-  return request<ContactListResponse>(`/v1/companies/${companyId}/contacts?${params.toString()}`)
-}
-
-export async function listContactCompanies(
-  options: {
-    campaignId: string
-    search?: string
-    limit?: number
-    offset?: number
-    titleMatch?: boolean
-    verificationStatus?: string
-    stageFilter?: ContactStageFilter
-    matchGapFilter?: MatchGapFilter
-    uploadId?: string
-  },
-): Promise<ContactCompanyListResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', options.campaignId)
-  if (options.search) params.set('search', options.search)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
-  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
-  if (options.matchGapFilter) params.set('match_gap_filter', options.matchGapFilter)
-  if (options.uploadId) params.set('upload_id', options.uploadId)
-  if (options.limit) params.set('limit', String(options.limit))
-  if (options.offset) params.set('offset', String(options.offset))
-  return request<ContactCompanyListResponse>(`/v1/contacts/companies?${params.toString()}`)
-}
-
-export function getContactsExportUrl(
-  options: { campaignId: string; titleMatch?: boolean; verificationStatus?: string; stageFilter?: ContactStageFilter; companyId?: string; uploadId?: string },
-): string {
-  const params = new URLSearchParams()
-  params.set('campaign_id', options.campaignId)
-  if (options.titleMatch !== undefined) params.set('title_match', String(options.titleMatch))
-  if (options.verificationStatus) params.set('verification_status', options.verificationStatus)
-  if (options.stageFilter) params.set('stage_filter', options.stageFilter)
-  if (options.companyId) params.set('company_id', options.companyId)
-  if (options.uploadId) params.set('upload_id', options.uploadId)
-  return `${API_BASE_URL}/v1/contacts/export.csv?${params.toString()}`
-}
-
-export async function getContactCounts(campaignId: string, uploadId?: string): Promise<ContactCountsResponse> {
-  const params = new URLSearchParams()
-  params.set('campaign_id', campaignId)
-  if (uploadId) params.set('upload_id', uploadId)
-  const suffix = params.toString() ? `?${params.toString()}` : ''
-  return request<ContactCountsResponse>(`/v1/contacts/counts${suffix}`)
-}
-
-export async function verifyContacts(payload: ContactVerifyRequest, idempotencyKey?: string): Promise<ContactVerifyResult> {
-  return request<ContactVerifyResult>('/v1/contacts/verify', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {}),
-    },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function listTitleMatchRules(campaignId: string): Promise<TitleMatchRuleRead[]> {
-  return request<TitleMatchRuleRead[]>(`/v1/title-match-rules?campaign_id=${encodeURIComponent(campaignId)}`)
-}
-
-export async function createTitleMatchRule(payload: TitleMatchRuleCreate): Promise<TitleMatchRuleRead> {
-  return request<TitleMatchRuleRead>('/v1/title-match-rules', {
+export async function createScrapeBatch(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
+  return request<ScrapeBatchRead>('/v1/scrape-batches', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   })
 }
 
-export async function deleteTitleMatchRule(ruleId: string, campaignId: string): Promise<void> {
-  await request<void>(`/v1/title-match-rules/${ruleId}?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'DELETE' })
+export async function listScrapeBatches(campaignId: string, limit = 20): Promise<ScrapeBatchList> {
+  return request<ScrapeBatchList>(`/v1/scrape-batches?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`)
 }
 
-export async function seedTitleMatchRules(campaignId: string): Promise<TitleRuleSeedResult> {
-  return request<TitleRuleSeedResult>(`/v1/title-match-rules/seed?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
+export async function getActiveBatch(campaignId: string): Promise<ScrapeBatchRead | null> {
+  return request<ScrapeBatchRead | null>(`/v1/scrape-batches/active?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
-export async function testTitleMatch(campaignId: string, title: string): Promise<TitleTestResult> {
-  return request<TitleTestResult>('/v1/title-match-rules/test', {
+export async function getScrapeBatch(batchId: string): Promise<ScrapeBatchRead> {
+  return request<ScrapeBatchRead>(`/v1/scrape-batches/${batchId}`)
+}
+
+// ── S1 Scrape Settings ────────────────────────────────────────────────────────
+
+export async function getScrapeSettings(campaignId: string): Promise<ScrapeSettingsRead | null> {
+  return request<ScrapeSettingsRead | null>(`/v1/scrape-settings?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function saveScrapeSettings(campaignId: string, instructionText: string): Promise<ScrapeSettingsRead> {
+  return request<ScrapeSettingsRead>('/v1/scrape-settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ campaign_id: campaignId, title }),
+    body: JSON.stringify({ campaign_id: campaignId, instruction_text: instructionText }),
   })
 }
 
-export async function getTitleRuleStats(campaignId: string): Promise<TitleRuleStatsResponse> {
-  return request<TitleRuleStatsResponse>(`/v1/title-match-rules/stats?campaign_id=${encodeURIComponent(campaignId)}`)
+// ── S1 Scrape Results (content drawer) ───────────────────────────────────────
+
+export async function getScrapeResult(domainId: string, campaignId: string): Promise<ScrapeResultRead | null> {
+  const params = new URLSearchParams({ campaign_id: campaignId, domain_id: domainId })
+  return request<ScrapeResultRead | null>(`/v1/scrape-results?${params.toString()}`).catch(() => null)
 }
 
-export async function rematchContacts(campaignId: string): Promise<{ updated: number; message: string }> {
-  return request(`/v1/title-match-rules/rematch?campaign_id=${encodeURIComponent(campaignId)}`, { method: 'POST' })
-}
-
+// ── Settings / Integrations ───────────────────────────────────────────────────
 
 export async function getIntegrationSettings(): Promise<IntegrationsStatusResponse> {
   return request<IntegrationsStatusResponse>('/v1/settings/integrations')
@@ -881,17 +223,15 @@ export async function updateIntegrationProvider(
   })
 }
 
-export async function testIntegrationProvider(
-  provider: IntegrationProviderId,
-): Promise<IntegrationTestResponse> {
-  return request<IntegrationTestResponse>(`/v1/settings/integrations/${encodeURIComponent(provider)}/test`, {
-    method: 'POST',
-  })
+export async function testIntegrationProvider(provider: IntegrationProviderId): Promise<IntegrationTestResponse> {
+  return request<IntegrationTestResponse>(`/v1/settings/integrations/${encodeURIComponent(provider)}/test`, { method: 'POST' })
 }
 
 export async function getIntegrationsHealth(): Promise<IntegrationHealthItem[]> {
   return request<IntegrationHealthItem[]>('/v1/settings/integrations/health')
 }
+
+// ── Queue History ─────────────────────────────────────────────────────────────
 
 export async function getQueueHistory(params: {
   campaignId?: string | null
@@ -910,80 +250,10 @@ export async function getQueueHistory(params: {
   return request<QueueHistoryResponse>(`/v1/queue-history${qs ? `?${qs}` : ''}`)
 }
 
-export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {
-  return request<AuthLoginResponse>('/v1/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
-}
+// ── Utility ───────────────────────────────────────────────────────────────────
 
-export async function getCurrentUser(): Promise<AuthUserRead> {
-  return request<AuthUserRead>('/v1/auth/me')
-}
-
-export async function logoutSession(): Promise<void> {
-  await request<void>('/v1/auth/logout', { method: 'POST' })
-}
-
-// ── S1 Scraping ───────────────────────────────────────────────────────────────
-
-export async function getDomainLetterCounts(
-  campaignId: string,
-  scrapeStatus?: string,
-): Promise<DomainLetterCounts> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (scrapeStatus) params.set('scrape_status', scrapeStatus)
-  return request<DomainLetterCounts>(`/v1/domains/letter-counts?${params.toString()}`)
-}
-
-export async function createScrapeBatch(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
-  return request<ScrapeBatchRead>('/v1/scrape-batches', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-export async function listScrapeBatches(campaignId: string, limit = 20): Promise<ScrapeBatchList> {
-  return request<ScrapeBatchList>(
-    `/v1/scrape-batches?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`,
-  )
-}
-
-export async function getActiveBatch(campaignId: string): Promise<ScrapeBatchRead | null> {
-  return request<ScrapeBatchRead | null>(
-    `/v1/scrape-batches/active?campaign_id=${encodeURIComponent(campaignId)}`,
-  )
-}
-
-export async function getScrapeBatch(batchId: string): Promise<ScrapeBatchRead> {
-  return request<ScrapeBatchRead>(`/v1/scrape-batches/${batchId}`)
-}
-
-export async function getScrapeSettings(campaignId: string): Promise<ScrapeSettingsRead | null> {
-  return request<ScrapeSettingsRead | null>(
-    `/v1/scrape-settings?campaign_id=${encodeURIComponent(campaignId)}`,
-  )
-}
-
-export async function saveScrapeSettings(
-  campaignId: string,
-  instructionText: string,
-): Promise<ScrapeSettingsRead> {
-  return request<ScrapeSettingsRead>('/v1/scrape-settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ campaign_id: campaignId, instruction_text: instructionText }),
-  })
-}
-
-export async function getScrapeResult(domainId: string, campaignId: string): Promise<ScrapeResultRead | null> {
-  const params = new URLSearchParams({ campaign_id: campaignId, domain_id: domainId })
-  return request<ScrapeResultRead | null>(`/v1/scrape-results?${params.toString()}`).catch(() => null)
-}
-
-/** Parse a date string as UTC.
+/**
+ * Parse a date string as UTC.
  * The API returns TIMESTAMP WITHOUT TIME ZONE values without a 'Z' suffix.
  * Bare ISO strings (no Z / offset) are treated as local time by browsers,
  * so we force UTC by appending 'Z' when no timezone info is present.

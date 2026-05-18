@@ -1,4 +1,4 @@
-import { PAGE_SIZE_OPTIONS } from '../../hooks/usePipelineViews'
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200]
 
 interface PagerProps {
   offset: number
@@ -31,7 +31,7 @@ export function Pager({ offset, pageSize, total, hasMore, onPrev, onNext, onPage
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
           className="oc-pager-select"
         >
-          {PAGE_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          {PAGE_SIZE_OPTIONS.map((s: number) => <option key={s} value={s}>{s}</option>)}
         </select>
       </label>
       <button

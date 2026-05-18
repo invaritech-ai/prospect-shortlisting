@@ -73,7 +73,7 @@ def list_domains(
         total=total,
         limit=limit,
         offset=offset,
-        items=[DomainRead.model_validate(d) for d in items],
+        items=[DomainRead.model_validate(d, from_attributes=True) for d in items],
     )
 
 
