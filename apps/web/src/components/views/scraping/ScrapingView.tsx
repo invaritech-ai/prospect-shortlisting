@@ -17,6 +17,27 @@ const PAGE_SIZE = 50
 
 const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
 
+function DomainSkeleton() {
+  return (
+    <div className="oc-panel" style={{ overflow: 'hidden' }}>
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            display: 'flex', gap: '1rem', alignItems: 'center',
+            padding: '0.75rem 1rem',
+            borderBottom: i < 7 ? '1px solid var(--oc-border)' : 'none',
+          }}
+        >
+          <div style={{ width: '1rem', height: '1rem', borderRadius: '0.25rem', background: 'var(--oc-border)', flexShrink: 0 }} />
+          <div style={{ flex: 1, height: '0.75rem', borderRadius: '0.25rem', background: 'var(--oc-border)', maxWidth: `${55 + (i * 13) % 35}%` }} />
+          <div style={{ width: '4rem', height: '0.75rem', borderRadius: '0.25rem', background: 'var(--oc-border)' }} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 interface ScrapingViewProps {
   campaignId: string
   sseUrl: string  // /v1/campaigns/{id}/events/stream
@@ -285,7 +306,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
         )}
 
         {/* Letter pills */}
-        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', position: 'relative' }}>
           {['all', ...LETTERS].map((l) => {
             const count = l === 'all' ? domainTotal : (letterCounts?.counts[l] ?? 0)
             const active = letterFilter === l
@@ -293,7 +314,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
               <button
                 key={l}
                 type="button"
-                onClick={() => { setLetterFilter(l); setPage(0); void loadDomains(0) }}
+                onClick={() => { setLetterFilter(l); setPage(0) }}
                 style={{
                   padding: '0.25rem 0.5rem', borderRadius: '0.375rem', fontSize: '0.75rem',
                   fontWeight: active ? 700 : 500, fontFamily: 'var(--font-mono)',
@@ -319,7 +340,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
         <ScrapingToolbar
           statusFilter={statusFilter}
           search={search}
-          onStatusFilterChange={(f) => { setStatusFilter(f); setPage(0); void loadDomains(0) }}
+          onStatusFilterChange={(f) => { setStatusFilter(f); setPage(0) }}
           onSearchChange={(s) => { setSearch(s); setPage(0) }}
           selectedCount={effectiveSelectedCount}
           hasFilterSelection={filterSelection !== null}
@@ -331,15 +352,24 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
         />
 
         {loading && domains.length === 0 ? (
-          <div className="oc-panel" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--oc-muted)' }}>
-            Loading…
-          </div>
+          <DomainSkeleton />
         ) : domains.length === 0 ? (
           <div className="oc-panel" style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--oc-muted)', fontSize: '0.9375rem' }}>
             No domains match this filter.
           </div>
         ) : (
-          <>
+          <div style={{ position: 'relative' }}>
+            {loading && (
+              <div style={{
+                position: 'absolute', inset: 0, zIndex: 10,
+                background: 'color-mix(in srgb, var(--oc-bg) 60%, transparent)',
+                borderRadius: '0.625rem',
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                paddingTop: '3rem',
+              }}>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)', fontStyle: 'italic' }}>Loading…</span>
+              </div>
+            )}
             <div className="hidden md:block">
               <ScrapingTable
                 rows={domains}
@@ -361,7 +391,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
                 onViewContent={setViewingDomain}
               />
             </div>
-          </>
+          </div>
         )}
 
         {/* Pagination */}

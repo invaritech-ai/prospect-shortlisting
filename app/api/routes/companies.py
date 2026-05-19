@@ -87,11 +87,15 @@ def get_letter_counts(
     base_q = select(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id)
     base_q = _apply_scrape_status_filter(base_q, scrape_status)
 
-    # Count per first letter
+    # Count per first letter — build a direct aggregate query (no subquery wrapping,
+    # which would cause the column reference to escape the subquery scope).
     letter_expr = func.upper(func.left(col(UploadedDomain.domain), 1))
-    rows = session.exec(
-        select(letter_expr, func.count()).select_from(base_q.subquery()).group_by(letter_expr)
-    ).all()
+    count_q = select(letter_expr, func.count(UploadedDomain.id)).where(
+        col(UploadedDomain.campaign_id) == campaign_id
+    )
+    count_q = _apply_scrape_status_filter(count_q, scrape_status)
+    count_q = count_q.group_by(letter_expr)
+    rows = session.exec(count_q).all()
 
     counts: dict[str, int] = {}
     for first_char, count in rows:

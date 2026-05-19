@@ -172,7 +172,12 @@ def list_uploads(
     items = session.exec(
         base_q.order_by(col(Upload.created_at).desc()).limit(limit).offset(offset)
     ).all()
-    return UploadList(total=total, limit=limit, offset=offset, items=list(items))
+    return UploadList(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[UploadRead.model_validate(u, from_attributes=True) for u in items],
+    )
 
 
 @router.delete("/uploads/{upload_id}", status_code=status.HTTP_204_NO_CONTENT)
