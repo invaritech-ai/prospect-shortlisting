@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { DomainRead, ScrapeResultRead } from '../../../lib/types'
+import { getScrapeResult } from '../../../lib/api'
 import { Drawer } from '../../ui/Drawer'
 
 const PAGE_KIND_LABELS: Record<string, string> = {
@@ -44,9 +45,8 @@ export function ScrapedContentDrawer({ domain, onClose }: ScrapedContentDrawerPr
     // Load the scrape result for this domain
     setLoading(true)
     setResult(null)
-    const params = new URLSearchParams({ campaign_id: domain.campaign_id, domain_id: domain.id })
-    fetch(`/v1/scrape-results?${params.toString()}`)
-      .then((r) => r.ok ? r.json() as Promise<ScrapeResultRead> : null)
+    getScrapeResult(domain.id, domain.campaign_id)
+      .then((data) => data as ScrapeResultRead | null)
       .then((data) => { setResult(data); setActiveTab('home') })
       .catch(() => setResult(null))
       .finally(() => setLoading(false))

@@ -28,6 +28,12 @@ const API_BASE_URL = (
   'http://localhost:8000'
 ).replace(/\/+$/, '')
 
+export function buildApiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE_URL}${normalized}`
+}
+
 interface ApiSessionConfig {
   getAccessToken?: () => string | null
   onUnauthorized?: () => void
@@ -64,7 +70,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = apiSessionConfig.getAccessToken?.() ?? null
   const headers = new Headers(init?.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     ...init,
     headers,
     credentials: init?.credentials ?? 'include',
@@ -147,10 +153,27 @@ export async function deleteUpload(uploadId: string): Promise<void> {
 
 export async function listDomains(
   campaignId: string,
-  { uploadId, limit = 50, offset = 0 }: { uploadId?: string; limit?: number; offset?: number } = {},
+  {
+    uploadId,
+    scrapeStatus,
+    letter,
+    search,
+    limit = 50,
+    offset = 0,
+  }: {
+    uploadId?: string
+    scrapeStatus?: string
+    letter?: string
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
 ): Promise<DomainList> {
   const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
   if (uploadId) params.set('upload_id', uploadId)
+  if (scrapeStatus) params.set('scrape_status', scrapeStatus)
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
   return request<DomainList>(`/v1/companies?${params.toString()}`)
 }
 

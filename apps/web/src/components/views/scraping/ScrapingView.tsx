@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import type { DomainRead, ScrapeBatchRead, DomainLetterCounts } from '../../../lib/types'
 import {
+  buildApiUrl,
   getDomainLetterCounts,
   createScrapeBatch,
   getActiveBatch,
+  listDomains,
 } from '../../../lib/api'
 import { StageViewHeader }       from '../shared/StageViewHeader'
 import { ScrapingToolbar }        from './ScrapingToolbar'
@@ -70,15 +72,13 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
   const loadDomains = useCallback(async (p = 0) => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({
-        campaign_id: campaignId,
-        limit: String(PAGE_SIZE),
-        offset: String(p * PAGE_SIZE),
+      const result = await listDomains(campaignId, {
+        limit: PAGE_SIZE,
+        offset: p * PAGE_SIZE,
+        scrapeStatus: statusFilter !== 'all' ? statusFilter : undefined,
+        letter: letterFilter !== 'all' ? letterFilter : undefined,
+        search: search.trim() ? search.trim() : undefined,
       })
-      if (statusFilter !== 'all') params.set('scrape_status', statusFilter)
-      if (letterFilter !== 'all') params.set('letter', letterFilter)
-      if (search.trim()) params.set('search', search.trim())
-      const result = await fetch(`/v1/companies?${params.toString()}`).then((r) => r.json()) as { total: number; items: DomainRead[] }
       setDomains(result.items)
       setDomainTotal(result.total)
     } catch {
@@ -118,7 +118,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
   // ── SSE — scrape_batch updates ──────────────────────────────────────────
   const sseRef = useRef<EventSource | null>(null)
   useEffect(() => {
-    const es = new EventSource(sseUrl)
+    const es = new EventSource(buildApiUrl(sseUrl))
     sseRef.current = es
     es.onmessage = (e: MessageEvent) => {
       try {
