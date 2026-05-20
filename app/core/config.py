@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import AliasChoices, Field
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -80,6 +81,19 @@ class Settings(BaseSettings):
     # Must be a valid urlsafe base64-encoded 32-byte Fernet key. If absent,
     # the DB-backed settings are disabled and env fallback is used.
     settings_encryption_key: str = ""
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        if not isinstance(value, str):
+            return value
+        if value.startswith("postgres://"):
+            return "postgresql+psycopg://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value[len("postgresql://") :]
+        if value.startswith("postgresql+psycopg2://"):
+            return "postgresql+psycopg://" + value[len("postgresql+psycopg2://") :]
+        return value
 
     model_config = SettingsConfigDict(
         env_file=".env",
