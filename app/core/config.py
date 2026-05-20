@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     def normalize_database_url(cls, value: str) -> str:
         if not isinstance(value, str):
             return value
+        if value.startswith("postgres+"):
+            return "postgresql+" + value[len("postgres+") :]
         if value.startswith("postgres://"):
             return "postgresql+psycopg://" + value[len("postgres://") :]
         if value.startswith("postgresql://"):
