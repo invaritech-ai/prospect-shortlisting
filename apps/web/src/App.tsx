@@ -29,6 +29,9 @@ import { AppShell } from './components/layout/AppShell'
 // Views (rebuilt)
 import { DashboardView }  from './components/views/pipeline/DashboardView'
 import { ScrapingView }   from './components/views/scraping/ScrapingView'
+import { AIReviewView }   from './components/views/ai-review/AIReviewView'
+import { ContactsView }   from './components/views/contacts/ContactsView'
+import { ValidationView } from './components/views/validation/ValidationView'
 import { CampaignsView }  from './components/views/campaigns/CampaignsView'
 import { ImportView }     from './components/views/import/ImportView'
 import { SettingsView }   from './components/views/settings/SettingsView'
@@ -398,10 +401,10 @@ function App() {
         )}
 
         {selectedCampaignId && activeView === 'full-pipeline'   && <ComingSoon label="Full Pipeline" />}
-        {selectedCampaignId && activeView === 's2-ai'           && <ComingSoon label="S2 · AI Review" />}
-        {selectedCampaignId && activeView === 's3-contacts'     && <ComingSoon label="S3 · Contact Fetch" />}
+        {selectedCampaignId && activeView === 's2-ai'           && <AIReviewView stats={null} />}
+        {selectedCampaignId && activeView === 's3-contacts'     && <ContactsView stats={null} />}
         {selectedCampaignId && activeView === 's4-reveal'       && <ComingSoon label="S4 · Reveal" />}
-        {selectedCampaignId && activeView === 's5-validation'   && <ComingSoon label="S5 · Validation" />}
+        {selectedCampaignId && activeView === 's5-validation'   && <ValidationView stats={null} />}
         {selectedCampaignId && activeView === 'operations'      && <ComingSoon label="Operations Log" />}
 
       </AppShell>
