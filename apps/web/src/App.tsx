@@ -28,6 +28,7 @@ import { AppShell } from './components/layout/AppShell'
 
 // Views (rebuilt)
 import { DashboardView }  from './components/views/pipeline/DashboardView'
+import { FullPipelineView } from './components/views/pipeline/FullPipelineView'
 import { ScrapingView }   from './components/views/scraping/ScrapingView'
 import { AIReviewView }   from './components/views/ai-review/AIReviewView'
 import { ContactsView }   from './components/views/contacts/ContactsView'
@@ -400,7 +401,7 @@ function App() {
           />
         )}
 
-        {selectedCampaignId && activeView === 'full-pipeline'   && <ComingSoon label="Full Pipeline" />}
+        {selectedCampaignId && activeView === 'full-pipeline'   && <FullPipelineView />}
         {selectedCampaignId && activeView === 's2-ai'           && <AIReviewView stats={null} />}
         {selectedCampaignId && activeView === 's3-contacts'     && <ContactsView stats={null} />}
         {selectedCampaignId && activeView === 's4-reveal'       && <ComingSoon label="S4 · Reveal" />}
