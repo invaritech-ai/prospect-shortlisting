@@ -7,6 +7,7 @@ import {
   getActiveBatch,
   listDomains,
 } from '../../../lib/api'
+import { parseApiError }         from '../../../lib/utils'
 import { StageViewHeader }       from '../shared/StageViewHeader'
 import { ScrapingToolbar }        from './ScrapingToolbar'
 import { ScrapingTable }          from './ScrapingTable'
@@ -43,9 +44,10 @@ function DomainSkeleton() {
 interface ScrapingViewProps {
   campaignId: string
   sseUrl: string  // /v1/campaigns/{id}/events/stream
+  onActiveBatchChange?: (batch: ScrapeBatchRead | null) => void
 }
 
-export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
+export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: ScrapingViewProps) {
   // ── Filters / selection ──────────────────────────────────────────────────
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [letterFilter, setLetterFilter] = useState<string>('all')
@@ -63,10 +65,21 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
   const [activeBatch, setActiveBatch]   = useState<ScrapeBatchRead | null>(null)
   const [loading, setLoading]           = useState(false)
   const [batchError, setBatchError]     = useState<string | null>(null)
+  const [isCreatingBatch, setIsCreatingBatch] = useState(false)
+  const isCreatingBatchRef = useRef(false)
+  const isBatchActive = activeBatch !== null && ['queued', 'dispatching', 'running'].includes(activeBatch.state)
 
   // ── Drawers ─────────────────────────────────────────────────────────────
   const [viewingDomain, setViewingDomain]   = useState<DomainRead | null>(null)
   const [settingsOpen, setSettingsOpen]     = useState(false)
+
+  useEffect(() => {
+    onActiveBatchChange?.(activeBatch)
+  }, [activeBatch, onActiveBatchChange])
+
+  useEffect(() => {
+    return () => onActiveBatchChange?.(null)
+  }, [onActiveBatchChange])
 
   // ── Load domain list ──────────────────────────────────────────────────────
   const loadDomains = useCallback(async (p = 0) => {
@@ -98,11 +111,13 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
     } catch { /* ignore */ }
   }, [campaignId, statusFilter])
 
-  const loadActiveBatch = useCallback(async () => {
+  const loadActiveBatch = useCallback(async (): Promise<ScrapeBatchRead | null> => {
     try {
       const batch = await getActiveBatch(campaignId)
       setActiveBatch(batch)
+      return batch
     } catch { /* ignore */ }
+    return null
   }, [campaignId])
 
   // Initial load
@@ -114,6 +129,35 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
     setSelectedIds(new Set())
     setFilterSelection(null)
   }, [loadDomains, loadLetterCounts, loadActiveBatch])
+
+  // ── Polling fallback for active scrape batches ──────────────────────────
+  useEffect(() => {
+    if (!isBatchActive && !isCreatingBatch) return
+
+    let cancelled = false
+    const batchTick = async () => {
+      const batch = await loadActiveBatch()
+      if (cancelled) return
+      if (!batch || ['completed', 'failed'].includes(batch.state)) {
+        setActiveBatch(null)
+        void loadDomains(page)
+        void loadLetterCounts()
+      }
+    }
+    const dataTick = async () => {
+      await Promise.all([loadDomains(page), loadLetterCounts()])
+    }
+
+    void batchTick()
+    void dataTick()
+    const batchTimer = window.setInterval(() => { void batchTick() }, 2000)
+    const dataTimer = window.setInterval(() => { void dataTick() }, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(batchTimer)
+      window.clearInterval(dataTimer)
+    }
+  }, [isBatchActive, isCreatingBatch, loadActiveBatch, loadDomains, loadLetterCounts, page])
 
   // ── SSE — scrape_batch updates ──────────────────────────────────────────
   const sseRef = useRef<EventSource | null>(null)
@@ -200,13 +244,21 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
   }
 
   // ── Batch creation ────────────────────────────────────────────────────────
-  async function handleScrape(overrideFilter?: { scrape_status?: string }) {
+  async function handleScrape(
+    overrideFilter?: { scrape_status?: string },
+    overrideDomainIds?: string[],
+  ) {
+    if (isCreatingBatchRef.current || isBatchActive) return
+    isCreatingBatchRef.current = true
+    setIsCreatingBatch(true)
     setBatchError(null)
     try {
       const body: { campaign_id: string; domain_ids?: string[]; filter?: Record<string, string | undefined> } = {
         campaign_id: campaignId,
       }
-      if (overrideFilter) {
+      if (overrideDomainIds && overrideDomainIds.length > 0) {
+        body.domain_ids = overrideDomainIds
+      } else if (overrideFilter) {
         body.filter = overrideFilter
       } else {
         const ids = [...selectedIds]
@@ -220,8 +272,11 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
       void loadDomains(page)
       void loadLetterCounts()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to create scrape batch'
+      const msg = parseApiError(err)
       setBatchError(msg)
+    } finally {
+      isCreatingBatchRef.current = false
+      setIsCreatingBatch(false)
     }
   }
 
@@ -245,7 +300,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
     { label: 'running', value: statusCounts.running, live: statusCounts.running > 0, color: 'var(--s1)' },
   ]
 
-  const isBatchActive = activeBatch !== null && ['queued', 'dispatching', 'running'].includes(activeBatch.state)
+  const isScrapeLocked = isBatchActive || isCreatingBatch
 
   // Selected count = explicit IDs + all matching (if filter selection set)
   const effectiveSelectedCount = filterSelection ? domainTotal : selectedIds.size
@@ -264,14 +319,33 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
           onOpenSettings={() => setSettingsOpen(true)}
           settingsLabel="Rules"
           primaryAction={!isBatchActive ? {
-            label: `Scrape ${domainTotal.toLocaleString()} pending`,
+            label: isCreatingBatch ? 'Creating batch...' : `Scrape ${domainTotal.toLocaleString()} pending`,
             onClick: () => void handleScrape({ scrape_status: 'pending' }),
+            disabled: isCreatingBatch,
           } : undefined}
           secondaryAction={!isBatchActive ? {
-            label: 'Retry failed',
+            label: isCreatingBatch ? 'Creating...' : 'Retry failed',
             onClick: () => void handleScrape({ scrape_status: 'failed' }),
+            disabled: isCreatingBatch,
           } : undefined}
         />
+
+        {isCreatingBatch && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.75rem',
+            padding: '0.75rem 1rem', borderRadius: '0.625rem',
+            background: 'color-mix(in srgb, var(--s1-bg) 70%, white)',
+            border: '1px solid color-mix(in srgb, var(--s1) 28%, transparent)',
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--s1)" strokeWidth="2.5"
+              style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0 }}>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span style={{ fontSize: '0.875rem', fontWeight: 650, color: 'var(--s1)' }}>
+              Creating scrape batch... actions are locked until the request returns.
+            </span>
+          </div>
+        )}
 
         {/* Active batch progress banner */}
         {isBatchActive && activeBatch && (
@@ -347,7 +421,7 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
           onScrapeSelected={() => void handleScrape()}
           onSelectAllMatching={handleSelectAllMatching}
           onClearSelection={clearSelection}
-          isBatchActive={isBatchActive}
+          isBatchActive={isScrapeLocked}
           totalMatchingCount={domainTotal}
         />
 
@@ -376,8 +450,9 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
                 selected={selectedIds}
                 onToggleSelect={toggleSelect}
                 onToggleSelectAll={toggleSelectAll}
-                onScrapeOne={() => void handleScrape()}
+                onScrapeOne={(d) => void handleScrape(undefined, [d.id])}
                 onViewContent={setViewingDomain}
+                isScrapeDisabled={isScrapeLocked}
                 hasActiveFilter={statusFilter !== 'all' || letterFilter !== 'all' || !!search}
                 onClearFilter={() => { setStatusFilter('all'); setLetterFilter('all'); setSearch('') }}
               />
@@ -387,8 +462,9 @@ export function ScrapingView({ campaignId, sseUrl }: ScrapingViewProps) {
                 rows={domains}
                 selected={selectedIds}
                 onToggleSelect={toggleSelect}
-                onScrapeOne={() => void handleScrape()}
+                onScrapeOne={(d) => void handleScrape(undefined, [d.id])}
                 onViewContent={setViewingDomain}
+                isScrapeDisabled={isScrapeLocked}
               />
             </div>
           </div>

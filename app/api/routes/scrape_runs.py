@@ -16,9 +16,11 @@ from app.api.schemas.scrape import (
     ScrapeBatchRead,
     ScrapeResultRead,
 )
-from app.db.session import get_session
+from app.db.session import get_engine, get_session
 from app.models.core import UploadedDomain
 from app.models.scrape import ScrapeBatch, ScrapeResult, ScrapeSettings
+from app.services.queue_guard import is_procrastinate_schema_ready
+from app.services.scrape_prompt_compiler import build_scrape_rules_snapshot
 
 router = APIRouter(prefix="/v1", tags=["scrape-batches"])
 
@@ -115,6 +117,17 @@ async def create_scrape_batch(
     body: ScrapeBatchCreate,
     session: Session = Depends(get_session),
 ) -> ScrapeBatchRead:
+    # Queue must be bootstrapped manually in this deployment mode.
+    if not is_procrastinate_schema_ready(get_engine()):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Queue schema is not initialized. Run "
+                "`uv run python scripts/apply_procrastinate_schema_maybe.py` "
+                "and start the scrape worker (`./scripts/run_worker.sh scrape 2`)."
+            ),
+        )
+
     # 1. Reject if an active batch already exists for this campaign
     active = session.exec(
         select(ScrapeBatch).where(
@@ -141,8 +154,10 @@ async def create_scrape_batch(
         ).order_by(col(ScrapeSettings.created_at).desc()).limit(1)
     ).first()
 
-    settings_snapshot = (
-        settings_row.structured_rules_json if settings_row else DEFAULT_STRUCTURED_RULES
+    settings_snapshot = build_scrape_rules_snapshot(
+        instruction_text=settings_row.instruction_text if settings_row else None,
+        structured_rules=settings_row.structured_rules_json if settings_row else None,
+        default_rules=DEFAULT_STRUCTURED_RULES,
     )
 
     # 4. Create batch row

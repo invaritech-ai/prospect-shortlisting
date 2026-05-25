@@ -8,6 +8,16 @@ function relTime(iso: string): string {
   return `${Math.floor(d / 60)}h ago`
 }
 
+function failureLabel(row: DomainRead): string | null {
+  if ((row.scrape_status ?? 'pending') !== 'failed') return null
+  const cls = row.latest_scrape_failure_class
+  if (cls === 'permanent') return 'Permanent'
+  if (cls === 'transient') return 'Transient'
+  if (cls === 'blocked') return 'Blocked'
+  if (cls === 'no_content') return 'No content'
+  return row.latest_scrape_error_code ?? null
+}
+
 interface ScrapingTableProps {
   rows: DomainRead[]
   selected: Set<string>
@@ -15,13 +25,14 @@ interface ScrapingTableProps {
   onToggleSelectAll: () => void
   onScrapeOne: (d: DomainRead) => void
   onViewContent: (d: DomainRead) => void
+  isScrapeDisabled?: boolean
   hasActiveFilter?: boolean
   onClearFilter?: () => void
 }
 
 export function ScrapingTable({
   rows, selected, onToggleSelect, onToggleSelectAll,
-  onScrapeOne, onViewContent, hasActiveFilter, onClearFilter,
+  onScrapeOne, onViewContent, isScrapeDisabled = false, hasActiveFilter, onClearFilter,
 }: ScrapingTableProps) {
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id))
 
@@ -99,10 +110,22 @@ export function ScrapingTable({
                     </a>
                   </td>
 
-                  <td><ScrapeStatusBadge status={status} /></td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start' }}>
+                      <ScrapeStatusBadge status={status} />
+                      {failureLabel(row) && (
+                        <span
+                          title={row.latest_scrape_error_code ?? undefined}
+                          style={{ fontSize: '0.68rem', color: 'var(--oc-muted)', fontWeight: 600 }}
+                        >
+                          {failureLabel(row)}
+                        </span>
+                      )}
+                    </div>
+                  </td>
 
                   <td style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)', whiteSpace: 'nowrap' }}>
-                    {relTime(row.created_at)}
+                    {relTime(row.latest_scrape_updated_at ?? row.created_at)}
                   </td>
 
                   <td onClick={(e) => e.stopPropagation()}>
@@ -128,7 +151,10 @@ export function ScrapingTable({
                       {(status === 'failed' || status === 'pending' || status == null) && (
                         <button
                           type="button"
-                          onClick={() => onScrapeOne(row)}
+                          disabled={isScrapeDisabled}
+                          onClick={() => {
+                            if (!isScrapeDisabled) onScrapeOne(row)
+                          }}
                           style={{
                             display: 'inline-flex', alignItems: 'center',
                             padding: '0.4375rem 0.75rem', minHeight: '34px', borderRadius: '0.375rem',
@@ -136,7 +162,8 @@ export function ScrapingTable({
                             background: status === 'failed' ? 'var(--s1-bg)' : 'var(--oc-surface)',
                             fontSize: '0.75rem', fontWeight: 600,
                             color: status === 'failed' ? 'var(--s1)' : 'var(--oc-muted)',
-                            cursor: 'pointer', fontFamily: 'inherit',
+                            cursor: isScrapeDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                            opacity: isScrapeDisabled ? 0.45 : 1,
                           }}
                         >
                           {status === 'failed' ? 'Retry' : 'Scrape'}

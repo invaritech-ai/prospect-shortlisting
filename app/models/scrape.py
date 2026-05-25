@@ -68,5 +68,8 @@ class ScrapeResult(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
     error_code: str | None = Field(default=None, max_length=128)
+    failure_class: str | None = Field(default=None, max_length=32, index=True)
+    retryable: bool | None = Field(default=None)
+    final_url: str | None = Field(default=None, max_length=2048)
     created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
     updated_at: datetime = utc_datetime_field(default_factory=utcnow)

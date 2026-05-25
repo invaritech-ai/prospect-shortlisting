@@ -1,23 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.api.schemas.base import UTCReadModel
 
-ScrapePageKind = Literal[
-    "home", "about", "products", "contact", "team", "leadership", "services", "pricing"
-]
-
-DEFAULT_PAGE_KINDS: list[str] = [
-    "home", "about", "products", "services", "pricing", "contact", "team", "leadership"
-]
-
 DEFAULT_STRUCTURED_RULES: dict[str, Any] = {
-    "page_kinds": DEFAULT_PAGE_KINDS,
     "fallback_enabled": True,
     "fallback_limit": 1,
     "js_fallback": True,
@@ -42,6 +33,18 @@ class ScrapeSettingsCreate(BaseModel):
     name: str = Field(default="Default", max_length=255)
     instruction_text: str | None = None
     structured_rules_json: dict[str, Any] | None = None
+
+
+class ScrapeSettingsUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    instruction_text: str | None = None
+    structured_rules_json: dict[str, Any] | None = None
+    is_active: bool | None = None
+
+
+class ScrapeSettingsList(BaseModel):
+    total: int
+    items: list[ScrapeSettingsRead]
 
 
 # ── Batches ──────────────────────────────────────────────────────────────────
@@ -88,6 +91,9 @@ class ScrapeResultRead(UTCReadModel):
     markdown_pages_count: int
     scraped_pages_json: list[dict[str, Any]] | None
     error_code: str | None
+    failure_class: str | None = None
+    retryable: bool | None = None
+    final_url: str | None = None
     created_at: datetime
     updated_at: datetime
 

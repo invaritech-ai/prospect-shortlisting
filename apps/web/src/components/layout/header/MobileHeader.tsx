@@ -14,9 +14,13 @@ interface MobileHeaderProps {
 function isAnyActive(stats: StatsResponse): boolean {
   return (
     stats.scrape.running > 0
+    || stats.scrape.queued > 0
     || (stats.analysis?.running ?? 0) > 0
+    || (stats.analysis?.queued ?? 0) > 0
     || (stats.contact_fetch?.running ?? 0) > 0
+    || (stats.contact_fetch?.queued ?? 0) > 0
     || (stats.validation?.running ?? 0) > 0
+    || (stats.validation?.queued ?? 0) > 0
   )
 }
 

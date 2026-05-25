@@ -1,7 +1,11 @@
 """Backpressure: cap bulk enqueue to avoid flooding queues."""
 from __future__ import annotations
 
+import logging
+
+from psycopg import errors as pg_errors
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.engine import Engine
 
 MAX_QUEUE_DEPTHS: dict[str, int] = {
@@ -12,17 +16,38 @@ MAX_QUEUE_DEPTHS: dict[str, int] = {
     "validation": 100,
 }
 
+logger = logging.getLogger(__name__)
 
-def current_depth(engine: Engine, queue: str) -> int:
+
+def is_procrastinate_schema_ready(engine: Engine) -> bool:
+    """Return whether the Procrastinate jobs table exists in public schema."""
     with engine.connect() as conn:
         row = conn.execute(
-            text(
-                "SELECT COUNT(*) FROM procrastinate_jobs "
-                "WHERE queue_name = :q AND status IN ('todo', 'doing')"
-            ),
-            {"q": queue},
+            text("SELECT to_regclass('public.procrastinate_jobs')::text")
         ).one()
-    return int(row[0])
+    return bool(row[0])
+
+
+def current_depth(engine: Engine, queue: str) -> int:
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM procrastinate_jobs "
+                    "WHERE queue_name = :q AND status IN ('todo', 'doing')"
+                ),
+                {"q": queue},
+            ).one()
+        return int(row[0])
+    except DBAPIError as exc:
+        # Fail-closed when Procrastinate schema is not installed yet.
+        if isinstance(exc.orig, pg_errors.UndefinedTable):
+            logger.warning(
+                "queue_guard: procrastinate_jobs table missing; fail-closed queue=%s",
+                queue,
+            )
+            return MAX_QUEUE_DEPTHS[queue]
+        raise
 
 
 def available_slots(engine: Engine, queue: str, requested: int) -> int:

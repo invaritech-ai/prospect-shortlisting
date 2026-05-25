@@ -6,11 +6,11 @@ import logging
 import random
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import update as sa_update
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col
 
 from app.core.logging import log_event
 from app.models.core import UploadedDomain
@@ -22,7 +22,7 @@ from app.services.fetch_service import (
     is_parked_domain,
     needs_stealth_after_static_and_impersonate,
     resolve_domain,
-    scrape_page_fetch,
+    scrapling_http_fetch_many,
     should_skip_url,
     stealth_fetch_many,
 )
@@ -31,6 +31,7 @@ from app.services.markdown_service import MarkdownService
 from app.services.url_utils import (
     canonical_internal_url,
     clean_text,
+    domain_from_url,
     rewrite_to_working_origin,
 )
 
@@ -38,11 +39,9 @@ logger = logging.getLogger(__name__)
 
 PERMANENT_SCRAPE_ERROR_CODES: frozenset[str] = frozenset({
     "dns_not_resolved",
-    "tls_error",
-    "bot_protection",
     "not_found",
-    "access_denied",
     "parked_domain",
+    "off_domain_redirect",
 })
 
 _PAGE_KINDS = [
@@ -62,6 +61,20 @@ _ORIGIN_RETRY_ERROR_CODES = frozenset({
     FetchErrorCode.FETCH_FAILED,
     FetchErrorCode.TIMEOUT,
 })
+
+_BULK_STEALTH_PAGE_TIMEOUT_SEC = 45.0
+_BULK_STEALTH_MAX_PAGES_PER_DOMAIN = 2
+_BULK_STEALTH_TERMINAL_ERROR_CODES = frozenset({
+    FetchErrorCode.TLS_ERROR,
+})
+_BULK_STEALTH_TERMINAL_MESSAGE_TOKENS = (
+    "err_empty_response",
+    "empty response",
+    "err_connection_closed",
+    "connection closed",
+    "tls",
+    "ssl",
+)
 
 
 def _utcnow() -> datetime:
@@ -105,6 +118,45 @@ def classify_scrape_outcome(fetched_pages: list[dict]) -> tuple[str, str]:
     return ("failed_gracefully", "no_pages_fetched")
 
 
+def _is_bulk_stealth_terminal(fetch: FetchResult) -> bool:
+    if fetch.selector is not None:
+        return False
+    code = fetch.error_code or ""
+    if code in _BULK_STEALTH_TERMINAL_ERROR_CODES:
+        return True
+    msg = (fetch.error_message or "").lower()
+    return any(token in msg for token in _BULK_STEALTH_TERMINAL_MESSAGE_TOKENS)
+
+
+def classify_failure(error_code: str | None) -> tuple[str | None, bool | None]:
+    code = (error_code or "").strip()
+    if not code:
+        return None, None
+    if code in {"dns_not_resolved", "not_found", "parked_domain", "off_domain_redirect"}:
+        return "permanent", False
+    if code in {"access_denied", "bot_protection"}:
+        return "blocked", False
+    if code in {"too_thin", "non_html", "no_pages_fetched", "no_markdown_produced"}:
+        return "no_content", False
+    if code in {"timeout", "rate_limited", "fetch_failed", "tls_error", "parser_error"}:
+        return "transient", True
+    return "unknown", True
+
+
+def _off_domain_redirect_result(fetch: FetchResult, domain: str) -> FetchResult | None:
+    final_domain = domain_from_url(fetch.final_url)
+    if not final_domain or final_domain == domain:
+        return None
+    return FetchResult(
+        final_url=fetch.final_url,
+        status_code=fetch.status_code,
+        selector=None,
+        fetch_mode=fetch.fetch_mode,
+        error_code="off_domain_redirect",
+        error_message=f"Redirected off-domain to {fetch.final_url}",
+    )
+
+
 def _increment_batch_counter(
     session: Session,
     batch_id: UUID,
@@ -137,7 +189,7 @@ class ScrapeService:
     ) -> None:
         """Full single-pass scrape for one ScrapeResult row.
 
-        Optimistic lock: transitions state queued → running via a conditional
+        Optimistic lock: transitions state dispatched → running via a conditional
         UPDATE. If another worker already claimed the row, this exits silently.
         """
         log_event(logger, "scrape_task_start", result_id=str(result_id))
@@ -148,7 +200,7 @@ class ScrapeService:
                 sa_update(ScrapeResult)
                 .where(
                     col(ScrapeResult.id) == result_id,
-                    col(ScrapeResult.state) == "queued",
+                    col(ScrapeResult.state) == "dispatched",
                 )
                 .values(state="running", updated_at=_utcnow())
                 .returning(ScrapeResult.id)
@@ -177,6 +229,18 @@ class ScrapeService:
 
         js_fallback = bool((scrape_rules or {}).get("js_fallback", True))
         include_sitemap = bool((scrape_rules or {}).get("include_sitemap", True))
+        classifier_prompt_preview = str((scrape_rules or {}).get("classifier_prompt_text", ""))[:500]
+        log_event(
+            logger,
+            "scrape_settings_loaded",
+            result_id=str(result_id),
+            batch_id=str(batch_id) if batch_id else None,
+            domain=domain,
+            include_sitemap=include_sitemap,
+            js_fallback=js_fallback,
+            classifier_prompt_preview=classifier_prompt_preview,
+            settings_snapshot_json=scrape_rules or {},
+        )
 
         # ── DNS check ──────────────────────────────────────────────────────────
         log_event(logger, "scrape_dns_check", result_id=str(result_id), domain=domain)
@@ -197,10 +261,6 @@ class ScrapeService:
             if scrape_rules and scrape_rules.get("classifier_prompt_text") is not None
             else ""
         )
-        requested_page_kinds = (
-            [str(k).strip().lower() for k in (scrape_rules.get("page_kinds") or []) if str(k).strip()]
-            if scrape_rules else []
-        )
 
         from app.jobs._defaults import DEFAULT_CLASSIFY_MODEL
         classify_model = DEFAULT_CLASSIFY_MODEL
@@ -213,7 +273,6 @@ class ScrapeService:
             use_js_fallback=js_fallback,
             classify_model=classify_model,
             classifier_prompt_text=classifier_prompt_text or None,
-            requested_page_kinds=requested_page_kinds or None,
         )
         selected_targets = apply_page_selection_rules(targets=targets, rules=scrape_rules)
         log_event(logger, "scrape_discover_done", result_id=str(result_id), domain=domain,
@@ -239,7 +298,7 @@ class ScrapeService:
             random.shuffle(rest)
             page_plan = ([home_entry] if home_entry else []) + rest
 
-        # ── Fetch pages (static → impersonate → stealth) ───────────────────────
+        # ── Fetch pages (Scrapling HTTP session → stealth) ─────────────────────
         from app.core.config import settings as _settings
         policy = get_default_manager()
         static_results: dict[str, FetchResult] = {}
@@ -247,16 +306,27 @@ class ScrapeService:
         stealth_needed: list[tuple[str, str, int]] = []
         working_origin_url = ""
 
-        for kind, canonical, depth in page_plan:
-            tier_result = await scrape_page_fetch(
-                canonical, domain, job_id=str(result_id), policy=policy,
+        plan_urls = [canonical for _, canonical, _ in page_plan]
+        http_results = await scrapling_http_fetch_many(
+            plan_urls,
+            per_page_timeout_sec=_settings.scrape_static_timeout_sec,
+        )
+
+        for (kind, canonical, depth), tier_result in zip(page_plan, http_results, strict=True):
+            off_domain = _off_domain_redirect_result(tier_result, domain)
+            if off_domain is not None:
+                tier_result = off_domain
+
+            ec = tier_result.error_code or (
+                FetchErrorCode.OK if tier_result.selector else FetchErrorCode.FETCH_FAILED
             )
+            await policy.record_result(domain, ec, tier="scrapling_http")
+
             if tier_result.selector is not None:
                 static_results[canonical] = tier_result
                 if not working_origin_url:
                     working_origin_url = tier_result.final_url
-            elif tier_result.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
-                static_results[canonical] = tier_result
+                await policy.maybe_demote(domain)
             else:
                 retry_url = _retry_url_for_working_origin(
                     canonical=canonical,
@@ -265,23 +335,33 @@ class ScrapeService:
                     error_code=tier_result.error_code,
                 )
                 if retry_url:
-                    retry_result = await scrape_page_fetch(
-                        retry_url, domain, job_id=str(result_id), policy=policy,
+                    retry_batch = await scrapling_http_fetch_many(
+                        [retry_url],
+                        delay_range=(0, 0),
+                        per_page_timeout_sec=_settings.scrape_static_timeout_sec,
                     )
+                    retry_result = retry_batch[0] if retry_batch else tier_result
+                    retry_off_domain = _off_domain_redirect_result(retry_result, domain)
+                    if retry_off_domain is not None:
+                        retry_result = retry_off_domain
                     if retry_result.selector is not None:
                         static_results[canonical] = retry_result
                         if not working_origin_url:
                             working_origin_url = retry_result.final_url
                         continue
                     tier_result = retry_result
-                if needs_stealth_after_static_and_impersonate(tier_result) and js_fallback:
+                if (
+                    needs_stealth_after_static_and_impersonate(tier_result)
+                    and js_fallback
+                    and not _is_bulk_stealth_terminal(tier_result)
+                ):
                     stealth_fallback_results[canonical] = tier_result
                     stealth_needed.append((kind, canonical, depth))
                 else:
                     static_results[canonical] = tier_result
 
         if stealth_needed:
-            stealth_urls = [canonical for _, canonical, _ in stealth_needed]
+            stealth_urls = [canonical for _, canonical, _ in stealth_needed[:_BULK_STEALTH_MAX_PAGES_PER_DOMAIN]]
             if not await policy.mark_escalated(domain):
                 for _, canonical, _ in stealth_needed:
                     static_results[canonical] = stealth_fallback_results[canonical]
@@ -289,7 +369,7 @@ class ScrapeService:
                 batch_stealth = await stealth_fetch_many(
                     stealth_urls,
                     delay_range=(1.5, 3.5),
-                    per_page_timeout_sec=_settings.scrape_stealth_timeout_ms / 1000 + 30,
+                    per_page_timeout_sec=_BULK_STEALTH_PAGE_TIMEOUT_SEC,
                 )
                 for url, result in zip(stealth_urls, batch_stealth, strict=True):
                     ec = result.error_code or (
@@ -299,6 +379,9 @@ class ScrapeService:
                     if result.selector is not None:
                         await policy.maybe_demote(domain)
                     static_results[url] = result
+                for _, canonical, _ in stealth_needed:
+                    if canonical not in static_results:
+                        static_results[canonical] = stealth_fallback_results[canonical]
 
         _RETRY_ERROR_CODES = frozenset({
             FetchErrorCode.FETCH_FAILED,
@@ -315,6 +398,9 @@ class ScrapeService:
                     fetch_mode="none", error_code="fetch_failed",
                     error_message="no_fetch_result",
                 )
+            off_domain_fetch = _off_domain_redirect_result(fetch, domain)
+            if off_domain_fetch is not None:
+                fetch = off_domain_fetch
 
             if (fetch.selector is None
                     and fetch.error_code in _RETRY_ERROR_CODES
@@ -323,7 +409,7 @@ class ScrapeService:
                 await asyncio.sleep(backoff)
                 retry_results = await stealth_fetch_many(
                     [canonical], delay_range=(0, 0),
-                    per_page_timeout_sec=_settings.scrape_stealth_timeout_ms / 1000 + 30,
+                    per_page_timeout_sec=_BULK_STEALTH_PAGE_TIMEOUT_SEC,
                 )
                 if retry_results and retry_results[0].selector is not None:
                     fetch = retry_results[0]
@@ -346,6 +432,7 @@ class ScrapeService:
                     "status_code": fetch.status_code,
                     "fetch_error_code": error_code,
                     "fetch_error_message": fetch.error_message,
+                    "final_url": fetch.final_url,
                 })
                 if kind == "home" and error_code in PERMANENT_SCRAPE_ERROR_CODES:
                     break
@@ -381,6 +468,7 @@ class ScrapeService:
                     "status_code": fetch.status_code,
                     "fetch_error_code": "parked_domain",
                     "fetch_error_message": "Domain is parked or for sale.",
+                    "final_url": page_url,
                 })
                 continue
 
@@ -396,6 +484,7 @@ class ScrapeService:
                 "description": description,
                 "text_len": len(text),
                 "raw_text": text[:40000],
+                "final_url": page_url,
             })
 
         pages_fetched_count = sum(1 for p in fetched_pages if p["success"])
@@ -404,17 +493,16 @@ class ScrapeService:
             failure_codes = [
                 p.get("fetch_error_code", "") for p in fetched_pages if not p["success"]
             ]
-            all_permanent = bool(failure_codes) and all(
-                c in PERMANENT_SCRAPE_ERROR_CODES for c in failure_codes
-            )
             dominant = (
                 max(set(failure_codes), key=failure_codes.count) if failure_codes else "no_pages_fetched"
             )
+            final_url = next((str(p.get("final_url") or p.get("url") or "") for p in fetched_pages if p), None)
             with Session(engine) as session:
                 self._write_failure(
                     session, result_id, domain_row.id, batch_id,
                     error_code=dominant,
                     fetched_pages=fetched_pages,
+                    final_url=final_url,
                 )
             return
 
@@ -472,6 +560,7 @@ class ScrapeService:
             if final_state == "failed":
                 fc = [p.get("fetch_error_code", "") for p in fetched_pages if not p["success"]]
                 dominant_error = max(set(fc), key=fc.count) if fc else "no_markdown_produced"
+            failure_class, retryable = classify_failure(dominant_error)
 
             result_row.state = final_state
             result_row.pages_attempted_count = len(fetched_pages)
@@ -479,6 +568,9 @@ class ScrapeService:
             result_row.markdown_pages_count = markdown_pages
             result_row.scraped_pages_json = scraped_pages_json
             result_row.error_code = dominant_error
+            result_row.failure_class = failure_class
+            result_row.retryable = retryable
+            result_row.final_url = next((str(p.get("final_url") or p.get("url") or "") for p in fetched_pages if p), None)
             result_row.updated_at = now
             session.add(result_row)
 
@@ -512,8 +604,10 @@ class ScrapeService:
         *,
         error_code: str,
         fetched_pages: list[dict],
+        final_url: str | None = None,
     ) -> None:
         now = _utcnow()
+        failure_class, retryable = classify_failure(error_code)
         scraped_pages_json = [
             {
                 "kind": p.get("page_kind", ""),
@@ -530,6 +624,9 @@ class ScrapeService:
         if result_row and result_row.state == "running":
             result_row.state = "failed"
             result_row.error_code = error_code
+            result_row.failure_class = failure_class
+            result_row.retryable = retryable
+            result_row.final_url = final_url
             result_row.pages_attempted_count = len(fetched_pages)
             result_row.scraped_pages_json = scraped_pages_json if scraped_pages_json else None
             result_row.updated_at = now

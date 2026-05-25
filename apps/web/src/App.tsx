@@ -17,6 +17,8 @@ import type {
   CampaignRead,
   IntegrationHealthItem,
   PipelineCostSummaryRead,
+  ScrapeBatchRead,
+  StatsResponse,
   UploadRead,
 } from './lib/types'
 import { buildRouteSearch, parseRouteState, type ActiveView } from './lib/navigation'
@@ -57,6 +59,42 @@ function ComingSoon({ label }: { label: string }) {
   )
 }
 
+function statsFromScrapeBatch(batch: ScrapeBatchRead | null, totalCompanies: number): StatsResponse {
+  const done = batch ? batch.success_count + batch.failed_count : 0
+  const remaining = batch ? Math.max(0, batch.selected_domain_count - done) : 0
+  const queued = batch ? Math.max(0, batch.selected_domain_count - batch.queued_count) : 0
+  const running = batch ? Math.max(0, remaining - queued) : 0
+  return {
+    as_of: new Date().toISOString(),
+    scrape: {
+      total: totalCompanies,
+      succeeded: batch?.success_count ?? 0,
+      failed: batch?.failed_count ?? 0,
+      site_unavailable: 0,
+      running,
+      queued,
+      stuck_count: 0,
+      pct_done: batch && batch.selected_domain_count > 0 ? Math.round((done / batch.selected_domain_count) * 100) : 0,
+      avg_job_sec: null,
+      eta_seconds: batch?.eta_seconds ?? null,
+      eta_at: null,
+    },
+    analysis: {
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      site_unavailable: 0,
+      running: 0,
+      queued: 0,
+      stuck_count: 0,
+      pct_done: 0,
+      avg_job_sec: null,
+      eta_seconds: null,
+      eta_at: null,
+    },
+  }
+}
+
 function App() {
   // ── Navigation ────────────────────────────────────────────────────────────
   const [activeView, setActiveView] = useState<ActiveView>(INITIAL_ROUTE_STATE.view)
@@ -79,6 +117,7 @@ function App() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(INITIAL_ROUTE_STATE.campaignId)
   const [uploads, setUploads] = useState<UploadRead[]>([])
   const [, setIsCampaignSaving] = useState(false)
+  const [activeScrapeBatch, setActiveScrapeBatch] = useState<ScrapeBatchRead | null>(null)
 
   // ── Services health ───────────────────────────────────────────────────────
   const [servicesHealth, setServicesHealth] = useState<IntegrationHealthItem[] | null>(null)
@@ -92,6 +131,11 @@ function App() {
     campaigns.find((c) => c.id === selectedCampaignId)?.name ??
     campaigns[0]?.name ??
     null
+  const activeCampaignCompanyCount =
+    campaigns.find((c) => c.id === selectedCampaignId)?.company_count ?? 0
+  const shellStats = activeView === 's1-scraping'
+    ? statsFromScrapeBatch(activeScrapeBatch, activeCampaignCompanyCount)
+    : null
 
   // ── Load functions ────────────────────────────────────────────────────────
 
@@ -338,7 +382,7 @@ function App() {
         campaigns={campaigns}
         selectedCampaignId={selectedCampaignId}
         onSelectCampaign={setSelectedCampaignId}
-        stats={null}
+        stats={shellStats}
         onOpenPromptLibrary={() => {}}
         authEnabled={AUTH_REQUIRED}
         userDisplayName={authSession?.displayName ?? null}
@@ -398,6 +442,7 @@ function App() {
           <ScrapingView
             campaignId={selectedCampaignId}
             sseUrl={`/v1/campaigns/${selectedCampaignId}/events/stream`}
+            onActiveBatchChange={setActiveScrapeBatch}
           />
         )}
 

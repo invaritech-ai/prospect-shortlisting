@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.services.link_service import apply_page_selection_rules
 
 
-def test_apply_page_selection_rules_allowlist_and_fallback() -> None:
+def test_apply_page_selection_rules_ignores_legacy_page_kind_allowlist() -> None:
     targets = {
         "home": "https://example.com",
         "about": "https://example.com/about",
@@ -17,11 +17,7 @@ def test_apply_page_selection_rules_allowlist_and_fallback() -> None:
         "fallback_priority": ["services", "about"],
     }
 
-    result = apply_page_selection_rules(targets=targets, rules=rules)
-    assert result["home"] == "https://example.com"
-    assert result["contact"] == "https://example.com/contact"
-    assert result["services"] == "https://example.com/services"
-    assert "about" not in result
+    assert apply_page_selection_rules(targets=targets, rules=rules) == targets
 
 
 def test_apply_page_selection_rules_no_rules_returns_targets() -> None:

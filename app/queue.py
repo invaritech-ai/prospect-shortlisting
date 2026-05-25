@@ -7,6 +7,8 @@ Owns the Procrastinate App and its psycopg2 connector. Imported by:
 """
 from __future__ import annotations
 
+import os
+
 from procrastinate import App, PsycopgConnector
 
 from app.core.config import settings
@@ -41,14 +43,24 @@ _connector = PsycopgConnector(
     },
 )
 
+# Keep the default boot path minimal so stage-specific workers can start even
+# while other pipeline modules are being refactored.
+_DEFAULT_IMPORT_PATHS = [
+    "app.jobs.health",
+    "app.jobs.scrape",
+]
+
+# Optional override for full task registration when all modules are healthy.
+# Example:
+#   PS_PROCRASTINATE_IMPORT_PATHS=app.jobs.health,app.jobs.scrape,app.jobs.ai_decision,...
+_import_paths_env = os.environ.get("PS_PROCRASTINATE_IMPORT_PATHS", "").strip()
+_import_paths = (
+    [p.strip() for p in _import_paths_env.split(",") if p.strip()]
+    if _import_paths_env
+    else _DEFAULT_IMPORT_PATHS
+)
+
 app = App(
     connector=_connector,
-    import_paths=[
-        "app.jobs.health",
-        "app.jobs.scrape",
-        "app.jobs.ai_decision",
-        "app.jobs.contact_fetch",
-        "app.jobs.email_reveal",
-        "app.jobs.validation",
-    ],
+    import_paths=_import_paths,
 )

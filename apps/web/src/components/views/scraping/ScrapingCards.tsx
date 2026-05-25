@@ -8,15 +8,26 @@ function relTime(iso: string): string {
   return `${Math.floor(d / 60)}h ago`
 }
 
+function failureLabel(row: DomainRead): string | null {
+  if ((row.scrape_status ?? 'pending') !== 'failed') return null
+  const cls = row.latest_scrape_failure_class
+  if (cls === 'permanent') return 'Permanent'
+  if (cls === 'transient') return 'Transient'
+  if (cls === 'blocked') return 'Blocked'
+  if (cls === 'no_content') return 'No content'
+  return row.latest_scrape_error_code ?? null
+}
+
 interface ScrapingCardsProps {
   rows: DomainRead[]
   selected: Set<string>
   onToggleSelect: (id: string) => void
   onScrapeOne: (d: DomainRead) => void
   onViewContent: (d: DomainRead) => void
+  isScrapeDisabled?: boolean
 }
 
-export function ScrapingCards({ rows, selected, onToggleSelect, onScrapeOne, onViewContent }: ScrapingCardsProps) {
+export function ScrapingCards({ rows, selected, onToggleSelect, onScrapeOne, onViewContent, isScrapeDisabled = false }: ScrapingCardsProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       {rows.map((row) => {
@@ -52,19 +63,31 @@ export function ScrapingCards({ rows, selected, onToggleSelect, onScrapeOne, onV
               ) : status === 'running' || status === 'queued' ? (
                 <span style={{ fontSize: '0.8125rem', color: 'var(--s1)', fontWeight: 500 }}>Scraping…</span>
               ) : status === 'failed' ? (
-                <span style={{ fontSize: '0.8125rem', color: 'var(--oc-fail-text)', fontWeight: 500 }}>Failed</span>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--oc-fail-text)', fontWeight: 500 }}>
+                  {failureLabel(row) ?? 'Failed'}
+                </span>
               ) : (
                 <span style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)' }}>Pending</span>
               )}
               <span style={{ fontSize: '0.75rem', color: 'var(--oc-muted)', marginLeft: 'auto' }}>
-                {relTime(row.created_at)}
+                {relTime(row.latest_scrape_updated_at ?? row.created_at)}
               </span>
               {(status === 'failed' || status === 'pending' || status == null) && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onScrapeOne(row) }}
+                  disabled={isScrapeDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (!isScrapeDisabled) onScrapeOne(row)
+                  }}
                   className="oc-btn oc-btn-secondary oc-btn-xs"
-                  style={{ flexShrink: 0, borderColor: 'var(--s1)', color: 'var(--s1)' }}
+                  style={{
+                    flexShrink: 0,
+                    borderColor: 'var(--s1)',
+                    color: 'var(--s1)',
+                    opacity: isScrapeDisabled ? 0.45 : 1,
+                    cursor: isScrapeDisabled ? 'not-allowed' : 'pointer',
+                  }}
                 >
                   {status === 'failed' ? 'Retry' : 'Scrape'}
                 </button>

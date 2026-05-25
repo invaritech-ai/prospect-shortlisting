@@ -6,11 +6,11 @@ import logging
 from uuid import UUID
 
 from procrastinate import RetryStrategy
+from sqlalchemy import update as sa_update
 from sqlmodel import Session, col, select
 
 from app.db.session import get_engine
 from app.jobs._priority import BULK_USER  # noqa: F401
-from app.models.core import UploadedDomain
 from app.models.scrape import ScrapeBatch, ScrapeResult
 from app.queue import app
 from app.services.queue_guard import available_slots
@@ -104,6 +104,7 @@ async def dispatch_scrape_batch(batch_id: str) -> None:
         )
 
         queued_inc = 0
+        successfully_deferred: list[UUID] = []
         with Session(engine) as session:
             for rid, outcome in zip(result_ids, defer_results):
                 if isinstance(outcome, Exception):
@@ -111,6 +112,17 @@ async def dispatch_scrape_batch(batch_id: str) -> None:
                     # Leave state=queued so next dispatcher loop retries
                 else:
                     queued_inc += 1
+                    successfully_deferred.append(rid)
+
+            if successfully_deferred:
+                session.execute(
+                    sa_update(ScrapeResult)
+                    .where(
+                        col(ScrapeResult.id).in_(successfully_deferred),
+                        col(ScrapeResult.state) == "queued",
+                    )
+                    .values(state="dispatched")
+                )
 
             batch = session.get(ScrapeBatch, batch_uuid)
             if batch:

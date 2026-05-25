@@ -1,34 +1,35 @@
 from __future__ import annotations
 
-from app.services.scrape_prompt_compiler import compile_scrape_prompt
+from app.services.scrape_prompt_compiler import build_scrape_rules_snapshot
 
 
-def test_compiler_extracts_known_page_kinds() -> None:
-    compiled = compile_scrape_prompt("Find pricing, products, and leadership pages first.")
-    assert compiled.page_kinds == ["products", "leadership", "pricing"]
-    assert "Find the best URL for each of these page types:" in compiled.compiled_prompt_text
-    assert "- products" in compiled.compiled_prompt_text
-    assert "- leadership" in compiled.compiled_prompt_text
-    assert "- pricing" in compiled.compiled_prompt_text
-    assert compiled.scrape_rules_structured["classifier_prompt_text"] == compiled.compiled_prompt_text
+def test_snapshot_uses_raw_instruction_text_as_classifier_prompt() -> None:
+    instruction = "Include about/company pages. Exclude blog, legal, careers, and login."
+
+    snapshot = build_scrape_rules_snapshot(
+        instruction_text=instruction,
+        structured_rules=None,
+        default_rules={"include_sitemap": True, "js_fallback": True},
+    )
+
+    assert snapshot["classifier_prompt_text"] == instruction
+    assert snapshot["include_sitemap"] is True
+    assert snapshot["js_fallback"] is True
+    assert "page_kinds" not in snapshot
 
 
-def test_compiler_defaults_when_no_keywords_found() -> None:
-    compiled = compile_scrape_prompt("Find the pages that matter most for sales qualification.")
-    assert compiled.page_kinds == [
-        "about",
-        "products",
-        "contact",
-        "team",
-        "leadership",
-        "services",
-        "pricing",
-    ]
-    assert "- home" not in compiled.compiled_prompt_text
+def test_snapshot_strips_legacy_page_kind_rules() -> None:
+    snapshot = build_scrape_rules_snapshot(
+        instruction_text="Use the text.",
+        structured_rules={
+            "page_kinds": ["home", "contact"],
+            "fallback_priority": ["about"],
+            "include_sitemap": False,
+        },
+        default_rules={"include_sitemap": True, "js_fallback": True},
+    )
 
-
-def test_compiler_detects_plural_contacts_keyword() -> None:
-    compiled = compile_scrape_prompt("Find homepage and contacts.")
-    assert compiled.page_kinds == ["home", "contact"]
-    assert "- home" in compiled.compiled_prompt_text
-    assert "- contact" in compiled.compiled_prompt_text
+    assert snapshot["classifier_prompt_text"] == "Use the text."
+    assert snapshot["include_sitemap"] is False
+    assert "page_kinds" not in snapshot
+    assert "fallback_priority" not in snapshot

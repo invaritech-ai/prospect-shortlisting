@@ -41,6 +41,12 @@ class DomainRead(UTCReadModel):
     fetch_status: str | None
     verify_status: str | None
     created_at: datetime
+    latest_scrape_updated_at: datetime | None = None
+    latest_scrape_result_id: UUID | None = None
+    latest_scrape_error_code: str | None = None
+    latest_scrape_failure_class: str | None = None
+    latest_scrape_retryable: bool | None = None
+    latest_scrape_final_url: str | None = None
 
 
 class DomainList(BaseModel):

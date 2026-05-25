@@ -31,6 +31,12 @@ export type DomainRead = {
   fetch_status: string | null
   verify_status: string | null
   created_at: string
+  latest_scrape_updated_at: string | null
+  latest_scrape_result_id: string | null
+  latest_scrape_error_code: string | null
+  latest_scrape_failure_class: string | null
+  latest_scrape_retryable: boolean | null
+  latest_scrape_final_url: string | null
 }
 
 export type DomainList = {
@@ -201,7 +207,6 @@ export type ScrapeJobRead = {
   updated_at: string
   started_at: string | null
   finished_at: string | null
-  selected_page_kinds?: ScrapePageKind[] | null
   effective_page_plan_count?: number | null
   effective_page_plan_json?: Array<Record<string, string>> | null
 }
@@ -215,22 +220,10 @@ export type ScrapeJobCreate = {
   scrape_rules?: ScrapeRules
 }
 
-export type ScrapePageKind =
-  | 'home'
-  | 'about'
-  | 'products'
-  | 'contact'
-  | 'team'
-  | 'leadership'
-  | 'services'
-  | 'pricing'
-
 export type ScrapeRules = {
-  page_kinds?: ScrapePageKind[]
   classifier_prompt_text?: string | null
   fallback_enabled?: boolean
   fallback_limit?: number
-  fallback_priority?: ScrapePageKind[]
   js_fallback?: boolean | null
   include_sitemap?: boolean | null
 }
@@ -532,6 +525,18 @@ export type ScrapeSettingsRead = {
   created_at: string
 }
 
+export type ScrapeSettingsList = {
+  total: number
+  items: ScrapeSettingsRead[]
+}
+
+export type ScrapeSettingsUpdate = {
+  name?: string | null
+  instruction_text?: string | null
+  structured_rules_json?: Record<string, unknown> | null
+  is_active?: boolean | null
+}
+
 export type ScrapeResultRead = {
   id: string
   campaign_id: string
@@ -551,6 +556,9 @@ export type ScrapeResultRead = {
     markdown?: string
   }> | null
   error_code: string | null
+  failure_class: string | null
+  retryable: boolean | null
+  final_url: string | null
   created_at: string
   updated_at: string
 }

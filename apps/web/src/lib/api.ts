@@ -16,7 +16,9 @@ import type {
   ScrapeBatchList,
   ScrapeBatchRead,
   ScrapeResultRead,
+  ScrapeSettingsList,
   ScrapeSettingsRead,
+  ScrapeSettingsUpdate,
   UploadCreateResult,
   UploadList,
 } from './types'
@@ -214,12 +216,28 @@ export async function getScrapeSettings(campaignId: string): Promise<ScrapeSetti
   return request<ScrapeSettingsRead | null>(`/v1/scrape-settings?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
+export async function listScrapeSettings(campaignId: string, limit = 20): Promise<ScrapeSettingsList> {
+  return request<ScrapeSettingsList>(`/v1/scrape-settings/history?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`)
+}
+
 export async function saveScrapeSettings(campaignId: string, instructionText: string): Promise<ScrapeSettingsRead> {
   return request<ScrapeSettingsRead>('/v1/scrape-settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ campaign_id: campaignId, instruction_text: instructionText }),
   })
+}
+
+export async function updateScrapeSettings(settingsId: string, payload: ScrapeSettingsUpdate): Promise<ScrapeSettingsRead> {
+  return request<ScrapeSettingsRead>(`/v1/scrape-settings/${encodeURIComponent(settingsId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteScrapeSettings(settingsId: string): Promise<void> {
+  await request<void>(`/v1/scrape-settings/${encodeURIComponent(settingsId)}`, { method: 'DELETE' })
 }
 
 // ── S1 Scrape Results (content drawer) ───────────────────────────────────────

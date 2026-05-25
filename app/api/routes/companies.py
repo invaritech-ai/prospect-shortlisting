@@ -3,13 +3,14 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.api.schemas.scrape import LetterCountsResponse
 from app.api.schemas.upload import DomainList, DomainRead
 from app.db.session import get_session
 from app.models.core import UploadedDomain
+from app.models.scrape import ScrapeResult
 
 router = APIRouter(prefix="/v1", tags=["domains"])
 
@@ -68,12 +69,63 @@ def list_domains(
     items = session.exec(
         base_q.order_by(col(UploadedDomain.domain).asc()).limit(limit).offset(offset)
     ).all()
+    domain_ids = [d.id for d in items]
+    latest_by_domain: dict[UUID, tuple[UUID, str | None, object, str | None, bool | None, str | None]] = {}
+    if domain_ids:
+        latest_ts_sq = (
+            select(
+                col(ScrapeResult.domain_id).label("domain_id"),
+                func.max(col(ScrapeResult.updated_at)).label("latest_updated_at"),
+            )
+            .where(
+                col(ScrapeResult.campaign_id) == campaign_id,
+                col(ScrapeResult.domain_id).in_(domain_ids),
+            )
+            .group_by(col(ScrapeResult.domain_id))
+            .subquery()
+        )
+        latest_rows = session.exec(
+            select(
+                col(ScrapeResult.domain_id),
+                col(ScrapeResult.id),
+                col(ScrapeResult.error_code),
+                col(ScrapeResult.updated_at),
+                col(ScrapeResult.failure_class),
+                col(ScrapeResult.retryable),
+                col(ScrapeResult.final_url),
+            )
+            .join(
+                latest_ts_sq,
+                (
+                    col(ScrapeResult.domain_id) == latest_ts_sq.c.domain_id
+                ) & (
+                    col(ScrapeResult.updated_at) == latest_ts_sq.c.latest_updated_at
+                ),
+            )
+        ).all()
+        latest_by_domain = {
+            row[0]: (row[1], row[2], row[3], row[4], row[5], row[6])
+            for row in latest_rows
+        }
 
     return DomainList(
         total=total,
         limit=limit,
         offset=offset,
-        items=[DomainRead.model_validate(d, from_attributes=True) for d in items],
+        items=[
+            DomainRead.model_validate(
+                {
+                    **d.model_dump(),
+                    "latest_scrape_result_id": latest_by_domain.get(d.id, (None, None, None, None, None, None))[0],
+                    "latest_scrape_error_code": latest_by_domain.get(d.id, (None, None, None, None, None, None))[1],
+                    "latest_scrape_updated_at": latest_by_domain.get(d.id, (None, None, None, None, None, None))[2],
+                    "latest_scrape_failure_class": latest_by_domain.get(d.id, (None, None, None, None, None, None))[3],
+                    "latest_scrape_retryable": latest_by_domain.get(d.id, (None, None, None, None, None, None))[4],
+                    "latest_scrape_final_url": latest_by_domain.get(d.id, (None, None, None, None, None, None))[5],
+                }
+            )
+            for d in items
+        ],
     )
 
 

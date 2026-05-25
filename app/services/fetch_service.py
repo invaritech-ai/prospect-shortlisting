@@ -1,18 +1,13 @@
-"""HTTP fetch utilities: static fetch, stealth fetch, DNS resolution, HTML detection.
+"""HTTP fetch utilities: Scrapling HTTP, stealth fetch, DNS, HTML detection.
 
-Fetch strategy (three tiers):
-  1. Static (httpx)           — fast GET, no JS. Works for sites without bot protection.
-  2. Impersonating (curl_cffi) — real-browser TLS + HTTP/2 fingerprint, still no JS.
-                                 Handles servers that reject plain httpx (e.g. Cloudflare
-                                 shields, stricter WAFs) at essentially static cost.
-  3. Stealth (StealthyFetcher) — Playwright + Cloudflare bypass. For JS-heavy /
-                                 protected pages. Reserved for policy-driven escalation.
+Current scrape strategy:
+  1. Scrapling HTTP session   — fast browser-grade TLS/headers, no JS.
+  2. Stealth (StealthyFetcher) — local headless Chromium for JS-heavy/protected pages.
 
 Stealth mode uses local headless Chromium (Scrapling). No remote Browserless CDP.
 
-For multi-page fetches on the same domain, use `stealth_fetch_many()` which keeps
-a single browser session alive across all pages (faster + looks more natural to
-bot detectors).
+For multi-page fetches on the same domain, use `scrapling_http_fetch_many()` first
+and `stealth_fetch_many()` only when escalation is justified.
 """
 from __future__ import annotations
 
@@ -27,10 +22,11 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 from scrapling import Selector, StealthyFetcher
 from scrapling.engines._browsers._stealth import AsyncStealthySession
+from scrapling.engines.static import FetcherSession
 
 from app.core.config import settings
 from app.core.logging import log_event
-from app.services.url_utils import absolute_url, canonical_internal_url, clean_text, domain_from_url
+from app.services.url_utils import absolute_url, canonical_internal_url, clean_text
 
 
 # ── Canonical fetch error codes ─────────────────────────────────────────────
@@ -269,11 +265,6 @@ def discover_internal_links(selector: Selector, base_url: str, domain: str) -> l
         seen.add(canonical)
         links.append(canonical)
     return links
-
-
-def _selector_text(selector: object) -> str:
-    return clean_text(str(getattr(selector, "get_all_text", lambda **_: "")
-                         (separator=" ") if callable(getattr(selector, "get_all_text", None)) else ""))
 
 
 # ── Static fetch (httpx) ─────────────────────────────────────────────────────
@@ -795,6 +786,139 @@ async def stealth_fetch_many(
     return results
 
 
+async def scrapling_http_fetch_many(
+    urls: list[str],
+    *,
+    delay_range: tuple[float, float] = (0.2, 0.8),
+    per_page_timeout_sec: float | None = None,
+) -> list[FetchResult]:
+    """Fetch multiple pages through one Scrapling HTTP session.
+
+    This is the cheap default tier: browser-grade TLS/headers via Scrapling,
+    no JS engine, and one session reused for all pages on the domain.
+    """
+    if not urls:
+        return []
+
+    timeout_sec = per_page_timeout_sec or settings.scrape_static_timeout_sec
+    session_kwargs: dict = {
+        "impersonate": "chrome",
+        "timeout": timeout_sec,
+        "retries": 1,
+        "retry_delay": 0,
+        "follow_redirects": True,
+        "stealthy_headers": True,
+        "selector_config": {},
+    }
+    proxy_url = settings.scrape_proxy_url.strip()
+    if proxy_url:
+        session_kwargs["proxy"] = proxy_url
+
+    results: list[FetchResult] = []
+    try:
+        async with FetcherSession(**session_kwargs) as session:
+            for i, url in enumerate(urls):
+                if i > 0:
+                    await asyncio.sleep(random.uniform(*delay_range))
+                try:
+                    response = await asyncio.wait_for(
+                        session.get(url),
+                        timeout=timeout_sec + 2,
+                    )
+                    status = int(getattr(response, "status", 0) or 0)
+                    final_url = str(getattr(response, "url", url) or url)
+                    if status >= 400:
+                        results.append(FetchResult(
+                            final_url=final_url,
+                            status_code=status,
+                            selector=None,
+                            fetch_mode="scrapling_http",
+                            error_code=classify_http_status(status),
+                            error_message=f"HTTP {status}",
+                        ))
+                        continue
+                    if not is_html_selector_response(response):
+                        results.append(FetchResult(
+                            final_url=final_url,
+                            status_code=status,
+                            selector=None,
+                            fetch_mode="scrapling_http",
+                            error_code=FetchErrorCode.NON_HTML,
+                            error_message="non_html",
+                        ))
+                        continue
+                    text = clean_text(str(response.get_all_text(separator=" ")))
+                    if is_bot_wall(text):
+                        results.append(FetchResult(
+                            final_url=final_url,
+                            status_code=status,
+                            selector=None,
+                            fetch_mode="scrapling_http",
+                            error_code=FetchErrorCode.BOT_PROTECTION,
+                            error_message="bot_wall",
+                        ))
+                        continue
+                    if is_parked_domain(text):
+                        results.append(FetchResult(
+                            final_url=final_url,
+                            status_code=status,
+                            selector=None,
+                            fetch_mode="scrapling_http",
+                            error_code=FetchErrorCode.PARKED_DOMAIN,
+                            error_message="parked_domain",
+                        ))
+                        continue
+                    if len(text) < _MIN_TEXT_LEN:
+                        results.append(FetchResult(
+                            final_url=final_url,
+                            status_code=status,
+                            selector=None,
+                            fetch_mode="scrapling_http",
+                            error_code=FetchErrorCode.TOO_THIN,
+                            error_message="too_thin",
+                        ))
+                        continue
+                    results.append(FetchResult(
+                        final_url=final_url,
+                        status_code=status,
+                        selector=response,
+                        fetch_mode="scrapling_http",
+                        error_code=FetchErrorCode.OK,
+                        error_message="",
+                    ))
+                except asyncio.TimeoutError:
+                    results.append(FetchResult(
+                        final_url=url,
+                        status_code=0,
+                        selector=None,
+                        fetch_mode="scrapling_http",
+                        error_code=FetchErrorCode.TIMEOUT,
+                        error_message="scrapling_http_timeout",
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    results.append(FetchResult(
+                        final_url=url,
+                        status_code=0,
+                        selector=None,
+                        fetch_mode="scrapling_http",
+                        error_code=classify_fetch_error(str(exc)),
+                        error_message=str(exc)[:500],
+                    ))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("scrapling_http_session_start_error error=%.200s", str(exc))
+        for url in urls[len(results):]:
+            results.append(FetchResult(
+                final_url=url,
+                status_code=0,
+                selector=None,
+                fetch_mode="scrapling_http",
+                error_code=classify_fetch_error(str(exc)),
+                error_message=str(exc)[:500],
+            ))
+
+    return results
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -909,33 +1033,23 @@ async def scrape_page_fetch(
 
 
 async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str = "") -> FetchResult:
-    """Fetch a single URL: static → impersonate → optional stealth (discovery / misc)."""
+    """Fetch a single URL: Scrapling HTTP session → optional stealth (discovery / misc)."""
     del classify_model  # reserved for future routing hints
-    static_result = await _static_fetch(url, timeout_sec=settings.scrape_static_timeout_sec)
-    if static_result.selector is not None:
-        return static_result
-
-    if static_result.error_code == FetchErrorCode.TLS_ERROR:
-        recovered = await _recover_https_tls_error(url, use_js=use_js)
-        if recovered is not None:
-            return recovered
-        static_result = recovered or static_result
-
-    if static_result.selector is not None:
-        return static_result
-
-    if static_result.error_code == FetchErrorCode.DNS_NOT_RESOLVED:
-        return static_result
-
-    last = static_result
-    if should_try_impersonate_after_static(static_result):
-        dom = domain_from_url(url)
-        imp = await _impersonate_fetch(
-            url, domain=dom, timeout_sec=settings.scrape_impersonate_timeout_sec,
-        )
-        last = imp
-        if imp.selector is not None:
-            return imp
+    http_results = await scrapling_http_fetch_many(
+        [url],
+        delay_range=(0, 0),
+        per_page_timeout_sec=settings.scrape_static_timeout_sec,
+    )
+    last = http_results[0] if http_results else FetchResult(
+        final_url=url,
+        status_code=0,
+        selector=None,
+        fetch_mode="scrapling_http",
+        error_code=FetchErrorCode.FETCH_FAILED,
+        error_message="scrapling_http_no_result",
+    )
+    if last.selector is not None:
+        return last
 
     if not needs_stealth_after_static_and_impersonate(last):
         return last
@@ -950,5 +1064,3 @@ async def fetch_with_fallback(url: str, use_js: bool = True, classify_model: str
     )
     response = await _stealth_fetch(url, timeout_sec)
     return _validate_stealth_response(url, response)
-
-

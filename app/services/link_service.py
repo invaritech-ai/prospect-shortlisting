@@ -8,9 +8,12 @@ import re
 
 from app.services.fetch_service import fetch_with_fallback, should_skip_url
 from app.services.llm_client import LLMClient
+from app.services.url_utils import canonical_internal_url, clean_text
+
+
 def get_redis():
     return None
-from app.services.url_utils import canonical_internal_url, clean_text
+
 
 _LINK_CACHE_TTL = 86400  # 24 hours
 
@@ -18,7 +21,6 @@ _LINK_CACHE_TTL = 86400  # 24 hours
 _classify_llm = LLMClient(purpose="classify_links", max_retries=2, default_timeout=60)
 
 _PAGE_KIND_KEYS = ("about", "products", "contact", "team", "leadership", "services", "pricing")
-_PAGE_KIND_WITH_HOME = ("home",) + _PAGE_KIND_KEYS
 _PAGE_KIND_DESCRIPTIONS: dict[str, str] = {
     "about": "company overview/about-us/who-we-are page (best source for canonical company name, founded year, HQ)",
     "products": "products/services/solutions/catalog/linecard page",
@@ -30,9 +32,9 @@ _PAGE_KIND_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _build_default_classifier_prompt(page_kinds: list[str]) -> str:
+def _build_default_classifier_prompt() -> str:
     lines = ["Find the best URL for each of these page types:"]
-    for kind in page_kinds:
+    for kind in _PAGE_KIND_KEYS:
         description = _PAGE_KIND_DESCRIPTIONS.get(kind)
         if description:
             lines.append(f"- {kind}: {description}")
@@ -46,7 +48,6 @@ def classify_links_with_llm(
     candidates: list[str],
     model: str,
     classifier_prompt_text: str | None = None,
-    requested_page_kinds: list[str] | None = None,
 ) -> dict[str, str]:
     """Ask an LLM to pick the best URL for each page kind from *candidates*.
 
@@ -58,14 +59,7 @@ def classify_links_with_llm(
         return {}
 
     links_block = "\n".join(f"- {url}" for url in candidates[:200])
-    requested = [
-        kind
-        for kind in (requested_page_kinds or list(_PAGE_KIND_KEYS))
-        if kind in _PAGE_KIND_KEYS
-    ]
-    if not requested:
-        requested = list(_PAGE_KIND_KEYS)
-    classifier_prompt = (classifier_prompt_text or "").strip() or _build_default_classifier_prompt(requested)
+    classifier_prompt = (classifier_prompt_text or "").strip() or _build_default_classifier_prompt()
 
     # Check Redis cache — key is based on domain + sorted candidate fingerprint
     redis = get_redis()
@@ -76,7 +70,7 @@ def classify_links_with_llm(
                 (
                     domain
                     + "\n"
-                    + ",".join(requested)
+                    + ",".join(_PAGE_KIND_KEYS)
                     + "\n"
                     + classifier_prompt
                     + "\n"
@@ -95,8 +89,9 @@ def classify_links_with_llm(
             {
                 "role": "system",
                 "content": (
-                    "Classify links for one company website. "
-                    "Return strict JSON with the best URL for each page type, or empty string if not found."
+                    "Classify links for one company website. Use the operator instructions as the URL "
+                    "selection policy. Return strict JSON with the best URL for each fixed internal key, "
+                    "or an empty string when the instructions exclude that kind or no good match exists."
                 ),
             },
             {
@@ -105,8 +100,8 @@ def classify_links_with_llm(
                     f"Domain: {domain}\n"
                     f"{classifier_prompt}\n\n"
                     f"Links:\n{links_block}\n\n"
-                    "Return JSON with these keys only: "
-                    + json.dumps({k: "" for k in requested})
+                    "Return JSON with these fixed internal keys only: "
+                    + json.dumps({k: "" for k in _PAGE_KIND_KEYS})
                 ),
             },
         ],
@@ -117,7 +112,7 @@ def classify_links_with_llm(
     try:
         parsed = json.loads(content) if content else {}
         result = {k: "" for k in _PAGE_KIND_KEYS}
-        for key in requested:
+        for key in _PAGE_KIND_KEYS:
             result[key] = str(parsed.get(key, "") or "").strip()
     except Exception:  # noqa: BLE001
         return {}
@@ -164,7 +159,6 @@ async def discover_focus_targets(
     use_js_fallback: bool,
     classify_model: str,
     classifier_prompt_text: str | None = None,
-    requested_page_kinds: list[str] | None = None,
 ) -> dict[str, str]:
     """Return a mapping of page_kind → URL for pages worth scraping.
 
@@ -206,7 +200,6 @@ async def discover_focus_targets(
         candidates=deduped,
         model=classify_model,
         classifier_prompt_text=classifier_prompt_text,
-        requested_page_kinds=requested_page_kinds,
     )
 
     result: dict[str, str] = {"home": home}
@@ -225,42 +218,5 @@ def apply_page_selection_rules(
     targets: dict[str, str],
     rules: dict | None,
 ) -> dict[str, str]:
-    """Apply optional page-kind allowlist and fallback rules to discovered targets."""
-    if not rules:
-        return targets
-
-    requested_kinds = [str(k).strip().lower() for k in (rules.get("page_kinds") or []) if str(k).strip()]
-    requested_kinds = [k for k in requested_kinds if k in _PAGE_KIND_WITH_HOME]
-    if not requested_kinds:
-        return targets
-
-    filtered: dict[str, str] = {kind: targets.get(kind, "") for kind in requested_kinds}
-    if "home" not in filtered:
-        filtered["home"] = targets.get("home", "")
-
-    if not bool(rules.get("fallback_enabled", True)):
-        return filtered
-
-    fallback_limit = int(rules.get("fallback_limit", 1) or 0)
-    if fallback_limit <= 0:
-        return filtered
-
-    priority_raw = rules.get("fallback_priority") or []
-    priority = [str(k).strip().lower() for k in priority_raw if str(k).strip()]
-    priority = [k for k in priority if k in _PAGE_KIND_WITH_HOME]
-    if not priority:
-        priority = list(_PAGE_KIND_WITH_HOME)
-
-    added = 0
-    for kind in priority:
-        if kind in filtered:
-            continue
-        value = targets.get(kind, "")
-        if not value:
-            continue
-        filtered[kind] = value
-        added += 1
-        if added >= fallback_limit:
-            break
-
-    return filtered
+    """Legacy hook retained for call-site stability; URL selection is LLM-driven."""
+    return targets
