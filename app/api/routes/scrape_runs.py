@@ -244,4 +244,4 @@ def get_scrape_result_for_domain(
     ).first()
     if result is None:
         return None
-    return ScrapeResultRead.model_validate(result)
+    return ScrapeResultRead.model_validate(result, from_attributes=True)
