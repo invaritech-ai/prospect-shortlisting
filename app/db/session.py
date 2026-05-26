@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from collections.abc import Iterator
 
 from sqlalchemy.pool import NullPool
@@ -53,13 +54,20 @@ engine = create_engine(
     **_pool_kwargs,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def get_engine():  # type: ignore[return]
     return engine
 
 
 def init_db() -> None:
-    SQLModel.metadata.create_all(engine)
+    # Postgres environments are migrated via Alembic; avoid reflective
+    # create_all checks on startup (slow + brittle on remote links).
+    if _is_sqlite:
+        SQLModel.metadata.create_all(engine)
+        return
+    logger.info("init_db: skipping SQLModel.create_all for non-SQLite database")
 
 
 def get_session() -> Iterator[Session]:
