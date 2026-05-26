@@ -19,6 +19,8 @@ interface SidebarProps {
   onToggleCollapsed: () => void
   companyCounts?: CompanyCounts | null
   stats?: StatsResponse | null
+  scrapeRemainingCount?: number | null
+  scrapeIsLive?: boolean
 }
 
 export function Sidebar({
@@ -28,6 +30,8 @@ export function Sidebar({
   collapsed, onToggleCollapsed,
   companyCounts: rawCounts,
   stats: rawStats,
+  scrapeRemainingCount,
+  scrapeIsLive,
 }: SidebarProps) {
   const campaigns = rawCampaigns
   const counts    = rawCounts ?? MOCK_COMPANY_COUNTS
@@ -36,14 +40,14 @@ export function Sidebar({
   const selectedId = selectedCampaignId ?? (campaigns[0]?.id ?? null)
 
   const stageCounts = {
-    s1: counts.uploaded,
+    s1: scrapeRemainingCount ?? counts.uploaded,
     s2: counts.unknown,
     s3: counts.contact_ready,
     s5: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),
   }
 
   const stageLive = {
-    s1: stats.scrape.running > 0,
+    s1: scrapeIsLive ?? (stats.scrape.running > 0 || stats.scrape.queued > 0),
     s2: (stats.analysis?.running ?? 0) > 0,
     s3: (stats.contact_fetch?.running ?? 0) > 0,
     s5: (stats.validation?.running ?? 0) > 0,

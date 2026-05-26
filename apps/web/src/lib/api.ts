@@ -4,6 +4,7 @@ import type {
   CampaignRead,
   DomainList,
   DomainLetterCounts,
+  DomainScrapeCounts,
   IntegrationHealthItem,
   IntegrationProviderId,
   IntegrationProviderStatus,
@@ -15,6 +16,7 @@ import type {
   ScrapeBatchCreate,
   ScrapeBatchList,
   ScrapeBatchRead,
+  ScrapeJobStatusRead,
   ScrapeResultRead,
   ScrapeSettingsList,
   ScrapeSettingsRead,
@@ -188,10 +190,22 @@ export async function getDomainLetterCounts(
   return request<DomainLetterCounts>(`/v1/domains/letter-counts?${params.toString()}`)
 }
 
+export async function getDomainScrapeCounts(campaignId: string): Promise<DomainScrapeCounts> {
+  return request<DomainScrapeCounts>(`/v1/domains/scrape-counts?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
 // ── S1 Scrape Batches ─────────────────────────────────────────────────────────
 
 export async function createScrapeBatch(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
   return request<ScrapeBatchRead>('/v1/scrape-batches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function createScrapeJob(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
+  return request<ScrapeBatchRead>('/v1/scrape-jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -208,6 +222,10 @@ export async function getActiveBatch(campaignId: string): Promise<ScrapeBatchRea
 
 export async function getScrapeBatch(batchId: string): Promise<ScrapeBatchRead> {
   return request<ScrapeBatchRead>(`/v1/scrape-batches/${batchId}`)
+}
+
+export async function getScrapeJobStatus(batchId: string): Promise<ScrapeJobStatusRead> {
+  return request<ScrapeJobStatusRead>(`/v1/scrape-jobs/${encodeURIComponent(batchId)}/status`)
 }
 
 // ── S1 Scrape Settings ────────────────────────────────────────────────────────

@@ -189,24 +189,36 @@ class ScrapeService:
     ) -> None:
         """Full single-pass scrape for one ScrapeResult row.
 
-        Optimistic lock: transitions state dispatched → running via a conditional
-        UPDATE. If another worker already claimed the row, this exits silently.
+        Idempotent claim: terminal rows are skipped, non-terminal rows are
+        claimed by conditional UPDATE. This allows safe replay when a worker
+        dies mid-task and Procrastinate redelivers the same result id.
         """
         log_event(logger, "scrape_task_start", result_id=str(result_id))
 
         # ── Claim ──────────────────────────────────────────────────────────────
         with Session(engine) as session:
+            existing = session.get(ScrapeResult, result_id)
+            if existing is None:
+                return
+            if existing.state == "succeeded":
+                log_event(logger, "scrape_skipped_terminal_success", result_id=str(result_id))
+                return
+            if existing.state == "failed" and existing.retryable is False:
+                log_event(logger, "scrape_skipped_terminal_failure", result_id=str(result_id))
+                return
+
             updated = session.execute(
                 sa_update(ScrapeResult)
                 .where(
                     col(ScrapeResult.id) == result_id,
-                    col(ScrapeResult.state) == "dispatched",
+                    col(ScrapeResult.state).in_(["queued", "running", "dispatched"]),
                 )
                 .values(state="running", updated_at=_utcnow())
                 .returning(ScrapeResult.id)
             )
+            claimed = updated.first()
             session.commit()
-            if not updated.first():
+            if not claimed:
                 log_event(logger, "scrape_skipped_already_claimed", result_id=str(result_id))
                 return
 

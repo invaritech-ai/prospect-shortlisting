@@ -50,6 +50,8 @@ interface BottomNavProps {
   onOpenPromptLibrary: () => void
   companyCounts?: CompanyCounts | null
   stats?: StatsResponse | null
+  scrapeRemainingCount?: number | null
+  scrapeIsLive?: boolean
 }
 
 interface TabProps {
@@ -82,6 +84,8 @@ export function BottomNav({
   activeView, setActiveView,
   companyCounts: rawCounts,
   stats: rawStats,
+  scrapeRemainingCount,
+  scrapeIsLive,
 }: BottomNavProps) {
   const counts = rawCounts ?? MOCK_COMPANY_COUNTS
   const stats  = rawStats  ?? MOCK_STATS
@@ -99,7 +103,7 @@ export function BottomNav({
 
   // Pipeline items get live counts + dots from mock/real data
   const pipelineItems: SheetItem[] = [
-    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: counts.uploaded,       isLive: stats.scrape.running > 0 },
+    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: scrapeRemainingCount ?? counts.uploaded, isLive: scrapeIsLive ?? (stats.scrape.running > 0 || stats.scrape.queued > 0) },
     { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: counts.unknown,        isLive: (stats.analysis?.running ?? 0) > 0 },
     { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: counts.contact_ready,  isLive: (stats.contact_fetch?.running ?? 0) > 0 },
     { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)',

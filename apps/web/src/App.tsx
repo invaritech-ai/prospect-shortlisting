@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   configureApiSession,
@@ -6,6 +6,7 @@ import {
   deleteCampaign,
   getCurrentUser,
   getCampaignCosts,
+  getDomainScrapeCounts,
   getIntegrationsHealth,
   loginWithPassword,
   listCampaigns,
@@ -15,9 +16,11 @@ import {
 } from './lib/api'
 import type {
   CampaignRead,
+  DomainScrapeCounts,
   IntegrationHealthItem,
   PipelineCostSummaryRead,
   ScrapeBatchRead,
+  ScrapeJobStatusRead,
   StatsResponse,
   UploadRead,
 } from './lib/types'
@@ -95,6 +98,48 @@ function statsFromScrapeBatch(batch: ScrapeBatchRead | null, totalCompanies: num
   }
 }
 
+function statsFromScrapeStatus(status: ScrapeJobStatusRead | null, totalCompanies: number): StatsResponse {
+  const running = status ? Math.max(0, status.queued + status.running) : 0
+  return {
+    as_of: new Date().toISOString(),
+    scrape: {
+      total: totalCompanies,
+      succeeded: status?.succeeded ?? 0,
+      failed: status?.failed ?? 0,
+      site_unavailable: 0,
+      running,
+      queued: status?.queue_todo ?? 0,
+      stuck_count: status?.state === 'inconsistent' ? running : 0,
+      pct_done: status && status.selected > 0 ? Math.round((status.terminal / status.selected) * 100) : 0,
+      avg_job_sec: null,
+      eta_seconds: status?.eta_seconds ?? null,
+      eta_at: null,
+    },
+    analysis: {
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      site_unavailable: 0,
+      running: 0,
+      queued: 0,
+      stuck_count: 0,
+      pct_done: 0,
+      avg_job_sec: null,
+      eta_seconds: null,
+      eta_at: null,
+    },
+  }
+}
+
+function isScrapeBatchLive(batch: ScrapeBatchRead | null): boolean {
+  return Boolean(batch && !['completed', 'failed', 'cancelled'].includes(batch.state))
+}
+
+function isScrapeStatusLive(status: ScrapeJobStatusRead | null): boolean {
+  if (!status) return false
+  return status.state === 'running' || status.state === 'queued'
+}
+
 function App() {
   // ── Navigation ────────────────────────────────────────────────────────────
   const [activeView, setActiveView] = useState<ActiveView>(INITIAL_ROUTE_STATE.view)
@@ -118,6 +163,9 @@ function App() {
   const [uploads, setUploads] = useState<UploadRead[]>([])
   const [, setIsCampaignSaving] = useState(false)
   const [activeScrapeBatch, setActiveScrapeBatch] = useState<ScrapeBatchRead | null>(null)
+  const [activeScrapeStatus, setActiveScrapeStatus] = useState<ScrapeJobStatusRead | null>(null)
+  const [scrapeCounts, setScrapeCounts] = useState<DomainScrapeCounts | null>(null)
+  const wasScrapeLiveRef = useRef(false)
 
   // ── Services health ───────────────────────────────────────────────────────
   const [servicesHealth, setServicesHealth] = useState<IntegrationHealthItem[] | null>(null)
@@ -134,8 +182,11 @@ function App() {
   const activeCampaignCompanyCount =
     campaigns.find((c) => c.id === selectedCampaignId)?.company_count ?? 0
   const shellStats = activeView === 's1-scraping'
-    ? statsFromScrapeBatch(activeScrapeBatch, activeCampaignCompanyCount)
+    ? (activeScrapeStatus
+      ? statsFromScrapeStatus(activeScrapeStatus, activeCampaignCompanyCount)
+      : statsFromScrapeBatch(activeScrapeBatch, activeCampaignCompanyCount))
     : null
+  const scrapeIsLive = isScrapeStatusLive(activeScrapeStatus) || isScrapeBatchLive(activeScrapeBatch)
 
   // ── Load functions ────────────────────────────────────────────────────────
 
@@ -193,6 +244,18 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authRequestsEnabled])
 
+  const loadScrapeCounts = useCallback(async (campaignId: string | null) => {
+    if (!authRequestsEnabled || !campaignId) {
+      setScrapeCounts(null)
+      return
+    }
+    try {
+      setScrapeCounts(await getDomainScrapeCounts(campaignId))
+    } catch {
+      setScrapeCounts(null)
+    }
+  }, [authRequestsEnabled])
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -235,6 +298,22 @@ function App() {
     setCampaignCostSummary(null)
     void loadCampaignCostSummary(selectedCampaignId)
   }, [selectedCampaignId, loadCampaignCostSummary])
+
+  useEffect(() => {
+    void loadScrapeCounts(selectedCampaignId)
+  }, [selectedCampaignId, loadScrapeCounts])
+
+  useEffect(() => {
+    if (!selectedCampaignId) {
+      wasScrapeLiveRef.current = false
+      return
+    }
+    const isLive = isScrapeStatusLive(activeScrapeStatus) || isScrapeBatchLive(activeScrapeBatch)
+    if (wasScrapeLiveRef.current && !isLive) {
+      void loadScrapeCounts(selectedCampaignId)
+    }
+    wasScrapeLiveRef.current = isLive
+  }, [selectedCampaignId, activeScrapeBatch, activeScrapeStatus, loadScrapeCounts])
 
   useEffect(() => {
     if (!error) return
@@ -297,6 +376,7 @@ function App() {
   const onUploadFromView = async (file: File, campaignId: string): Promise<{ new_count: number; dupe_count: number }> => {
     const result = await uploadFileToCampaign(file, campaignId)
     void loadCampaignData()
+    void loadScrapeCounts(campaignId)
     return { new_count: result.new_count, dupe_count: result.dupe_count }
   }
 
@@ -383,6 +463,8 @@ function App() {
         selectedCampaignId={selectedCampaignId}
         onSelectCampaign={setSelectedCampaignId}
         stats={shellStats}
+        scrapeRemainingCount={scrapeCounts?.remaining_work ?? null}
+        scrapeIsLive={scrapeIsLive}
         onOpenPromptLibrary={() => {}}
         authEnabled={AUTH_REQUIRED}
         userDisplayName={authSession?.displayName ?? null}
@@ -442,7 +524,10 @@ function App() {
           <ScrapingView
             campaignId={selectedCampaignId}
             sseUrl={`/v1/campaigns/${selectedCampaignId}/events/stream`}
-            onActiveBatchChange={setActiveScrapeBatch}
+            onActiveBatchChange={(batch, status) => {
+              setActiveScrapeBatch(batch)
+              setActiveScrapeStatus(status ?? null)
+            }}
           />
         )}
 

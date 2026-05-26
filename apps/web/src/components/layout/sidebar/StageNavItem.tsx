@@ -1,4 +1,5 @@
 import type { ActiveView } from '../../../lib/navigation'
+import { formatCompactCount } from '../../../lib/format'
 import { LiveDot } from '../../ui/LiveDot'
 
 interface StageNavItemProps {
@@ -50,7 +51,7 @@ export function StageNavItem({ view: _view, label, stageColor, Icon, isActive, c
           {isLive && <LiveDot color={stageColor} />}
           {count > 0 && (
             <span className="oc-nav-badge" style={{ backgroundColor: stageColor }}>
-              {count > 999 ? `${Math.floor(count / 1000)}k` : count}
+              {formatCompactCount(count)}
             </span>
           )}
         </span>

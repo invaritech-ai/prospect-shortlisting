@@ -1,4 +1,5 @@
 import type { ActiveView } from '../../../lib/navigation'
+import { formatCompactCount } from '../../../lib/format'
 import { LiveDot } from '../../ui/LiveDot'
 
 export interface SheetItem {
@@ -72,7 +73,7 @@ export function BottomSheet({ items, activeView, onNavigate, onClose }: BottomSh
                     padding: '0.1875rem 0.5rem', borderRadius: '9999px', color: '#fff',
                     backgroundColor: item.stageColor ?? 'var(--oc-accent)',
                   }}>
-                    {item.count > 999 ? `${Math.floor(item.count / 1000)}k` : item.count}
+                    {formatCompactCount(item.count)}
                   </span>
                 )}
               </span>

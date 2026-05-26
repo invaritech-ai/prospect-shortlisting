@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
-import type { DomainRead, ScrapeBatchRead, DomainLetterCounts } from '../../../lib/types'
+import type { DomainRead, ScrapeBatchRead, DomainLetterCounts, ScrapeJobStatusRead } from '../../../lib/types'
 import {
   buildApiUrl,
   getDomainLetterCounts,
-  createScrapeBatch,
+  createScrapeJob,
   getActiveBatch,
+  getScrapeJobStatus,
   listDomains,
 } from '../../../lib/api'
 import { parseApiError }         from '../../../lib/utils'
@@ -17,6 +18,10 @@ import { ScrapingSettingsDrawer } from './ScrapingSettingsDrawer'
 import type { StatusFilter }      from './ScrapingToolbar'
 
 const PAGE_SIZE = 50
+const POLL_STATUS_ACTIVE_MS = 4000
+const POLL_HEAVY_ACTIVE_MS = 10000
+const POLL_STATUS_BG_MS = 20000
+const POLL_HEAVY_BG_MS = 30000
 
 const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
 
@@ -44,7 +49,7 @@ function DomainSkeleton() {
 interface ScrapingViewProps {
   campaignId: string
   sseUrl: string  // /v1/campaigns/{id}/events/stream
-  onActiveBatchChange?: (batch: ScrapeBatchRead | null) => void
+  onActiveBatchChange?: (batch: ScrapeBatchRead | null, status?: ScrapeJobStatusRead | null) => void
 }
 
 export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: ScrapingViewProps) {
@@ -63,6 +68,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
   const [page, setPage]                 = useState(0)
   const [letterCounts, setLetterCounts] = useState<DomainLetterCounts | null>(null)
   const [activeBatch, setActiveBatch]   = useState<ScrapeBatchRead | null>(null)
+  const [activeStatus, setActiveStatus] = useState<ScrapeJobStatusRead | null>(null)
   const [loading, setLoading]           = useState(false)
   const [batchError, setBatchError]     = useState<string | null>(null)
   const [isCreatingBatch, setIsCreatingBatch] = useState(false)
@@ -72,13 +78,26 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
   // ── Drawers ─────────────────────────────────────────────────────────────
   const [viewingDomain, setViewingDomain]   = useState<DomainRead | null>(null)
   const [settingsOpen, setSettingsOpen]     = useState(false)
+  const isVisibleRef = useRef<boolean>(typeof document === 'undefined' ? true : document.visibilityState === 'visible')
+  const statusPollBusyRef = useRef(false)
+  const heavyPollBusyRef = useRef(false)
+  const activeBatchRef = useRef<ScrapeBatchRead | null>(null)
+  const pageRef = useRef(0)
 
   useEffect(() => {
-    onActiveBatchChange?.(activeBatch)
-  }, [activeBatch, onActiveBatchChange])
+    activeBatchRef.current = activeBatch
+  }, [activeBatch])
 
   useEffect(() => {
-    return () => onActiveBatchChange?.(null)
+    pageRef.current = page
+  }, [page])
+
+  useEffect(() => {
+    onActiveBatchChange?.(activeBatch, activeStatus)
+  }, [activeBatch, activeStatus, onActiveBatchChange])
+
+  useEffect(() => {
+    return () => onActiveBatchChange?.(null, null)
   }, [onActiveBatchChange])
 
   // ── Load domain list ──────────────────────────────────────────────────────
@@ -114,11 +133,45 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
   const loadActiveBatch = useCallback(async (): Promise<ScrapeBatchRead | null> => {
     try {
       const batch = await getActiveBatch(campaignId)
-      setActiveBatch(batch)
+      setActiveBatch((prev) => {
+        if (!prev && !batch) return prev
+        if (!prev || !batch) return batch
+        if (
+          prev.id === batch.id &&
+          prev.state === batch.state &&
+          prev.queued_count === batch.queued_count &&
+          prev.success_count === batch.success_count &&
+          prev.failed_count === batch.failed_count &&
+          prev.selected_domain_count === batch.selected_domain_count &&
+          prev.eta_seconds === batch.eta_seconds
+        ) {
+          return prev
+        }
+        return batch
+      })
       return batch
     } catch { /* ignore */ }
     return null
   }, [campaignId])
+
+  const loadActiveStatus = useCallback(async (): Promise<ScrapeJobStatusRead | null> => {
+    if (!activeBatch) {
+      setActiveStatus(null)
+      return null
+    }
+    try {
+      const status = await getScrapeJobStatus(activeBatch.id)
+      setActiveStatus(status)
+      if (['completed', 'failed', 'inconsistent'].includes(status.state)) {
+        setActiveBatch(null)
+        void loadDomains(pageRef.current)
+        void loadLetterCounts()
+      }
+      return status
+    } catch {
+      return null
+    }
+  }, [activeBatch, loadDomains, loadLetterCounts, page])
 
   // Initial load
   useEffect(() => {
@@ -128,38 +181,112 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
     setPage(0)
     setSelectedIds(new Set())
     setFilterSelection(null)
+    setActiveStatus(null)
   }, [loadDomains, loadLetterCounts, loadActiveBatch])
 
-  // ── Polling fallback for active scrape batches ──────────────────────────
+  // ── Visibility tracking ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!isBatchActive && !isCreatingBatch) return
-
-    let cancelled = false
-    const batchTick = async () => {
-      const batch = await loadActiveBatch()
-      if (cancelled) return
-      if (!batch || ['completed', 'failed'].includes(batch.state)) {
-        setActiveBatch(null)
-        void loadDomains(page)
-        void loadLetterCounts()
+    if (typeof document === 'undefined') return
+    const onVisibilityChange = () => {
+      const wasVisible = isVisibleRef.current
+      isVisibleRef.current = document.visibilityState === 'visible'
+      if (!wasVisible && isVisibleRef.current) {
+        void loadActiveBatch()
+        void loadActiveStatus()
+        void Promise.all([loadDomains(pageRef.current), loadLetterCounts()])
       }
     }
-    const dataTick = async () => {
-      await Promise.all([loadDomains(page), loadLetterCounts()])
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [loadActiveBatch, loadActiveStatus, loadDomains, loadLetterCounts])
+
+  // ── Unified polling coordinator for S1 ──────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    let statusTimer: number | null = null
+    let heavyTimer: number | null = null
+
+    const jitterMs = () => 200 + Math.floor(Math.random() * 201)
+    const statusInterval = () => (isVisibleRef.current ? POLL_STATUS_ACTIVE_MS : POLL_STATUS_BG_MS)
+    const heavyInterval = () => (isVisibleRef.current ? POLL_HEAVY_ACTIVE_MS : POLL_HEAVY_BG_MS)
+
+    const scheduleStatus = (delayMs?: number) => {
+      if (cancelled) return
+      statusTimer = window.setTimeout(() => { void runStatusTick() }, delayMs ?? (statusInterval() + jitterMs()))
+    }
+    const scheduleHeavy = (delayMs?: number) => {
+      if (cancelled) return
+      heavyTimer = window.setTimeout(() => { void runHeavyTick() }, delayMs ?? (heavyInterval() + jitterMs()))
     }
 
-    void batchTick()
-    void dataTick()
-    const batchTimer = window.setInterval(() => { void batchTick() }, 2000)
-    const dataTimer = window.setInterval(() => { void dataTick() }, 5000)
+    const runHeavyTick = async () => {
+      if (cancelled) return
+      if (heavyPollBusyRef.current) {
+        scheduleHeavy(heavyInterval())
+        return
+      }
+      if (!isBatchActive && !isCreatingBatch) {
+        scheduleHeavy(heavyInterval())
+        return
+      }
+      heavyPollBusyRef.current = true
+      try {
+        await Promise.all([loadDomains(pageRef.current), loadLetterCounts()])
+      } finally {
+        heavyPollBusyRef.current = false
+        scheduleHeavy()
+      }
+    }
+
+    const runStatusTick = async () => {
+      if (cancelled) return
+      if (statusPollBusyRef.current) {
+        scheduleStatus(statusInterval())
+        return
+      }
+      if (!isBatchActive && !isCreatingBatch) {
+        scheduleStatus(statusInterval())
+        return
+      }
+      statusPollBusyRef.current = true
+      try {
+        const currentBatch = activeBatchRef.current
+        if (currentBatch) {
+          const status = await getScrapeJobStatus(currentBatch.id).catch(() => null)
+          if (status) {
+            setActiveStatus(status)
+            if (['completed', 'failed', 'inconsistent'].includes(status.state)) {
+              setActiveBatch(null)
+              setActiveStatus((prev) => prev ?? status)
+              await Promise.all([loadDomains(pageRef.current), loadLetterCounts()])
+            }
+          }
+          return
+        }
+
+        const discovered = await getActiveBatch(campaignId).catch(() => null)
+        setActiveBatch(discovered)
+        if (!discovered || ['completed', 'failed'].includes(discovered.state)) {
+          setActiveBatch(null)
+          setActiveStatus(null)
+          await Promise.all([loadDomains(pageRef.current), loadLetterCounts()])
+        }
+      } finally {
+        statusPollBusyRef.current = false
+        scheduleStatus()
+      }
+    }
+
+    void runStatusTick()
+    void runHeavyTick()
     return () => {
       cancelled = true
-      window.clearInterval(batchTimer)
-      window.clearInterval(dataTimer)
+      if (statusTimer !== null) window.clearTimeout(statusTimer)
+      if (heavyTimer !== null) window.clearTimeout(heavyTimer)
     }
-  }, [isBatchActive, isCreatingBatch, loadActiveBatch, loadDomains, loadLetterCounts, page])
+  }, [campaignId, isBatchActive, isCreatingBatch, loadDomains, loadLetterCounts])
 
-  // ── SSE — scrape_batch updates ──────────────────────────────────────────
+  // ── SSE nudge — scrape_batch updates ────────────────────────────────────
   const sseRef = useRef<EventSource | null>(null)
   useEffect(() => {
     const es = new EventSource(buildApiUrl(sseUrl))
@@ -183,7 +310,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
           setActiveBatch((prev) => {
             if (['completed', 'failed'].includes(updated.state)) {
               // batch done — reload domain list to reflect new statuses
-              void loadDomains(page)
+              void loadDomains(pageRef.current)
               void loadLetterCounts()
               return null
             }
@@ -193,7 +320,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
       } catch { /* ignore bad payloads */ }
     }
     return () => { es.close(); sseRef.current = null }
-  }, [sseUrl, loadDomains, loadLetterCounts, page])
+  }, [sseUrl, loadDomains, loadLetterCounts])
 
   // ── Pagination ───────────────────────────────────────────────────────────
   const totalPages = Math.ceil(domainTotal / PAGE_SIZE)
@@ -265,8 +392,10 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
         if (ids.length > 0) body.domain_ids = ids
         if (filterSelection && Object.keys(filterSelection).length > 0) body.filter = filterSelection
       }
-      const batch = await createScrapeBatch(body as Parameters<typeof createScrapeBatch>[0])
+      const batch = await createScrapeJob(body as Parameters<typeof createScrapeJob>[0])
       setActiveBatch(batch)
+      const status = await getScrapeJobStatus(batch.id).catch(() => null)
+      setActiveStatus(status)
       clearSelection()
       // Reload domains to reflect queued status
       void loadDomains(page)
@@ -282,9 +411,14 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   const statusCounts = useMemo(() => {
-    // Letter counts give per-letter totals; we need per-status totals
-    // We'll use domainTotal as "all" and derive status counts from letter counts
-    // This is approximate — for exact counts, a separate endpoint could be added
+    if (activeStatus) {
+      return {
+        pending: 0,
+        running: Math.max(0, activeStatus.queued + activeStatus.running),
+        done: activeStatus.terminal,
+        failed: activeStatus.failed,
+      }
+    }
     return {
       pending: 0,
       running: activeBatch
@@ -293,7 +427,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
       done: 0,
       failed: 0,
     }
-  }, [activeBatch])
+  }, [activeBatch, activeStatus])
 
   const scrapeStats = [
     { label: 'total',   value: domainTotal },
@@ -315,7 +449,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
           stageColor="var(--s1)"
           stageBg="var(--s1-bg)"
           stats={scrapeStats}
-          etaSeconds={activeBatch?.eta_seconds ?? null}
+          etaSeconds={activeStatus?.eta_seconds ?? activeBatch?.eta_seconds ?? null}
           onOpenSettings={() => setSettingsOpen(true)}
           settingsLabel="Rules"
           primaryAction={!isBatchActive ? {
@@ -361,12 +495,17 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
             <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--s1)' }}>
               Scraping in progress —{' '}
               <span style={{ fontFamily: 'var(--font-mono)' }}>
-                {activeBatch.success_count + activeBatch.failed_count}
+                {activeStatus?.terminal ?? (activeBatch.success_count + activeBatch.failed_count)}
               </span>
-              {' '}/ {activeBatch.selected_domain_count.toLocaleString()} done
-              {activeBatch.eta_seconds != null && (
+              {' '}/ {(activeStatus?.selected ?? activeBatch.selected_domain_count).toLocaleString()} done
+              {(activeStatus?.eta_seconds ?? activeBatch.eta_seconds) != null && (
                 <span style={{ fontWeight: 400, color: 'var(--oc-muted)' }}>
-                  {' '}· ~{Math.ceil(activeBatch.eta_seconds / 60)}m remaining
+                  {' '}· ~{Math.ceil(((activeStatus?.eta_seconds ?? activeBatch.eta_seconds) ?? 0) / 60)}m remaining
+                </span>
+              )}
+              {activeStatus?.state === 'inconsistent' && (
+                <span style={{ fontWeight: 500, color: 'var(--oc-fail-text)' }}>
+                  {' '}· queue state needs reconciliation
                 </span>
               )}
             </span>

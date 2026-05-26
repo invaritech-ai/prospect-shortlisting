@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+import time
+from logging import getLogger
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -14,15 +16,18 @@ from app.api.schemas.scrape import (
     ScrapeBatchCreate,
     ScrapeBatchList,
     ScrapeBatchRead,
+    ScrapeJobStatusRead,
     ScrapeResultRead,
 )
 from app.db.session import get_engine, get_session
 from app.models.core import UploadedDomain
 from app.models.scrape import ScrapeBatch, ScrapeResult, ScrapeSettings
 from app.services.queue_guard import is_procrastinate_schema_ready
+from app.services.scrape_job_status import build_scrape_job_status
 from app.services.scrape_prompt_compiler import build_scrape_rules_snapshot
 
 router = APIRouter(prefix="/v1", tags=["scrape-batches"])
+logger = getLogger(__name__)
 
 _ACTIVE_STATES = ("queued", "dispatching", "running")
 
@@ -57,6 +62,21 @@ def _batch_read(batch: ScrapeBatch) -> ScrapeBatchRead:
         created_at=batch.created_at,
         finished_at=batch.finished_at,
         eta_seconds=_compute_eta(batch) if batch.state in _ACTIVE_STATES else None,
+    )
+
+
+def _status_to_batch_read(batch: ScrapeBatch, status: ScrapeJobStatusRead) -> ScrapeBatchRead:
+    return ScrapeBatchRead(
+        id=batch.id,
+        campaign_id=batch.campaign_id,
+        state=status.state,
+        selected_domain_count=status.selected,
+        queued_count=status.queued + status.running,
+        success_count=status.succeeded,
+        failed_count=status.failed,
+        created_at=batch.created_at,
+        finished_at=batch.finished_at,
+        eta_seconds=status.eta_seconds,
     )
 
 
@@ -112,12 +132,31 @@ def _resolve_domains(
     return domains
 
 
-@router.post("/scrape-batches", response_model=ScrapeBatchRead, status_code=201)
-async def create_scrape_batch(
+async def _enqueue_scrape_results(result_ids: list[UUID]) -> None:
+    from app.jobs.scrape import scrape_domain
+    for result_id in result_ids:
+        await scrape_domain.defer_async(result_id=str(result_id))
+
+
+def _active_batch_for_campaign(*, session: Session, campaign_id: UUID) -> ScrapeBatch | None:
+    rows = session.exec(
+        select(ScrapeBatch)
+        .where(col(ScrapeBatch.campaign_id) == campaign_id)
+        .order_by(col(ScrapeBatch.created_at).desc())
+        .limit(20)
+    ).all()
+    for batch in rows:
+        status = build_scrape_job_status(session=session, batch_id=batch.id)
+        if status and status.state in {"queued", "running"}:
+            return batch
+    return None
+
+
+async def _create_scrape_job_impl(
+    *,
     body: ScrapeBatchCreate,
-    session: Session = Depends(get_session),
+    session: Session,
 ) -> ScrapeBatchRead:
-    # Queue must be bootstrapped manually in this deployment mode.
     if not is_procrastinate_schema_ready(get_engine()):
         raise HTTPException(
             status_code=503,
@@ -128,25 +167,17 @@ async def create_scrape_batch(
             ),
         )
 
-    # 1. Reject if an active batch already exists for this campaign
-    active = session.exec(
-        select(ScrapeBatch).where(
-            col(ScrapeBatch.campaign_id) == body.campaign_id,
-            col(ScrapeBatch.state).in_(list(_ACTIVE_STATES)),
-        ).limit(1)
-    ).first()
+    active = _active_batch_for_campaign(session=session, campaign_id=body.campaign_id)
     if active:
         raise HTTPException(
             status_code=409,
             detail="A scrape batch is already active for this campaign. Wait for it to finish.",
         )
 
-    # 2. Resolve matching domains
     domains = _resolve_domains(session, body.campaign_id, body)
     if not domains:
         raise HTTPException(status_code=400, detail="No matching domains found.")
 
-    # 3. Load active settings (fall back to baked-in defaults)
     settings_row = session.exec(
         select(ScrapeSettings).where(
             col(ScrapeSettings.campaign_id) == body.campaign_id,
@@ -160,7 +191,6 @@ async def create_scrape_batch(
         default_rules=DEFAULT_STRUCTURED_RULES,
     )
 
-    # 4. Create batch row
     batch = ScrapeBatch(
         campaign_id=body.campaign_id,
         scrape_settings_id=settings_row.id if settings_row else None,
@@ -169,9 +199,8 @@ async def create_scrape_batch(
         selected_domain_count=len(domains),
     )
     session.add(batch)
-    session.flush()  # populate batch.id
+    session.flush()
 
-    # 5. Create one ScrapeResult per domain + mark domain status queued
     results = [
         ScrapeResult(
             campaign_id=body.campaign_id,
@@ -190,11 +219,30 @@ async def create_scrape_batch(
     session.commit()
     session.refresh(batch)
 
-    # 6. Defer dispatcher task
-    from app.jobs.scrape import dispatch_scrape_batch
-    await dispatch_scrape_batch.defer_async(batch_id=str(batch.id))
+    result_ids = [result.id for result in results]
+    await _enqueue_scrape_results(result_ids)
+    batch.queued_count = len(result_ids)
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
 
     return _batch_read(batch)
+
+
+@router.post("/scrape-jobs", response_model=ScrapeBatchRead, status_code=201)
+async def create_scrape_job(
+    body: ScrapeBatchCreate,
+    session: Session = Depends(get_session),
+) -> ScrapeBatchRead:
+    return await _create_scrape_job_impl(body=body, session=session)
+
+
+@router.post("/scrape-batches", response_model=ScrapeBatchRead, status_code=201)
+async def create_scrape_batch(
+    body: ScrapeBatchCreate,
+    session: Session = Depends(get_session),
+) -> ScrapeBatchRead:
+    return await _create_scrape_job_impl(body=body, session=session)
 
 
 @router.get("/scrape-batches", response_model=ScrapeBatchList)
@@ -220,13 +268,54 @@ def get_active_batch(
     campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> ScrapeBatchRead | None:
-    batch = session.exec(
-        select(ScrapeBatch).where(
-            col(ScrapeBatch.campaign_id) == campaign_id,
-            col(ScrapeBatch.state).in_(list(_ACTIVE_STATES)),
-        ).order_by(col(ScrapeBatch.created_at).desc()).limit(1)
-    ).first()
-    return _batch_read(batch) if batch else None
+    started = time.perf_counter()
+    rows = session.exec(
+        select(ScrapeBatch)
+        .where(col(ScrapeBatch.campaign_id) == campaign_id)
+        .order_by(col(ScrapeBatch.created_at).desc())
+        .limit(20)
+    ).all()
+    for batch in rows:
+        status = build_scrape_job_status(session=session, batch_id=batch.id)
+        if status and status.state in {"queued", "running"}:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+            logger.info(
+                "poll_active_batch campaign_id=%s active=true batch_id=%s elapsed_ms=%s",
+                campaign_id,
+                batch.id,
+                elapsed_ms,
+            )
+            return _status_to_batch_read(batch, status)
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "poll_active_batch campaign_id=%s active=false elapsed_ms=%s",
+        campaign_id,
+        elapsed_ms,
+    )
+    return None
+
+
+@router.get("/scrape-jobs/{batch_id}/status", response_model=ScrapeJobStatusRead)
+def get_scrape_job_status(
+    batch_id: UUID,
+    session: Session = Depends(get_session),
+) -> ScrapeJobStatusRead:
+    started = time.perf_counter()
+    status = build_scrape_job_status(session=session, batch_id=batch_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "poll_scrape_job_status batch_id=%s state=%s selected=%s terminal=%s queued=%s running=%s elapsed_ms=%s",
+        batch_id,
+        status.state,
+        status.selected,
+        status.terminal,
+        status.queued,
+        status.running,
+        elapsed_ms,
+    )
+    return status
 
 
 @router.get("/scrape-batches/{batch_id}", response_model=ScrapeBatchRead)

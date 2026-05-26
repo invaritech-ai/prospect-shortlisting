@@ -78,6 +78,29 @@ class ScrapeBatchList(BaseModel):
     items: list[ScrapeBatchRead]
 
 
+class ScrapeJobStatusRead(UTCReadModel):
+    batch_id: UUID
+    campaign_id: UUID
+    state: str
+    selected: int
+    queued: int
+    running: int
+    succeeded: int
+    failed: int
+    terminal: int
+    queue_todo: int
+    queue_doing: int
+    queue_succeeded: int
+    queue_failed: int
+    queue_cancelled: int
+    queue_aborting: int
+    queue_aborted: int
+    eta_seconds: float | None = None
+    inconsistency_reason: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
 # ── Results (per-domain scraped content) ─────────────────────────────────────
 
 class ScrapeResultRead(UTCReadModel):
@@ -102,3 +125,14 @@ class ScrapeResultRead(UTCReadModel):
 
 class LetterCountsResponse(BaseModel):
     counts: dict[str, int]
+
+
+class ScrapeCountsResponse(BaseModel):
+    total: int
+    pending: int
+    queued: int
+    running: int
+    succeeded: int
+    failed: int
+    retryable_failed: int
+    remaining_work: int

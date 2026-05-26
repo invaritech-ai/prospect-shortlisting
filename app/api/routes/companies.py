@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import time
+from logging import getLogger
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlmodel import Session, col, select
 
-from app.api.schemas.scrape import LetterCountsResponse
+from app.api.schemas.scrape import LetterCountsResponse, ScrapeCountsResponse
 from app.api.schemas.upload import DomainList, DomainRead
 from app.db.session import get_session
 from app.models.core import UploadedDomain
 from app.models.scrape import ScrapeResult
 
 router = APIRouter(prefix="/v1", tags=["domains"])
+logger = getLogger(__name__)
 
 
 def _apply_scrape_status_filter(q, scrape_status: str | None):
@@ -54,6 +57,7 @@ def list_domains(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> DomainList:
+    started = time.perf_counter()
     base_q = select(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id)
 
     if upload_id is not None:
@@ -108,7 +112,7 @@ def list_domains(
             for row in latest_rows
         }
 
-    return DomainList(
+    response = DomainList(
         total=total,
         limit=limit,
         offset=offset,
@@ -127,6 +131,20 @@ def list_domains(
             for d in items
         ],
     )
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "poll_companies campaign_id=%s scrape_status=%s letter=%s search=%s limit=%s offset=%s total=%s items=%s elapsed_ms=%s",
+        campaign_id,
+        scrape_status,
+        letter,
+        bool(search and search.strip()),
+        limit,
+        offset,
+        total,
+        len(response.items),
+        elapsed_ms,
+    )
+    return response
 
 
 @router.get("/domains/letter-counts", response_model=LetterCountsResponse)
@@ -135,6 +153,7 @@ def get_letter_counts(
     scrape_status: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> LetterCountsResponse:
+    started = time.perf_counter()
     """Return per-letter domain counts for the # A B C … pill strip."""
     base_q = select(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id)
     base_q = _apply_scrape_status_filter(base_q, scrape_status)
@@ -156,4 +175,70 @@ def get_letter_counts(
         else:
             counts["#"] = counts.get("#", 0) + count
 
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "poll_letter_counts campaign_id=%s scrape_status=%s buckets=%s elapsed_ms=%s",
+        campaign_id,
+        scrape_status,
+        len(counts),
+        elapsed_ms,
+    )
     return LetterCountsResponse(counts=counts)
+
+
+@router.get("/domains/scrape-counts", response_model=ScrapeCountsResponse)
+def get_scrape_counts(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> ScrapeCountsResponse:
+    """Return S1 badge/progress counts for one campaign."""
+    status_rows = session.exec(
+        select(col(UploadedDomain.scrape_status), func.count(UploadedDomain.id))
+        .where(col(UploadedDomain.campaign_id) == campaign_id)
+        .group_by(col(UploadedDomain.scrape_status))
+    ).all()
+    by_status = {status: count for status, count in status_rows}
+
+    latest_ts_sq = (
+        select(
+            col(ScrapeResult.domain_id).label("domain_id"),
+            func.max(col(ScrapeResult.updated_at)).label("latest_updated_at"),
+        )
+        .where(col(ScrapeResult.campaign_id) == campaign_id)
+        .group_by(col(ScrapeResult.domain_id))
+        .subquery()
+    )
+    retryable_failed = session.exec(
+        select(func.count(func.distinct(ScrapeResult.domain_id)))
+        .join(
+            latest_ts_sq,
+            and_(
+                col(ScrapeResult.domain_id) == latest_ts_sq.c.domain_id,
+                col(ScrapeResult.updated_at) == latest_ts_sq.c.latest_updated_at,
+            ),
+        )
+        .join(UploadedDomain, col(UploadedDomain.id) == col(ScrapeResult.domain_id))
+        .where(
+            col(UploadedDomain.campaign_id) == campaign_id,
+            col(UploadedDomain.scrape_status) == "failed",
+            col(ScrapeResult.retryable).is_(True),
+        )
+    ).one()
+
+    pending = by_status.get(None, 0)
+    queued = by_status.get("queued", 0)
+    running = by_status.get("running", 0)
+    succeeded = by_status.get("succeeded", 0)
+    failed = by_status.get("failed", 0)
+    total = sum(by_status.values())
+
+    return ScrapeCountsResponse(
+        total=total,
+        pending=pending,
+        queued=queued,
+        running=running,
+        succeeded=succeeded,
+        failed=failed,
+        retryable_failed=retryable_failed,
+        remaining_work=pending + queued + running + retryable_failed,
+    )

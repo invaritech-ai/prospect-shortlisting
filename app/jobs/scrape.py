@@ -55,6 +55,9 @@ async def _defer_scrape_domain_bulk(
     retry=RetryStrategy(max_attempts=5, wait=30),
 )
 async def dispatch_scrape_batch(batch_id: str) -> None:
+    # Legacy compatibility task. New S1 batch creation enqueues scrape_domain
+    # jobs directly; keep this path so previously queued dispatcher jobs can
+    # still drain safely.
     engine = get_engine()
     batch_uuid = UUID(batch_id)
 

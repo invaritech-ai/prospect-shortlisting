@@ -44,6 +44,8 @@ interface AppShellProps {
   selectedCampaignId: string | null
   onSelectCampaign: (id: string) => void
   stats: StatsResponse | null
+  scrapeRemainingCount?: number | null
+  scrapeIsLive?: boolean
   onOpenPromptLibrary: () => void
   authEnabled?: boolean
   userDisplayName?: string | null
@@ -57,6 +59,8 @@ export function AppShell({
   activeCampaignName,
   campaigns, selectedCampaignId, onSelectCampaign,
   stats,
+  scrapeRemainingCount = null,
+  scrapeIsLive = false,
   onOpenPromptLibrary,
   authEnabled = false,
   userDisplayName = null,
@@ -90,6 +94,9 @@ export function AppShell({
         onSelectCampaign={onSelectCampaign}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
+        stats={stats}
+        scrapeRemainingCount={scrapeRemainingCount}
+        scrapeIsLive={scrapeIsLive}
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -126,6 +133,9 @@ export function AppShell({
         activeView={activeView}
         setActiveView={setActiveView}
         onOpenPromptLibrary={onOpenPromptLibrary}
+        stats={stats}
+        scrapeRemainingCount={scrapeRemainingCount}
+        scrapeIsLive={scrapeIsLive}
       />
     </div>
   )

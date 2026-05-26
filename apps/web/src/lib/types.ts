@@ -515,6 +515,29 @@ export type ScrapeBatchList = {
   items: ScrapeBatchRead[]
 }
 
+export type ScrapeJobStatusRead = {
+  batch_id: string
+  campaign_id: string
+  state: string
+  selected: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+  terminal: number
+  queue_todo: number
+  queue_doing: number
+  queue_succeeded: number
+  queue_failed: number
+  queue_cancelled: number
+  queue_aborting: number
+  queue_aborted: number
+  eta_seconds: number | null
+  inconsistency_reason: string | null
+  created_at: string
+  finished_at: string | null
+}
+
 export type ScrapeSettingsRead = {
   id: string
   campaign_id: string | null
@@ -565,6 +588,17 @@ export type ScrapeResultRead = {
 
 export type DomainLetterCounts = {
   counts: Record<string, number>
+}
+
+export type DomainScrapeCounts = {
+  total: number
+  pending: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+  retryable_failed: number
+  remaining_work: number
 }
 
 export type AnalysisJobDetailRead = {
