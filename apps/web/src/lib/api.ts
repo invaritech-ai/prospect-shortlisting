@@ -1,6 +1,9 @@
 import type {
   AiReviewDomainAnalysis,
   AiReviewDomainList,
+  AiReviewJobCreate,
+  AiReviewJobRead,
+  AiReviewJobStatusRead,
   AiReviewLabelCounts,
   CampaignCreate,
   CampaignList,
@@ -256,6 +259,22 @@ export async function getAiReviewLabelCounts(
   if (letter) params.set('letter', letter)
   if (search?.trim()) params.set('search', search.trim())
   return request<AiReviewLabelCounts>(`/v1/ai-review/label-counts?${params.toString()}`)
+}
+
+export async function createAiReviewJob(body: AiReviewJobCreate): Promise<AiReviewJobRead> {
+  return request<AiReviewJobRead>('/v1/ai-review/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getActiveAiReviewJob(campaignId: string): Promise<AiReviewJobRead | null> {
+  return request<AiReviewJobRead | null>(`/v1/ai-review/jobs/active?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function getAiReviewJobStatus(batchId: string): Promise<AiReviewJobStatusRead> {
+  return request<AiReviewJobStatusRead>(`/v1/ai-review/jobs/${encodeURIComponent(batchId)}/status`)
 }
 
 export async function getDomainLetterCounts(

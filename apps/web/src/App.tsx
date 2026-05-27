@@ -18,6 +18,8 @@ import type {
   CampaignRead,
   DomainScrapeCounts,
   IntegrationHealthItem,
+  AiReviewJobRead,
+  AiReviewJobStatusRead,
   PipelineCostSummaryRead,
   ScrapeBatchRead,
   ScrapeJobStatusRead,
@@ -131,6 +133,42 @@ function statsFromScrapeStatus(status: ScrapeJobStatusRead | null, totalCompanie
   }
 }
 
+function statsFromAiReviewJob(job: AiReviewJobRead | null, status: AiReviewJobStatusRead | null): StatsResponse {
+  const selected = status?.selected ?? job?.selected_domain_count ?? 0
+  const succeeded = status?.succeeded ?? job?.success_count ?? 0
+  const failed = status?.failed ?? job?.failed_count ?? 0
+  const running = status ? Math.max(0, status.queued + status.running) : Math.max(0, job?.queued_count ?? 0)
+  return {
+    as_of: new Date().toISOString(),
+    scrape: {
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      site_unavailable: 0,
+      running: 0,
+      queued: 0,
+      stuck_count: 0,
+      pct_done: 0,
+      avg_job_sec: null,
+      eta_seconds: null,
+      eta_at: null,
+    },
+    analysis: {
+      total: selected,
+      succeeded,
+      failed,
+      site_unavailable: 0,
+      running,
+      queued: status?.queue_todo ?? Math.max(0, job?.queued_count ?? 0),
+      stuck_count: 0,
+      pct_done: selected > 0 ? Math.round(((succeeded + failed) / selected) * 100) : 0,
+      avg_job_sec: null,
+      eta_seconds: null,
+      eta_at: null,
+    },
+  }
+}
+
 function isScrapeBatchLive(batch: ScrapeBatchRead | null): boolean {
   return Boolean(batch && !['completed', 'failed', 'cancelled'].includes(batch.state))
 }
@@ -164,6 +202,8 @@ function App() {
   const [, setIsCampaignSaving] = useState(false)
   const [activeScrapeBatch, setActiveScrapeBatch] = useState<ScrapeBatchRead | null>(null)
   const [activeScrapeStatus, setActiveScrapeStatus] = useState<ScrapeJobStatusRead | null>(null)
+  const [activeAiReviewJob, setActiveAiReviewJob] = useState<AiReviewJobRead | null>(null)
+  const [activeAiReviewStatus, setActiveAiReviewStatus] = useState<AiReviewJobStatusRead | null>(null)
   const [scrapeCounts, setScrapeCounts] = useState<DomainScrapeCounts | null>(null)
   const wasScrapeLiveRef = useRef(false)
 
@@ -185,7 +225,9 @@ function App() {
     ? (activeScrapeStatus
       ? statsFromScrapeStatus(activeScrapeStatus, activeCampaignCompanyCount)
       : statsFromScrapeBatch(activeScrapeBatch, activeCampaignCompanyCount))
-    : null
+    : activeView === 's2-ai'
+      ? statsFromAiReviewJob(activeAiReviewJob, activeAiReviewStatus)
+      : null
   const scrapeIsLive = isScrapeStatusLive(activeScrapeStatus) || isScrapeBatchLive(activeScrapeBatch)
 
   // ── Load functions ────────────────────────────────────────────────────────
@@ -255,6 +297,11 @@ function App() {
       setScrapeCounts(null)
     }
   }, [authRequestsEnabled])
+
+  const onActiveAiReviewJobChange = useCallback((job: AiReviewJobRead | null, status: AiReviewJobStatusRead | null) => {
+    setActiveAiReviewJob(job)
+    setActiveAiReviewStatus(status)
+  }, [])
 
   // ── Effects ───────────────────────────────────────────────────────────────
 
@@ -532,7 +579,13 @@ function App() {
         )}
 
         {selectedCampaignId && activeView === 'full-pipeline'   && <FullPipelineView />}
-        {selectedCampaignId && activeView === 's2-ai'           && <AIReviewView stats={null} campaignId={selectedCampaignId} />}
+        {selectedCampaignId && activeView === 's2-ai'           && (
+          <AIReviewView
+            stats={shellStats}
+            campaignId={selectedCampaignId}
+            onActiveJobChange={onActiveAiReviewJobChange}
+          />
+        )}
         {selectedCampaignId && activeView === 's3-contacts'     && <ContactsView stats={null} />}
         {selectedCampaignId && activeView === 's4-reveal'       && <ComingSoon label="S4 · Reveal" />}
         {selectedCampaignId && activeView === 's5-validation'   && <ValidationView stats={null} />}

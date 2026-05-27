@@ -11,6 +11,7 @@ from app.core.config import settings
 import app.models.core           # noqa: F401
 import app.models.scrape         # noqa: F401
 import app.models.classification  # noqa: F401
+import app.models.llm_rate_limit  # noqa: F401
 import app.models.contacts       # noqa: F401
 import app.models.settings       # noqa: F401
 

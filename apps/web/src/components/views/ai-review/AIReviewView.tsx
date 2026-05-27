@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { MOCK_AI_ROWS, MOCK_AI_STATS, MOCK_STATS } from '../../../lib/useAppData'
 import type { AIVerdict, MockAIRow } from '../../../lib/useAppData'
-import type { AiReviewLabelCounts, DomainLetterCounts, StatsResponse } from '../../../lib/types'
-import { getAiReviewLabelCounts, getAiReviewLetterCounts, listAiReviewDomains } from '../../../lib/api'
+import type { AiReviewJobRead, AiReviewJobStatusRead, AiReviewLabelCounts, DomainLetterCounts, StatsResponse } from '../../../lib/types'
+import { createAiReviewJob, getActiveAiReviewJob, getAiReviewJobStatus, getAiReviewLabelCounts, getAiReviewLetterCounts, listAiReviewDomains } from '../../../lib/api'
+import { parseApiError } from '../../../lib/utils'
 import { StageViewHeader }    from '../shared/StageViewHeader'
 import { AIReviewToolbar }    from './AIReviewToolbar'
 import { AIReviewTable }      from './AIReviewTable'
@@ -18,9 +19,10 @@ const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCod
 interface AIReviewViewProps {
   stats?: StatsResponse | null
   campaignId: string
+  onActiveJobChange?: (job: AiReviewJobRead | null, status: AiReviewJobStatusRead | null) => void
 }
 
-export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps) {
+export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }: AIReviewViewProps) {
   const stats = rawStats ?? MOCK_STATS
 
   const [rows, setRows]             = useState<MockAIRow[]>(MOCK_AI_ROWS)
@@ -38,6 +40,10 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
   const [reasoningRow, setReasoningRow] = useState<MockAIRow | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [creatingJob, setCreatingJob] = useState(false)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [activeJob, setActiveJob] = useState<AiReviewJobRead | null>(null)
+  const [activeJobStatus, setActiveJobStatus] = useState<AiReviewJobStatusRead | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   function toVerdict(value: string | null): AIVerdict {
@@ -97,7 +103,7 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
     return () => {
       cancelled = true
     }
-  }, [campaignId, filter, letterFilter, page, search])
+  }, [campaignId, filter, letterFilter, page, refreshNonce, search])
 
   useEffect(() => {
     let cancelled = false
@@ -113,7 +119,7 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
     return () => {
       cancelled = true
     }
-  }, [campaignId])
+  }, [campaignId, refreshNonce])
 
   useEffect(() => {
     let cancelled = false
@@ -132,10 +138,66 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
     return () => {
       cancelled = true
     }
-  }, [campaignId, letterFilter, search])
+  }, [campaignId, letterFilter, refreshNonce, search])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadActive() {
+      try {
+        const job = await getActiveAiReviewJob(campaignId)
+        if (cancelled) return
+        setActiveJob(job)
+        if (!job) setActiveJobStatus(null)
+      } catch {
+        if (!cancelled) {
+          setActiveJob(null)
+          setActiveJobStatus(null)
+        }
+      }
+    }
+    void loadActive()
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
+
+  useEffect(() => {
+    if (!activeJob) return
+    const activeJobId = activeJob.id
+    let cancelled = false
+    async function tick() {
+      try {
+        const status = await getAiReviewJobStatus(activeJobId)
+        if (cancelled) return
+        setActiveJobStatus(status)
+        if (status.state === 'completed' || status.terminal >= status.selected) {
+          setActiveJob(null)
+          setRefreshNonce((n) => n + 1)
+        }
+      } catch {
+        if (!cancelled) setActiveJob(null)
+      }
+    }
+    void tick()
+    const id = window.setInterval(() => void tick(), 4000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [activeJob])
+
+  useEffect(() => {
+    onActiveJobChange?.(activeJob, activeJobStatus)
+  }, [activeJob, activeJobStatus, onActiveJobChange])
+
+  useEffect(() => {
+    if (!activeJob) return
+    const id = window.setInterval(() => setRefreshNonce((n) => n + 1), 10000)
+    return () => window.clearInterval(id)
+  }, [activeJob])
 
   const aiStats = [
-    { label: 'possible', value: labelCounts?.possible ?? rows.filter((r) => r.verdict === 'Possible').length, color: 'var(--s2)', live: (stats.analysis?.running ?? 0) > 0 },
+    { label: 'possible', value: labelCounts?.possible ?? rows.filter((r) => r.verdict === 'Possible').length, color: 'var(--s2)', live: Boolean(activeJob) || (stats.analysis?.running ?? 0) > 0 },
     { label: 'unknown',  value: labelCounts?.unknown ?? rows.filter((r) => r.verdict === 'Unknown').length,  color: 'var(--oc-warn-text)' },
     { label: 'crap',     value: labelCounts?.crap ?? rows.filter((r) => r.verdict === 'Crap').length,     color: 'var(--oc-fail-text)' },
     { label: 'unclassified', value: labelCounts?.unclassified ?? stats.analysis?.queued ?? MOCK_AI_STATS.running },
@@ -170,12 +232,42 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
   }
 
   const unclassifiedCount = labelCounts?.unclassified ?? 0
+  const activeDone = activeJobStatus ? activeJobStatus.succeeded + activeJobStatus.failed : 0
+  const activeSelected = activeJobStatus?.selected ?? activeJob?.selected_domain_count ?? 0
   const etaSecs = stats.analysis?.eta_seconds ?? null
   const totalPages = Math.ceil(domainTotal / PAGE_SIZE)
 
   function goToPage(nextPage: number) {
     setPage(nextPage)
     setSelected(new Set())
+  }
+
+  async function startAiReviewJob(mode: 'selected' | 'unclassified' | 'filter') {
+    if (creatingJob) return
+    setCreatingJob(true)
+    setError(null)
+    try {
+      const selectedIds = [...selected]
+      const label = mode === 'unclassified'
+        ? 'unclassified'
+        : mode === 'filter' && filter !== 'all'
+          ? filter.toLowerCase()
+          : undefined
+      const job = await createAiReviewJob({
+        campaign_id: campaignId,
+        domain_ids: mode === 'selected' ? selectedIds : undefined,
+        label,
+        letter: mode !== 'selected' && letterFilter !== 'all' ? letterFilter : undefined,
+        search: mode !== 'selected' && search.trim() ? search.trim() : undefined,
+      })
+      setSelected(new Set())
+      setActiveJob(job)
+      setRefreshNonce((n) => n + 1)
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setCreatingJob(false)
+    }
   }
 
   return (
@@ -192,21 +284,30 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
           onOpenSettings={() => setSettingsOpen(true)}
           settingsLabel="Prompt"
           primaryAction={unclassifiedCount > 0 ? {
-            label: `Classify ${unclassifiedCount.toLocaleString()} unclassified`,
-            onClick: () => {
-              setFilter('unclassified')
-              setPage(0)
-              setSelected(new Set())
-            },
+            label: creatingJob ? 'Queueing…' : `Classify ${unclassifiedCount.toLocaleString()} unclassified`,
+            onClick: () => void startAiReviewJob('unclassified'),
           } : {
-            label: 'Classify unreviewed',
-            onClick: () => console.log('Classify all'),
+            label: creatingJob ? 'Queueing…' : 'Classify unreviewed',
+            onClick: () => void startAiReviewJob('filter'),
           }}
           secondaryAction={rows.filter((r) => r.verdict === 'Possible').length > 0 ? {
             label: `${rows.filter((r) => r.verdict === 'Possible').length} possible →`,
             onClick: () => setFilter('Possible'),
           } : undefined}
         />
+
+        {activeJob && (
+          <div className="oc-panel" style={{
+            padding: '0.75rem 1rem',
+            borderColor: 'color-mix(in srgb, var(--s2) 35%, var(--oc-border))',
+            background: 'color-mix(in srgb, var(--s2) 8%, var(--oc-surface))',
+            color: 'var(--s2)',
+            fontWeight: 700,
+            fontSize: '0.875rem',
+          }}>
+            AI decision in progress — {activeDone.toLocaleString()} / {activeSelected.toLocaleString()} done
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', position: 'relative' }}>
           {['all', ...LETTERS].map((l) => {
@@ -259,7 +360,7 @@ export function AIReviewView({ stats: rawStats, campaignId }: AIReviewViewProps)
             setPage(0)
             setSelected(new Set())
           }}
-          onClassifyAll={() => console.log('Classify all')}
+          onClassifyAll={() => void startAiReviewJob(selected.size > 0 ? 'selected' : (filter === 'all' ? 'unclassified' : 'filter'))}
           onBulkLabel={handleBulkLabel}
           onClearSelection={() => setSelected(new Set())}
         />

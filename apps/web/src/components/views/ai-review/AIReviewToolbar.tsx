@@ -42,6 +42,9 @@ export function AIReviewToolbar({
     label: `Mark ${v}`,
     onClick: () => onBulkLabel(v),
   }))
+  if (selectedIds.size > 0) {
+    bulkActions.unshift({ label: `Classify ${selectedIds.size} selected`, onClick: onClassifyAll })
+  }
 
   return (
     <StageToolbar

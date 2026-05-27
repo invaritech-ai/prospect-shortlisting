@@ -104,7 +104,7 @@ export function BottomNav({
   // Pipeline items get live counts + dots from mock/real data
   const pipelineItems: SheetItem[] = [
     { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: scrapeRemainingCount ?? counts.uploaded, isLive: scrapeIsLive ?? (stats.scrape.running > 0 || stats.scrape.queued > 0) },
-    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: counts.unknown,        isLive: (stats.analysis?.running ?? 0) > 0 },
+    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: (stats.analysis?.running ?? 0) + (stats.analysis?.queued ?? 0) > 0 ? (stats.analysis?.running ?? 0) + (stats.analysis?.queued ?? 0) : counts.unknown,        isLive: (stats.analysis?.running ?? 0) > 0 },
     { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: counts.contact_ready,  isLive: (stats.contact_fetch?.running ?? 0) > 0 },
     { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)',
       count: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),

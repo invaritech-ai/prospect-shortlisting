@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
+from pydantic import Field
 
 from app.api.schemas.base import UTCReadModel
 
@@ -48,3 +49,44 @@ class AiReviewLabelCounts(BaseModel):
     possible: int
     unknown: int
     crap: int
+
+
+class AiReviewJobCreate(BaseModel):
+    campaign_id: UUID
+    domain_ids: list[UUID] = Field(default_factory=list)
+    label: str | None = None
+    letter: str | None = None
+    search: str | None = None
+
+
+class AiReviewJobRead(UTCReadModel):
+    id: UUID
+    campaign_id: UUID
+    state: str
+    selected_domain_count: int
+    queued_count: int
+    success_count: int
+    failed_count: int
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
+class AiReviewJobStatusRead(UTCReadModel):
+    batch_id: UUID
+    campaign_id: UUID
+    state: str
+    selected: int
+    queued: int
+    running: int
+    succeeded: int
+    failed: int
+    terminal: int
+    queue_todo: int
+    queue_doing: int
+    queue_succeeded: int
+    queue_failed: int
+    queue_cancelled: int
+    queue_aborting: int
+    queue_aborted: int
+    created_at: datetime
+    finished_at: datetime | None = None

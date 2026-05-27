@@ -41,7 +41,9 @@ export function Sidebar({
 
   const stageCounts = {
     s1: scrapeRemainingCount ?? counts.uploaded,
-    s2: counts.unknown,
+    s2: (stats.analysis?.running ?? 0) + (stats.analysis?.queued ?? 0) > 0
+      ? (stats.analysis?.running ?? 0) + (stats.analysis?.queued ?? 0)
+      : counts.unknown,
     s3: counts.contact_ready,
     s5: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),
   }

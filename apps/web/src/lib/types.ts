@@ -84,6 +84,47 @@ export type AiReviewLabelCounts = {
   crap: number
 }
 
+export type AiReviewJobCreate = {
+  campaign_id: string
+  domain_ids?: string[]
+  label?: string | null
+  letter?: string | null
+  search?: string | null
+}
+
+export type AiReviewJobRead = {
+  id: string
+  campaign_id: string
+  state: string
+  selected_domain_count: number
+  queued_count: number
+  success_count: number
+  failed_count: number
+  created_at: string
+  finished_at: string | null
+}
+
+export type AiReviewJobStatusRead = {
+  batch_id: string
+  campaign_id: string
+  state: string
+  selected: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+  terminal: number
+  queue_todo: number
+  queue_doing: number
+  queue_succeeded: number
+  queue_failed: number
+  queue_cancelled: number
+  queue_aborting: number
+  queue_aborted: number
+  created_at: string
+  finished_at: string | null
+}
+
 export type CampaignRead = {
   id: string
   name: string

@@ -14,6 +14,9 @@ from app.api.schemas.analysis import (
     AiReviewDomainAnalysis,
     AiReviewDomainList,
     AiReviewDomainRow,
+    AiReviewJobCreate,
+    AiReviewJobRead,
+    AiReviewJobStatusRead,
     AiReviewLabelCounts,
 )
 from app.api.schemas.upload import (
@@ -28,6 +31,9 @@ __all__ = [
     "AiReviewDomainList",
     "AiReviewDomainAnalysis",
     "AiReviewDomainRow",
+    "AiReviewJobCreate",
+    "AiReviewJobRead",
+    "AiReviewJobStatusRead",
     "AiReviewLabelCounts",
     "LetterCountsResponse",
     "ScrapeBatchCreate",
