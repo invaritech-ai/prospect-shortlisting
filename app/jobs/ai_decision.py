@@ -5,6 +5,7 @@ import json
 import logging
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 from uuid import UUID
 
@@ -179,23 +180,66 @@ def _run_classify_domain(result_id: str) -> None:
         settings = batch.settings_snapshot_json if batch and batch.settings_snapshot_json else {}
         instruction_text = str(settings.get("instruction_text") or "").strip()
         model = str(settings.get("model") or "").strip()
+        settings_hash = sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest() if settings else None
+        prompt_hash = sha256(instruction_text.encode()).hexdigest() if instruction_text else None
+        prompt_preview = instruction_text[:400] if instruction_text else ""
         if not instruction_text or not model:
             _mark_failed(session, result, error_code="missing_decision_settings", message="Missing AI decision prompt or model.")
             session.commit()
             return
         payload = _input_payload(domain=domain, scrape=scrape)
+        page_urls = [str(page.get("url") or "") for page in payload["pages"]]
+        page_chars = [len(str(page.get("markdown") or "")) for page in payload["pages"]]
+        log_event(
+            logger,
+            "ai_decision_settings_loaded",
+            result_id=result_id,
+            batch_id=str(result.classification_batch_id) if result.classification_batch_id else None,
+            domain=domain.domain,
+            model=model,
+            prompt_hash=prompt_hash,
+            prompt_preview=prompt_preview,
+            settings_hash=settings_hash,
+        )
+        log_event(
+            logger,
+            "ai_decision_input_loaded",
+            result_id=result_id,
+            domain=domain.domain,
+            scrape_result_id=str(scrape.id),
+            page_count=len(payload["pages"]),
+            page_urls=page_urls,
+            page_markdown_chars=page_chars,
+            input_chars=sum(page_chars),
+        )
         if not payload["pages"]:
             _mark_failed(session, result, error_code="no_markdown_input", message="No markdown pages available for AI decision.")
             session.commit()
             return
 
+    wait_start = perf_counter()
     wait_for_llm_slot(session_factory=lambda: Session(engine), provider="openrouter", purpose="ai_decision")
+    wait_ms = int((perf_counter() - wait_start) * 1000)
+    if wait_ms > 0:
+        log_event(logger, "ai_decision_rate_limit_wait", result_id=result_id, wait_ms=wait_ms)
+    llm_start = perf_counter()
+    log_event(logger, "ai_decision_llm_call_start", result_id=result_id, model=model)
     content, error, usage = _client.chat_with_usage(
         model=model,
         messages=_build_messages(instruction_text=instruction_text, payload=payload),
         temperature=0.0,
         response_format={"type": "json_object"},
         timeout=180,
+    )
+    llm_ms = int((perf_counter() - llm_start) * 1000)
+    log_event(
+        logger,
+        "ai_decision_llm_call_done",
+        result_id=result_id,
+        model=model,
+        latency_ms=llm_ms,
+        error=error,
+        usage=usage,
     )
 
     if error:
@@ -206,12 +250,14 @@ def _run_classify_domain(result_id: str) -> None:
                     result.state = "queued"
                     session.add(result)
                     session.commit()
+            log_event(logger, "ai_decision_retryable_error", result_id=result_id, error_code=error)
             raise RuntimeError(f"retryable AI decision error: {error}")
         with Session(engine) as session:
             result = session.get(ClassificationResult, result_uuid)
             if result is not None:
                 _mark_failed(session, result, error_code=error, message="AI decision call failed.")
                 session.commit()
+        log_event(logger, "ai_decision_failed", result_id=result_id, error_code=error, reason="llm_call_failed")
         return
 
     try:
@@ -226,7 +272,17 @@ def _run_classify_domain(result_id: str) -> None:
             if result is not None:
                 _mark_failed(session, result, error_code=str(exc), message="AI decision returned invalid JSON.")
                 session.commit()
+        log_event(logger, "ai_decision_failed", result_id=result_id, error_code=str(exc), reason="invalid_llm_output")
         return
+    log_event(
+        logger,
+        "ai_decision_parsed",
+        result_id=result_id,
+        label=label,
+        confidence=float(confidence),
+        evidence_type=type(parsed.get("evidence")).__name__,
+        reasoning_type=type(parsed.get("reasoning")).__name__,
+    )
 
     reasoning = parsed.get("reasoning") if isinstance(parsed.get("reasoning"), dict) else {"summary": str(parsed.get("reasoning") or "")}
     evidence = parsed.get("evidence") if isinstance(parsed.get("evidence"), dict) else {"evidence": parsed.get("evidence") or []}
