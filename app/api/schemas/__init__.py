@@ -10,6 +10,12 @@ from app.api.schemas.scrape import (
     ScrapeSettingsCreate,
     ScrapeSettingsRead,
 )
+from app.api.schemas.analysis import (
+    AiReviewDomainAnalysis,
+    AiReviewDomainList,
+    AiReviewDomainRow,
+    AiReviewLabelCounts,
+)
 from app.api.schemas.upload import (
     DomainList,
     DomainRead,
@@ -19,6 +25,10 @@ from app.api.schemas.upload import (
 )
 
 __all__ = [
+    "AiReviewDomainList",
+    "AiReviewDomainAnalysis",
+    "AiReviewDomainRow",
+    "AiReviewLabelCounts",
     "LetterCountsResponse",
     "ScrapeBatchCreate",
     "ScrapeBatchList",

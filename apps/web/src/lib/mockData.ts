@@ -340,7 +340,7 @@ export const MOCK_CAMPAIGN_SUMMARIES: Record<string, CampaignPipelineSummary> = 
 
 // ── AI Review rows ────────────────────────────────────────────
 
-export type AIVerdict = 'Possible' | 'Unknown' | 'Crap'
+export type AIVerdict = 'Unclassified' | 'Possible' | 'Unknown' | 'Crap'
 
 export interface MockAIRow {
   id: string

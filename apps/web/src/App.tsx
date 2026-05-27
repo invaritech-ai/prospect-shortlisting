@@ -532,7 +532,7 @@ function App() {
         )}
 
         {selectedCampaignId && activeView === 'full-pipeline'   && <FullPipelineView />}
-        {selectedCampaignId && activeView === 's2-ai'           && <AIReviewView stats={null} />}
+        {selectedCampaignId && activeView === 's2-ai'           && <AIReviewView stats={null} campaignId={selectedCampaignId} />}
         {selectedCampaignId && activeView === 's3-contacts'     && <ContactsView stats={null} />}
         {selectedCampaignId && activeView === 's4-reveal'       && <ComingSoon label="S4 · Reveal" />}
         {selectedCampaignId && activeView === 's5-validation'   && <ValidationView stats={null} />}

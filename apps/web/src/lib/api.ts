@@ -1,7 +1,14 @@
 import type {
+  AiReviewDomainAnalysis,
+  AiReviewDomainList,
+  AiReviewLabelCounts,
   CampaignCreate,
   CampaignList,
   CampaignRead,
+  DecisionSettingsCreate,
+  DecisionSettingsList,
+  DecisionSettingsRead,
+  DecisionSettingsUpdate,
   DomainList,
   DomainLetterCounts,
   DomainScrapeCounts,
@@ -168,6 +175,7 @@ export async function listDomains(
     uploadId?: string
     scrapeStatus?: string
     letter?: string
+    label?: string
     search?: string
     limit?: number
     offset?: number
@@ -179,6 +187,75 @@ export async function listDomains(
   if (letter) params.set('letter', letter)
   if (search?.trim()) params.set('search', search.trim())
   return request<DomainList>(`/v1/companies?${params.toString()}`)
+}
+
+export async function listAiDecidableDomains(
+  campaignId: string,
+  {
+    uploadId,
+    letter,
+    search,
+    limit = 50,
+    offset = 0,
+  }: {
+    uploadId?: string
+    letter?: string
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<DomainList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (uploadId) params.set('upload_id', uploadId)
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<DomainList>(`/v1/domains/ai-decidable?${params.toString()}`)
+}
+
+export async function listAiReviewDomains(
+  campaignId: string,
+  {
+    letter,
+    label,
+    search,
+    limit = 50,
+    offset = 0,
+  }: {
+    letter?: string
+    label?: string
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<AiReviewDomainList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (letter) params.set('letter', letter)
+  if (label) params.set('label', label)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<AiReviewDomainList>(`/v1/ai-review/domains?${params.toString()}`)
+}
+
+export async function getAiReviewDomainAnalysis(
+  campaignId: string,
+  domainId: string,
+): Promise<AiReviewDomainAnalysis> {
+  return request<AiReviewDomainAnalysis>(
+    `/v1/ai-review/domains/${encodeURIComponent(domainId)}/analysis?campaign_id=${encodeURIComponent(campaignId)}`,
+  )
+}
+
+export async function getAiReviewLetterCounts(campaignId: string): Promise<DomainLetterCounts> {
+  return request<DomainLetterCounts>(`/v1/ai-review/letter-counts?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function getAiReviewLabelCounts(
+  campaignId: string,
+  { letter, search }: { letter?: string; search?: string } = {},
+): Promise<AiReviewLabelCounts> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<AiReviewLabelCounts>(`/v1/ai-review/label-counts?${params.toString()}`)
 }
 
 export async function getDomainLetterCounts(
@@ -256,6 +333,45 @@ export async function updateScrapeSettings(settingsId: string, payload: ScrapeSe
 
 export async function deleteScrapeSettings(settingsId: string): Promise<void> {
   await request<void>(`/v1/scrape-settings/${encodeURIComponent(settingsId)}`, { method: 'DELETE' })
+}
+
+// ── S2 Decision Settings ──────────────────────────────────────────────────────
+
+export async function listDecisionSettings(
+  campaignId: string,
+  { limit = 50, offset = 0, isActive }: { limit?: number; offset?: number; isActive?: boolean } = {},
+): Promise<DecisionSettingsList> {
+  const params = new URLSearchParams({
+    campaign_id: campaignId,
+    limit: String(limit),
+    offset: String(offset),
+  })
+  if (typeof isActive === 'boolean') params.set('is_active', String(isActive))
+  return request<DecisionSettingsList>(`/v1/decision-settings?${params.toString()}`)
+}
+
+export async function getActiveDecisionSettings(campaignId: string): Promise<DecisionSettingsRead | null> {
+  return request<DecisionSettingsRead | null>(`/v1/decision-settings/active?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function createDecisionSettings(payload: DecisionSettingsCreate): Promise<DecisionSettingsRead> {
+  return request<DecisionSettingsRead>('/v1/decision-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateDecisionSettings(settingsId: string, payload: DecisionSettingsUpdate): Promise<DecisionSettingsRead> {
+  return request<DecisionSettingsRead>(`/v1/decision-settings/${encodeURIComponent(settingsId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteDecisionSettings(settingsId: string): Promise<void> {
+  await request<void>(`/v1/decision-settings/${encodeURIComponent(settingsId)}`, { method: 'DELETE' })
 }
 
 // ── S1 Scrape Results (content drawer) ───────────────────────────────────────

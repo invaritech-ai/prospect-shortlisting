@@ -48,13 +48,13 @@ MODELS = [
     "mistralai/mistral-small-2603",
     "nvidia/nemotron-3-super-120b-a12b:free",
     "qwen/qwen3.5-9b",
-    "inception/mercury-2",
+    "ibm-granite/granite-4.1-8b",
     "google/gemini-3.1-flash-lite-preview",
 ]
 
 PAGE_KINDS = ["about", "products", "contact", "team", "leadership", "pricing"]
 
-# Baseline "known good" URLs from the previous static run with inception/mercury-2.
+# Baseline "known good" URLs from the previous static run with ibm-granite/granite-4.1-8b.
 # Used to flag when a model picks something clearly wrong (404, login, duplicate home).
 KNOWN_GOOD: dict[str, dict[str, str]] = {
     "afcind.com":         {"leadership": "/about/leadership-team", "contact": "/contact-us"},

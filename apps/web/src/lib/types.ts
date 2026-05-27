@@ -46,6 +46,44 @@ export type DomainList = {
   items: DomainRead[]
 }
 
+export type AiReviewDomainRow = {
+  domain_id: string
+  campaign_id: string
+  domain: string
+  raw_url: string
+  normalized_url: string
+  classification_result_id: string | null
+  classification_state: string | null
+  predicted_label: string | null
+  confidence: number | null
+  reasoning_json: Record<string, unknown> | null
+  evidence_json: Record<string, unknown> | null
+  manual_label: string | null
+  manual_thumbs: string | null
+  manual_comment: string | null
+  manually_reviewed_at: string | null
+  effective_label: string | null
+  effective_confidence: number | null
+  activity_at: string
+}
+
+export type AiReviewDomainList = {
+  total: number
+  limit: number
+  offset: number
+  items: AiReviewDomainRow[]
+}
+
+export type AiReviewDomainAnalysis = AiReviewDomainRow
+
+export type AiReviewLabelCounts = {
+  all: number
+  unclassified: number
+  possible: number
+  unknown: number
+  crap: number
+}
+
 export type CampaignRead = {
   id: string
   name: string
@@ -551,6 +589,46 @@ export type ScrapeSettingsRead = {
 export type ScrapeSettingsList = {
   total: number
   items: ScrapeSettingsRead[]
+}
+
+export type DecisionModelId =
+  | 'inclusionai/ring-2.6-1t'
+  | 'ibm-granite/granite-4.1-8b'
+  | 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free'
+  | 'deepseek/deepseek-v4-flash'
+  | 'inclusionai/ling-2.6-1t'
+  | 'google/gemma-4-26b-a4b-it:free'
+  | 'google/gemma-4-31b-it:free'
+
+export type DecisionSettingsRead = {
+  id: string
+  campaign_id: string
+  name: string
+  instruction_text: string
+  model: DecisionModelId
+  settings_hash: string
+  is_active: boolean
+  created_at: string
+}
+
+export type DecisionSettingsList = {
+  total: number
+  items: DecisionSettingsRead[]
+}
+
+export type DecisionSettingsCreate = {
+  campaign_id: string
+  name: string
+  instruction_text: string
+  model: DecisionModelId
+  is_active?: boolean
+}
+
+export type DecisionSettingsUpdate = {
+  name?: string
+  instruction_text?: string
+  model?: DecisionModelId
+  is_active?: boolean
 }
 
 export type ScrapeSettingsUpdate = {

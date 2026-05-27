@@ -9,7 +9,7 @@ fi
 BASE="${BASE:-http://127.0.0.1:8001}"
 URL_FILE="${1:-data/url_batches/client_batch_2026-03-05.txt}"
 GENERAL_MODEL="${GENERAL_MODEL:-openai/gpt-5-nano}"
-CLASSIFY_MODEL="${CLASSIFY_MODEL:-inception/mercury-2}"
+CLASSIFY_MODEL="${CLASSIFY_MODEL:-ibm-granite/granite-4.1-8b}"
 
 if [[ ! -f "$URL_FILE" ]]; then
   echo "URL file not found: $URL_FILE"

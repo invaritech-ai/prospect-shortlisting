@@ -255,7 +255,7 @@ router = APIRouter(prefix="/v1", tags=["scrape-jobs"])
 _manager = ScrapeJobManager()
 
 _DEFAULT_GENERAL_MODEL = "openai/gpt-4.1-nano"
-_DEFAULT_CLASSIFY_MODEL = "inception/mercury-2"
+_DEFAULT_CLASSIFY_MODEL = "ibm-granite/granite-4.1-8b"
 
 
 @router.post("/scrape-jobs", response_model=ScrapeJobRead, status_code=201)
@@ -358,7 +358,7 @@ from app.services.scrape_service import (
 
 _scrape_manager = ScrapeJobManager()
 _DEFAULT_GENERAL_MODEL = "openai/gpt-4.1-nano"
-_DEFAULT_CLASSIFY_MODEL = "inception/mercury-2"
+_DEFAULT_CLASSIFY_MODEL = "ibm-granite/granite-4.1-8b"
 
 
 @router.post("/companies/scrape-selected", response_model=CompanyScrapeResult)

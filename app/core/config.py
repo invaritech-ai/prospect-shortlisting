@@ -12,7 +12,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_URL", "PS_DATABASE_URL"),
     )
     general_model: str = "openai/gpt-5-nano"
-    classify_model: str = "inception/mercury-2"
+    classify_model: str = "ibm-granite/granite-4.1-8b"
     openai_api_key: str = ""
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"

@@ -46,29 +46,14 @@ def _apply_letter_filter(q, letter: str | None):
     )
 
 
-@router.get("/companies", response_model=DomainList)
-def list_domains(
-    campaign_id: UUID = Query(...),
-    upload_id: UUID | None = Query(default=None),
-    scrape_status: str | None = Query(default=None),
-    letter: str | None = Query(default=None),
-    search: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    session: Session = Depends(get_session),
+def _build_domains_response(
+    *,
+    session: Session,
+    campaign_id: UUID,
+    base_q,
+    limit: int,
+    offset: int,
 ) -> DomainList:
-    started = time.perf_counter()
-    base_q = select(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id)
-
-    if upload_id is not None:
-        base_q = base_q.where(col(UploadedDomain.upload_id) == upload_id)
-
-    base_q = _apply_scrape_status_filter(base_q, scrape_status)
-    base_q = _apply_letter_filter(base_q, letter)
-
-    if search and search.strip():
-        base_q = base_q.where(col(UploadedDomain.domain).ilike(f"%{search.strip()}%"))
-
     total = session.exec(select(func.count()).select_from(base_q.subquery())).one()
     items = session.exec(
         base_q.order_by(col(UploadedDomain.domain).asc()).limit(limit).offset(offset)
@@ -112,7 +97,7 @@ def list_domains(
             for row in latest_rows
         }
 
-    response = DomainList(
+    return DomainList(
         total=total,
         limit=limit,
         offset=offset,
@@ -131,6 +116,38 @@ def list_domains(
             for d in items
         ],
     )
+
+
+@router.get("/companies", response_model=DomainList)
+def list_domains(
+    campaign_id: UUID = Query(...),
+    upload_id: UUID | None = Query(default=None),
+    scrape_status: str | None = Query(default=None),
+    letter: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> DomainList:
+    started = time.perf_counter()
+    base_q = select(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id)
+
+    if upload_id is not None:
+        base_q = base_q.where(col(UploadedDomain.upload_id) == upload_id)
+
+    base_q = _apply_scrape_status_filter(base_q, scrape_status)
+    base_q = _apply_letter_filter(base_q, letter)
+
+    if search and search.strip():
+        base_q = base_q.where(col(UploadedDomain.domain).ilike(f"%{search.strip()}%"))
+
+    response = _build_domains_response(
+        session=session,
+        campaign_id=campaign_id,
+        base_q=base_q,
+        limit=limit,
+        offset=offset,
+    )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     logger.info(
         "poll_companies campaign_id=%s scrape_status=%s letter=%s search=%s limit=%s offset=%s total=%s items=%s elapsed_ms=%s",
@@ -140,7 +157,50 @@ def list_domains(
         bool(search and search.strip()),
         limit,
         offset,
-        total,
+        response.total,
+        len(response.items),
+        elapsed_ms,
+    )
+    return response
+
+
+@router.get("/domains/ai-decidable", response_model=DomainList)
+def list_ai_decidable_domains(
+    campaign_id: UUID = Query(...),
+    upload_id: UUID | None = Query(default=None),
+    letter: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> DomainList:
+    started = time.perf_counter()
+    base_q = select(UploadedDomain).where(
+        col(UploadedDomain.campaign_id) == campaign_id,
+        col(UploadedDomain.scrape_status) == "succeeded",
+    )
+    if upload_id is not None:
+        base_q = base_q.where(col(UploadedDomain.upload_id) == upload_id)
+    base_q = _apply_letter_filter(base_q, letter)
+    if search and search.strip():
+        base_q = base_q.where(col(UploadedDomain.domain).ilike(f"%{search.strip()}%"))
+
+    response = _build_domains_response(
+        session=session,
+        campaign_id=campaign_id,
+        base_q=base_q,
+        limit=limit,
+        offset=offset,
+    )
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "poll_ai_decidable_domains campaign_id=%s letter=%s search=%s limit=%s offset=%s total=%s items=%s elapsed_ms=%s",
+        campaign_id,
+        letter,
+        bool(search and search.strip()),
+        limit,
+        offset,
+        response.total,
         len(response.items),
         elapsed_ms,
     )

@@ -1,6 +1,7 @@
 import type { AIVerdict } from '../../../lib/useAppData'
 
 const VERDICT_CONFIG: Record<AIVerdict, { label: string; color: string; bg: string }> = {
+  Unclassified: { label: 'Unclassified', color: 'var(--oc-muted)', bg: 'var(--oc-bg)' },
   Possible: { label: 'Possible', color: 'var(--s2-text)', bg: 'var(--s2-bg)' },
   Unknown:  { label: 'Unknown',  color: 'var(--oc-warn-text)', bg: 'var(--oc-warn-bg)' },
   Crap:     { label: 'Crap',     color: 'var(--oc-fail-text)', bg: 'var(--oc-fail-bg)' },
@@ -30,6 +31,7 @@ export function VerdictBadge({ verdict, size = 'md' }: VerdictBadgeProps) {
 
 export function VerdictDot({ verdict }: { verdict: AIVerdict }) {
   const colors: Record<AIVerdict, string> = {
+    Unclassified: 'var(--oc-muted)',
     Possible: 'var(--s2)',
     Unknown:  'var(--oc-warn-text)',
     Crap:     'var(--oc-fail-text)',
