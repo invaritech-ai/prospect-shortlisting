@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     contact_provider_circuit_threshold: int = 3
     contact_provider_cooldown_sec: int = 120
     contact_provider_retry_delay_sec: int = 60
+    db_connect_timeout_sec: int = 10
+    db_keepalives: int = 1
+    db_keepalives_idle_sec: int = 30
+    db_keepalives_interval_sec: int = 10
+    db_keepalives_count: int = 3
+    db_api_pool_size: int = 8
+    db_api_pool_max_overflow: int = 8
+    db_api_pool_timeout_sec: int = 20
+    db_api_pool_recycle_sec: int = 300
+    procrastinate_pool_min_size: int = 1
+    procrastinate_pool_max_size: int = 8
+    procrastinate_pool_timeout_sec: int = 120
     # Master key used by the settings secret store to encrypt/decrypt
     # integration credentials stored in the `integration_secrets` table.
     # Must be a valid urlsafe base64-encoded 32-byte Fernet key. If absent,

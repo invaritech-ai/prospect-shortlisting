@@ -28,24 +28,29 @@ if _is_sqlite:
     _pool_kwargs: dict = {}
 elif _is_worker:
     connect_args = {
-        "connect_timeout": 10,
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 10,
-        "keepalives_count": 3,
+        "connect_timeout": settings.db_connect_timeout_sec,
+        "keepalives": settings.db_keepalives,
+        "keepalives_idle": settings.db_keepalives_idle_sec,
+        "keepalives_interval": settings.db_keepalives_interval_sec,
+        "keepalives_count": settings.db_keepalives_count,
     }
     _pool_kwargs = {"poolclass": NullPool}
 else:
     connect_args = {
-        "connect_timeout": 10,
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 10,
-        "keepalives_count": 3,
+        "connect_timeout": settings.db_connect_timeout_sec,
+        "keepalives": settings.db_keepalives,
+        "keepalives_idle": settings.db_keepalives_idle_sec,
+        "keepalives_interval": settings.db_keepalives_interval_sec,
+        "keepalives_count": settings.db_keepalives_count,
     }
-    # API: 10 steady-state, burst to 10 more. Workers use NullPool so these are
-    # all available to the API process.
-    _pool_kwargs = {"pool_size": 10, "max_overflow": 10, "pool_recycle": 300, "pool_timeout": 10}
+    # API pool is configurable; workers use NullPool so API doesn't compete with
+    # long-lived worker-side SQLAlchemy connections.
+    _pool_kwargs = {
+        "pool_size": settings.db_api_pool_size,
+        "max_overflow": settings.db_api_pool_max_overflow,
+        "pool_recycle": settings.db_api_pool_recycle_sec,
+        "pool_timeout": settings.db_api_pool_timeout_sec,
+    }
 
 engine = create_engine(
     settings.database_url,

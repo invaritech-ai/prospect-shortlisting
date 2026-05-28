@@ -137,7 +137,7 @@ function statsFromAiReviewJob(job: AiReviewJobRead | null, status: AiReviewJobSt
   const selected = status?.selected ?? job?.selected_domain_count ?? 0
   const succeeded = status?.succeeded ?? job?.success_count ?? 0
   const failed = status?.failed ?? job?.failed_count ?? 0
-  const running = status ? Math.max(0, status.queued + status.running) : Math.max(0, job?.queued_count ?? 0)
+  const running = status ? Math.max(0, status.running) : 0
   return {
     as_of: new Date().toISOString(),
     scrape: {
@@ -159,7 +159,7 @@ function statsFromAiReviewJob(job: AiReviewJobRead | null, status: AiReviewJobSt
       failed,
       site_unavailable: 0,
       running,
-      queued: status?.queue_todo ?? Math.max(0, job?.queued_count ?? 0),
+      queued: status?.queue_todo ?? Math.max(0, (job?.queued_count ?? 0) - running),
       stuck_count: 0,
       pct_done: selected > 0 ? Math.round(((succeeded + failed) / selected) * 100) : 0,
       avg_job_sec: null,
@@ -204,6 +204,7 @@ function App() {
   const [activeScrapeStatus, setActiveScrapeStatus] = useState<ScrapeJobStatusRead | null>(null)
   const [activeAiReviewJob, setActiveAiReviewJob] = useState<AiReviewJobRead | null>(null)
   const [activeAiReviewStatus, setActiveAiReviewStatus] = useState<AiReviewJobStatusRead | null>(null)
+  const [aiUnclassifiedCount, setAiUnclassifiedCount] = useState<number>(0)
   const [scrapeCounts, setScrapeCounts] = useState<DomainScrapeCounts | null>(null)
   const wasScrapeLiveRef = useRef(false)
 
@@ -349,6 +350,10 @@ function App() {
   useEffect(() => {
     void loadScrapeCounts(selectedCampaignId)
   }, [selectedCampaignId, loadScrapeCounts])
+
+  useEffect(() => {
+    setAiUnclassifiedCount(0)
+  }, [selectedCampaignId])
 
   useEffect(() => {
     if (!selectedCampaignId) {
@@ -512,6 +517,7 @@ function App() {
         stats={shellStats}
         scrapeRemainingCount={scrapeCounts?.remaining_work ?? null}
         scrapeIsLive={scrapeIsLive}
+        aiUnclassifiedCount={aiUnclassifiedCount}
         onOpenPromptLibrary={() => {}}
         authEnabled={AUTH_REQUIRED}
         userDisplayName={authSession?.displayName ?? null}
@@ -584,6 +590,7 @@ function App() {
             stats={shellStats}
             campaignId={selectedCampaignId}
             onActiveJobChange={onActiveAiReviewJobChange}
+            onUnclassifiedCountChange={setAiUnclassifiedCount}
           />
         )}
         {selectedCampaignId && activeView === 's3-contacts'     && <ContactsView stats={null} />}

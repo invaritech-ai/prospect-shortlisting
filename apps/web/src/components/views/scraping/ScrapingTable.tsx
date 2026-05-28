@@ -1,5 +1,6 @@
 import type { DomainRead } from '../../../lib/types'
 import { ScrapeStatusBadge } from '../shared/ScrapeStatusBadge'
+import { IconExternalLink, IconEye } from '../../ui/icons'
 
 function relTime(iso: string): string {
   const d = Math.floor((Date.now() - new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).getTime()) / 60_000)
@@ -106,7 +107,7 @@ export function ScrapingTable({
                       onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--oc-text)'; e.currentTarget.style.borderBottomColor = 'var(--oc-border)' }}
                     >
                       {row.domain}
-                      <svg style={{ display: 'inline', marginLeft: '0.25rem', verticalAlign: 'middle', opacity: 0.4 }} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      <IconExternalLink style={{ display: 'inline', marginLeft: '0.25rem', verticalAlign: 'middle', opacity: 0.4 }} size={10} />
                     </a>
                   </td>
 
@@ -144,7 +145,7 @@ export function ScrapingTable({
                           onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--s1)'; e.currentTarget.style.borderColor = 'var(--s1)' }}
                           onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--oc-muted)'; e.currentTarget.style.borderColor = 'var(--oc-border)' }}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                          <IconEye size={12} />
                           View
                         </button>
                       )}

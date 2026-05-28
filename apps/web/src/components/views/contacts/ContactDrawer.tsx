@@ -1,5 +1,6 @@
 import type { MockContactRow } from '../../../lib/useAppData'
 import { Drawer } from '../../ui/Drawer'
+import { ExternalLink, Mail } from 'lucide-react'
 
 interface ContactDrawerProps {
   row: MockContactRow | null
@@ -77,10 +78,7 @@ export function ContactDrawer({ row, onClose }: ContactDrawerProps) {
                       onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#0a66c2'; e.currentTarget.style.color = '#0a66c2' }}
                       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--oc-border)'; e.currentTarget.style.color = 'var(--oc-muted)' }}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z"/>
-                        <circle cx="4" cy="4" r="2"/>
-                      </svg>
+                      <ExternalLink size={14} />
                     </a>
                   )}
                 </div>
@@ -96,18 +94,12 @@ export function ContactDrawer({ row, onClose }: ContactDrawerProps) {
                         color: 'var(--s3)', textDecoration: 'none', fontWeight: 500,
                       }}
                     >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-                        <polyline points="22,6 12,13 2,6"/>
-                      </svg>
+                      <Mail size={12} strokeWidth={2.5} />
                       {contact.email}
                     </a>
                   ) : (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', color: 'var(--oc-muted)', fontStyle: 'italic' }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-                        <polyline points="22,6 12,13 2,6"/>
-                      </svg>
+                      <Mail size={12} strokeWidth={2} />
                       No email found
                     </span>
                   )}

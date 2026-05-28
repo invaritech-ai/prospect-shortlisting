@@ -8,11 +8,15 @@ set -euo pipefail
 QUEUE="${1:-scrape}"
 CONCURRENCY="${2:-2}"
 RESTART_DELAY=5
+PROCRASTINATE_POOL_MAX_SIZE="${PS_PROCRASTINATE_POOL_MAX_SIZE:-$((CONCURRENCY + 2))}"
+if [ "$PROCRASTINATE_POOL_MAX_SIZE" -lt 4 ]; then
+    PROCRASTINATE_POOL_MAX_SIZE=4
+fi
 
-echo "Starting worker: queue=$QUEUE concurrency=$CONCURRENCY"
+echo "Starting worker: queue=$QUEUE concurrency=$CONCURRENCY pool_max=$PROCRASTINATE_POOL_MAX_SIZE"
 
 while true; do
-    PS_WORKER_PROCESS=1 uv run python -m procrastinate \
+    PS_WORKER_PROCESS=1 PS_WORKER_CONCURRENCY="$CONCURRENCY" PS_PROCRASTINATE_POOL_MAX_SIZE="$PROCRASTINATE_POOL_MAX_SIZE" uv run python -m procrastinate \
         --app=app.queue.app worker \
         -q "$QUEUE" \
         -c "$CONCURRENCY" || true

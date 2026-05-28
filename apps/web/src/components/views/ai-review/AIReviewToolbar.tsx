@@ -11,16 +11,21 @@ interface AIReviewToolbarProps {
   filter: AIReviewFilter
   search: string
   selectedIds: Set<string>
+  allMatchingSelected?: boolean
+  matchingCount?: number
+  isBatchActive?: boolean
   onFilterChange: (f: AIReviewFilter) => void
   onSearchChange: (s: string) => void
   onClassifyAll: () => void
+  onSelectAllMatching: () => void
   onBulkLabel: (verdict: AIVerdict) => void
   onClearSelection: () => void
 }
 
 export function AIReviewToolbar({
   rows, counts: serverCounts, filter, search, selectedIds,
-  onFilterChange, onSearchChange, onClassifyAll, onBulkLabel, onClearSelection,
+  allMatchingSelected = false, matchingCount = 0, isBatchActive = false,
+  onFilterChange, onSearchChange, onClassifyAll, onSelectAllMatching, onBulkLabel, onClearSelection,
 }: AIReviewToolbarProps) {
   const counts = {
     all: serverCounts?.all ?? rows.length,
@@ -42,22 +47,68 @@ export function AIReviewToolbar({
     label: `Mark ${v}`,
     onClick: () => onBulkLabel(v),
   }))
-  if (selectedIds.size > 0) {
+  if (allMatchingSelected && matchingCount > 0) {
+    bulkActions.unshift({ label: `Classify ${matchingCount.toLocaleString()} matching`, onClick: onClassifyAll })
+  } else if (selectedIds.size > 0) {
     bulkActions.unshift({ label: `Classify ${selectedIds.size} selected`, onClick: onClassifyAll })
   }
 
+  const effectiveSelectedCount = allMatchingSelected ? matchingCount : selectedIds.size
+  const primaryLabel = effectiveSelectedCount > 0
+    ? `Classify ${effectiveSelectedCount.toLocaleString()} selected`
+    : (filter === 'all' || filter === 'unclassified'
+      ? 'Classify unclassified'
+      : 'Classify matching')
+
   return (
-    <StageToolbar
-      stageColor="var(--s2)"
-      filters={FILTERS}
-      activeFilter={filter}
-      onFilterChange={(v) => onFilterChange(v as AIReviewFilter)}
-      search={search}
-      onSearchChange={onSearchChange}
-      primaryAction={{ label: 'Classify unreviewed', onClick: onClassifyAll }}
-      selectedCount={selectedIds.size}
-      bulkActions={bulkActions}
-      onClearSelection={onClearSelection}
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <StageToolbar
+        stageColor="var(--s2)"
+        filters={FILTERS}
+        activeFilter={filter}
+        onFilterChange={(v) => onFilterChange(v as AIReviewFilter)}
+        search={search}
+        onSearchChange={onSearchChange}
+        primaryAction={{ label: primaryLabel, onClick: onClassifyAll }}
+        selectedCount={effectiveSelectedCount}
+        bulkActions={bulkActions}
+        onClearSelection={onClearSelection}
+      />
+
+      {!isBatchActive && matchingCount > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', paddingLeft: '0.125rem' }}>
+          {!allMatchingSelected ? (
+            <button
+              type="button"
+              onClick={onSelectAllMatching}
+              style={{
+                fontSize: '0.8125rem', fontWeight: 600, color: 'var(--s2)',
+                background: 'none', border: 'none', cursor: 'pointer',
+                textDecoration: 'underline', textUnderlineOffset: '2px',
+                padding: 0,
+              }}
+            >
+              Select all {matchingCount.toLocaleString()} matching
+            </button>
+          ) : (
+            <span style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)' }}>
+              All {matchingCount.toLocaleString()} matching selected
+              <button
+                type="button"
+                onClick={onClearSelection}
+                style={{
+                  marginLeft: '0.5rem', fontSize: '0.8125rem', fontWeight: 600,
+                  color: 'var(--oc-fail-text)', background: 'none', border: 'none',
+                  cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '2px',
+                  padding: 0,
+                }}
+              >
+                Clear
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

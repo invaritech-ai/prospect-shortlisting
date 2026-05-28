@@ -1,6 +1,8 @@
 import type { MockAIRow, AIVerdict } from '../../../lib/useAppData'
 import { VerdictBadge } from './VerdictBadge'
 import { QuickLabelPicker } from './QuickLabelPicker'
+import { IconExternalLink } from '../../ui/icons'
+import { Maximize2 } from 'lucide-react'
 
 function relTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -87,7 +89,7 @@ export function AIReviewTable({ rows, selectedIds, onToggleRow, onToggleAll, onL
                       onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--oc-text)'; e.currentTarget.style.borderBottomColor = 'var(--oc-border)' }}
                     >
                       {row.domain}
-                      <svg style={{ opacity: 0.4, flexShrink: 0 }} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      <IconExternalLink style={{ opacity: 0.4, flexShrink: 0 }} size={9} />
                     </a>
                   </td>
 
@@ -132,9 +134,7 @@ export function AIReviewTable({ rows, selectedIds, onToggleRow, onToggleAll, onL
                         onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--s2)'; e.currentTarget.style.color = 'var(--s2)' }}
                         onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--oc-border)'; e.currentTarget.style.color = 'var(--oc-muted)' }}
                       >
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
-                        </svg>
+                        <Maximize2 size={11} strokeWidth={2.5} />
                       </button>
                     </div>
                   </td>

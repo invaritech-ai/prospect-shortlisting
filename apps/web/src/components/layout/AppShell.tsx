@@ -46,6 +46,7 @@ interface AppShellProps {
   stats: StatsResponse | null
   scrapeRemainingCount?: number | null
   scrapeIsLive?: boolean
+  aiUnclassifiedCount?: number | null
   onOpenPromptLibrary: () => void
   authEnabled?: boolean
   userDisplayName?: string | null
@@ -61,6 +62,7 @@ export function AppShell({
   stats,
   scrapeRemainingCount = null,
   scrapeIsLive = false,
+  aiUnclassifiedCount = null,
   onOpenPromptLibrary,
   authEnabled = false,
   userDisplayName = null,
@@ -97,6 +99,7 @@ export function AppShell({
         stats={stats}
         scrapeRemainingCount={scrapeRemainingCount}
         scrapeIsLive={scrapeIsLive}
+        aiUnclassifiedCount={aiUnclassifiedCount}
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -136,6 +139,7 @@ export function AppShell({
         stats={stats}
         scrapeRemainingCount={scrapeRemainingCount}
         scrapeIsLive={scrapeIsLive}
+        aiUnclassifiedCount={aiUnclassifiedCount}
       />
     </div>
   )

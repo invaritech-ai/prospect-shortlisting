@@ -1,5 +1,6 @@
 import type { MockContactRow } from '../../../lib/useAppData'
 import { ContactStatusBadge } from './ContactStatusBadge'
+import { ExternalLink, Users } from 'lucide-react'
 
 function relTime(iso: string): string {
   const d = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
@@ -85,7 +86,7 @@ export function ContactsTable({ rows, selected, onToggleSelect, onToggleSelectAl
                       onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--oc-text)'; e.currentTarget.style.borderBottomColor = 'var(--oc-border)' }}
                     >
                       {row.domain}
-                      <svg style={{ opacity: 0.4 }} width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      <ExternalLink size={9} strokeWidth={2.5} style={{ opacity: 0.4 }} />
                     </a>
                   </td>
 
@@ -151,7 +152,7 @@ export function ContactsTable({ rows, selected, onToggleSelect, onToggleSelectAl
                             transition: 'all 140ms',
                           }}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                          <Users size={12} strokeWidth={2.5} />
                           View contacts
                         </button>
                       )}

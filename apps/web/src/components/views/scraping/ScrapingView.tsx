@@ -16,6 +16,7 @@ import { ScrapingCards }          from './ScrapingCards'
 import { ScrapedContentDrawer }   from './ScrapedContentDrawer'
 import { ScrapingSettingsDrawer } from './ScrapingSettingsDrawer'
 import type { StatusFilter }      from './ScrapingToolbar'
+import { Loader2 } from 'lucide-react'
 
 const PAGE_SIZE = 50
 const POLL_STATUS_ACTIVE_MS = 4000
@@ -471,10 +472,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
             background: 'color-mix(in srgb, var(--s1-bg) 70%, white)',
             border: '1px solid color-mix(in srgb, var(--s1) 28%, transparent)',
           }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--s1)" strokeWidth="2.5"
-              style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0 }}>
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
+            <Loader2 size={14} strokeWidth={2.5} style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0, color: 'var(--s1)' }} />
             <span style={{ fontSize: '0.875rem', fontWeight: 650, color: 'var(--s1)' }}>
               Creating scrape batch... actions are locked until the request returns.
             </span>
@@ -488,10 +486,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
             padding: '0.75rem 1rem', borderRadius: '0.625rem',
             background: 'var(--s1-bg)', border: '1px solid color-mix(in srgb, var(--s1) 30%, transparent)',
           }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--s1)" strokeWidth="2.5"
-              style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0 }}>
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
+            <Loader2 size={14} strokeWidth={2.5} style={{ animation: 'spin 0.9s linear infinite', flexShrink: 0, color: 'var(--s1)' }} />
             <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--s1)' }}>
               Scraping in progress —{' '}
               <span style={{ fontFamily: 'var(--font-mono)' }}>

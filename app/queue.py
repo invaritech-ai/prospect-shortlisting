@@ -27,19 +27,38 @@ configure_logging()
 # SQLAlchemy uses a dialect prefix (postgresql+psycopg://...) that psycopg rejects.
 _psycopg_dsn = settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
 
+_worker_concurrency_env = os.environ.get("PS_WORKER_CONCURRENCY", "").strip()
+try:
+    _worker_concurrency = max(1, int(_worker_concurrency_env)) if _worker_concurrency_env else 1
+except ValueError:
+    _worker_concurrency = 1
+_pool_min_size = max(1, settings.procrastinate_pool_min_size)
+_pool_max_default = max(_pool_min_size, _worker_concurrency + 2)
+_pool_max_size_env = os.environ.get("PS_PROCRASTINATE_POOL_MAX_SIZE", "").strip()
+try:
+    _pool_max_size_override = max(1, int(_pool_max_size_env)) if _pool_max_size_env else None
+except ValueError:
+    _pool_max_size_override = None
+_pool_max_size = max(
+    _pool_min_size,
+    settings.procrastinate_pool_max_size,
+    _pool_max_default,
+    _pool_max_size_override or 0,
+)
+
 _connector = PsycopgConnector(
     conninfo=_psycopg_dsn,
-    min_size=1,   # one warm connection; avoids fully cold starts on worker boot
-    max_size=4,   # concurrency + headroom; tune up if worker -c > 3
-    timeout=60,   # remote DB takes ~3 s per connection; 30 s default is too tight
+    min_size=_pool_min_size,
+    max_size=_pool_max_size,
+    timeout=settings.procrastinate_pool_timeout_sec,
     # kwargs is a named pool param (not **kwargs); defaults to None which causes
     # **pool.kwargs to crash in listen_notify. Pass explicit connection-level args.
     kwargs={
-        "connect_timeout": 10,
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 10,
-        "keepalives_count": 3,
+        "connect_timeout": settings.db_connect_timeout_sec,
+        "keepalives": settings.db_keepalives,
+        "keepalives_idle": settings.db_keepalives_idle_sec,
+        "keepalives_interval": settings.db_keepalives_interval_sec,
+        "keepalives_count": settings.db_keepalives_count,
     },
 )
 

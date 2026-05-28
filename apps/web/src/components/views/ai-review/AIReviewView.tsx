@@ -20,9 +20,10 @@ interface AIReviewViewProps {
   stats?: StatsResponse | null
   campaignId: string
   onActiveJobChange?: (job: AiReviewJobRead | null, status: AiReviewJobStatusRead | null) => void
+  onUnclassifiedCountChange?: (count: number) => void
 }
 
-export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }: AIReviewViewProps) {
+export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, onUnclassifiedCountChange }: AIReviewViewProps) {
   const stats = rawStats ?? MOCK_STATS
 
   const [rows, setRows]             = useState<MockAIRow[]>(MOCK_AI_ROWS)
@@ -37,6 +38,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
   const [filter, setFilter]         = useState<AIReviewFilter>('all')
   const [search, setSearch]         = useState('')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false)
   const [reasoningRow, setReasoningRow] = useState<MockAIRow | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -191,6 +193,10 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
   }, [activeJob, activeJobStatus, onActiveJobChange])
 
   useEffect(() => {
+    onUnclassifiedCountChange?.(labelCounts?.unclassified ?? 0)
+  }, [labelCounts?.unclassified, onUnclassifiedCountChange])
+
+  useEffect(() => {
     if (!activeJob) return
     const id = window.setInterval(() => setRefreshNonce((n) => n + 1), 10000)
     return () => window.clearInterval(id)
@@ -206,6 +212,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
   const visibleRows = useMemo(() => rows, [rows])
 
   function toggleSelect(id: string) {
+    setAllMatchingSelected(false)
     setSelected((prev) => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
@@ -214,6 +221,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
   }
 
   function toggleSelectAll() {
+    setAllMatchingSelected(false)
     if (visibleRows.every((r) => selected.has(r.id))) {
       setSelected(new Set())
     } else {
@@ -226,12 +234,23 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
   }
 
   function handleBulkLabel(verdict: AIVerdict) {
+    setAllMatchingSelected(false)
     const ids = [...selected]
     setRows((prev) => prev.map((r) => ids.includes(r.id) ? { ...r, verdict } : r))
     setSelected(new Set())
   }
 
   const unclassifiedCount = labelCounts?.unclassified ?? 0
+  const possibleCount = labelCounts?.possible ?? 0
+  const matchingCount = filter === 'all'
+    ? (labelCounts?.all ?? domainTotal)
+    : filter === 'unclassified'
+      ? (labelCounts?.unclassified ?? 0)
+      : filter === 'Possible'
+        ? (labelCounts?.possible ?? 0)
+        : filter === 'Unknown'
+          ? (labelCounts?.unknown ?? 0)
+          : (labelCounts?.crap ?? 0)
   const activeDone = activeJobStatus ? activeJobStatus.succeeded + activeJobStatus.failed : 0
   const activeSelected = activeJobStatus?.selected ?? activeJob?.selected_domain_count ?? 0
   const etaSecs = stats.analysis?.eta_seconds ?? null
@@ -239,6 +258,18 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
 
   function goToPage(nextPage: number) {
     setPage(nextPage)
+    if (!allMatchingSelected) {
+      setSelected(new Set())
+    }
+  }
+
+  function selectAllMatching() {
+    setAllMatchingSelected(true)
+    setSelected(new Set(visibleRows.map((r) => r.id)))
+  }
+
+  function clearSelection() {
+    setAllMatchingSelected(false)
     setSelected(new Set())
   }
 
@@ -255,11 +286,12 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
           : undefined
       const job = await createAiReviewJob({
         campaign_id: campaignId,
-        domain_ids: mode === 'selected' ? selectedIds : undefined,
+        domain_ids: mode === 'selected' && !allMatchingSelected ? selectedIds : undefined,
         label,
         letter: mode !== 'selected' && letterFilter !== 'all' ? letterFilter : undefined,
         search: mode !== 'selected' && search.trim() ? search.trim() : undefined,
       })
+      setAllMatchingSelected(false)
       setSelected(new Set())
       setActiveJob(job)
       setRefreshNonce((n) => n + 1)
@@ -287,11 +319,11 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
             label: creatingJob ? 'Queueing…' : `Classify ${unclassifiedCount.toLocaleString()} unclassified`,
             onClick: () => void startAiReviewJob('unclassified'),
           } : {
-            label: creatingJob ? 'Queueing…' : 'Classify unreviewed',
+            label: creatingJob ? 'Queueing…' : 'Classify unclassified',
             onClick: () => void startAiReviewJob('filter'),
           }}
-          secondaryAction={rows.filter((r) => r.verdict === 'Possible').length > 0 ? {
-            label: `${rows.filter((r) => r.verdict === 'Possible').length} possible →`,
+          secondaryAction={possibleCount > 0 ? {
+            label: `${possibleCount.toLocaleString()} possible →`,
             onClick: () => setFilter('Possible'),
           } : undefined}
         />
@@ -350,19 +382,25 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
           filter={filter}
           search={search}
           selectedIds={selected}
+          allMatchingSelected={allMatchingSelected}
+          matchingCount={matchingCount}
+          isBatchActive={Boolean(activeJob)}
           onFilterChange={(value) => {
             setFilter(value)
             setPage(0)
+            setAllMatchingSelected(false)
             setSelected(new Set())
           }}
           onSearchChange={(value) => {
             setSearch(value)
             setPage(0)
+            setAllMatchingSelected(false)
             setSelected(new Set())
           }}
-          onClassifyAll={() => void startAiReviewJob(selected.size > 0 ? 'selected' : (filter === 'all' ? 'unclassified' : 'filter'))}
+          onClassifyAll={() => void startAiReviewJob((allMatchingSelected || selected.size === 0) ? (filter === 'all' ? 'unclassified' : 'filter') : 'selected')}
+          onSelectAllMatching={selectAllMatching}
           onBulkLabel={handleBulkLabel}
-          onClearSelection={() => setSelected(new Set())}
+          onClearSelection={clearSelection}
         />
 
         {loading ? (
@@ -431,6 +469,27 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange }:
 
       <AIReasoningDrawer row={reasoningRow} campaignId={campaignId} onClose={() => setReasoningRow(null)} />
       <AISettingsDrawer isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} campaignId={campaignId} />
+      {creatingJob && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'color-mix(in srgb, var(--oc-bg) 70%, transparent)',
+            zIndex: 80,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'auto',
+          }}
+        >
+          <div className="oc-panel" style={{ padding: '1rem 1.25rem', minWidth: '280px', textAlign: 'center' }}>
+            <div style={{ fontWeight: 800, color: 'var(--s2)', marginBottom: '0.375rem' }}>Queueing AI decision batch…</div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)' }}>
+              Matching domains are being resolved server-side.
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

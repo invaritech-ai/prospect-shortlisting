@@ -6,7 +6,7 @@ import { BottomSheet } from './bottom-nav/BottomSheet'
 import type { SheetItem } from './bottom-nav/BottomSheet'
 import {
   IconPulse, IconBuilding, IconGlobe, IconChart, IconUsers,
-  IconCheck, IconSliders, IconCog,
+  IconCheck, IconSliders, IconCog, IconWorkflow,
 } from '../ui/icons'
 
 // Tab 1 — Home: Dashboard + Campaigns
@@ -19,23 +19,6 @@ const HOME_ITEMS: SheetItem[] = [
 const TOOLS_ITEMS: SheetItem[] = [
   { view: 'full-pipeline', label: 'Full Pipeline', Icon: IconSliders },
 ]
-
-// Icon for "Pipeline" tab — four small squares representing stages
-function IconPipeline({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2"  y="3"  width="5" height="5" rx="1.5" />
-      <rect x="9"  y="3"  width="5" height="5" rx="1.5" />
-      <rect x="16" y="3"  width="6" height="5" rx="1.5" />
-      <rect x="2"  y="16" width="20" height="5" rx="1.5" />
-      <line x1="4.5"  y1="8"  x2="4.5"  y2="12" />
-      <line x1="11.5" y1="8"  x2="11.5" y2="12" />
-      <line x1="19"   y1="8"  x2="19"   y2="12" />
-      <line x1="4.5"  y1="12" x2="19"   y2="12" />
-      <line x1="12"   y1="12" x2="12"   y2="16" />
-    </svg>
-  )
-}
 
 const HOME_VIEWS:     ActiveView[] = ['dashboard', 'campaigns']
 const PIPELINE_VIEWS: ActiveView[] = ['s1-scraping', 's2-ai', 's3-contacts', 's5-validation']
@@ -52,6 +35,7 @@ interface BottomNavProps {
   stats?: StatsResponse | null
   scrapeRemainingCount?: number | null
   scrapeIsLive?: boolean
+  aiUnclassifiedCount?: number | null
 }
 
 interface TabProps {
@@ -86,6 +70,7 @@ export function BottomNav({
   stats: rawStats,
   scrapeRemainingCount,
   scrapeIsLive,
+  aiUnclassifiedCount,
 }: BottomNavProps) {
   const counts = rawCounts ?? MOCK_COMPANY_COUNTS
   const stats  = rawStats  ?? MOCK_STATS
@@ -102,9 +87,12 @@ export function BottomNav({
   }
 
   // Pipeline items get live counts + dots from mock/real data
+  const aiRunning = stats.analysis?.running ?? 0
+  const aiQueued = stats.analysis?.queued ?? 0
+  const aiQueueLength = Math.max(0, aiRunning + aiQueued)
   const pipelineItems: SheetItem[] = [
-    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: scrapeRemainingCount ?? counts.uploaded, isLive: scrapeIsLive ?? (stats.scrape.running > 0 || stats.scrape.queued > 0) },
-    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: (stats.analysis?.running ?? 0) + (stats.analysis?.queued ?? 0) > 0 ? (stats.analysis?.running ?? 0) + (stats.analysis?.queued ?? 0) : counts.unknown,        isLive: (stats.analysis?.running ?? 0) > 0 },
+    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: stats.scrape.running > 0 ? stats.scrape.running : (scrapeRemainingCount ?? counts.uploaded), isLive: scrapeIsLive ?? (stats.scrape.running > 0) },
+    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: aiRunning > 0 ? aiQueueLength : Math.max(0, aiUnclassifiedCount ?? 0),        isLive: aiRunning > 0 },
     { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: counts.contact_ready,  isLive: (stats.contact_fetch?.running ?? 0) > 0 },
     { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)',
       count: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),
@@ -132,7 +120,7 @@ export function BottomNav({
       {/* Bottom bar — 4 tabs */}
       <nav className="oc-bottom-nav" aria-label="Mobile navigation">
         <Tab id="home"     label="Home"     Icon={IconPulse}    isActive={isHomeActive}     isOpen={openSheet === 'home'}     onClick={() => toggle('home')} />
-        <Tab id="pipeline" label="Pipeline" Icon={IconPipeline} isActive={isPipelineActive} isOpen={openSheet === 'pipeline'} onClick={() => toggle('pipeline')} />
+        <Tab id="pipeline" label="Pipeline" Icon={IconWorkflow} isActive={isPipelineActive} isOpen={openSheet === 'pipeline'} onClick={() => toggle('pipeline')} />
         <Tab id="tools"    label="Tools"    Icon={IconSliders}  isActive={isToolsActive}    isOpen={openSheet === 'tools'}    onClick={() => toggle('tools')} />
         <Tab id="config"   label="Config"   Icon={IconCog}      isActive={isConfigActive}   isOpen={false}                   onClick={() => navigate('settings')} />
       </nav>

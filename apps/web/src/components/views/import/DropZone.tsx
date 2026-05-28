@@ -1,4 +1,5 @@
 import type { DragEvent } from 'react'
+import { CheckCircle2, FileText } from 'lucide-react'
 
 export type DropZoneState = 'idle' | 'dragging' | 'selected'
 
@@ -13,20 +14,11 @@ interface DropZoneProps {
 const ACCEPT = '.csv,.txt,.xls,.xlsx'
 
 const FILE_ICON = (
-  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
-    <line x1="16" y1="13" x2="8" y2="13" />
-    <line x1="16" y1="17" x2="8" y2="17" />
-    <line x1="10" y1="9" x2="8" y2="9" />
-  </svg>
+  <FileText size={40} strokeWidth={1.5} />
 )
 
 const CHECK_ICON = (
-  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" />
-    <polyline points="8 12 11 15 16 9" />
-  </svg>
+  <CheckCircle2 size={36} strokeWidth={2} />
 )
 
 export function DropZone({ file, state, estimatedRows, onFileChange, onDragStateChange }: DropZoneProps) {

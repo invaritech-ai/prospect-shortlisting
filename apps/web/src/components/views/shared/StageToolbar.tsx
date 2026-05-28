@@ -80,12 +80,11 @@ export function StageToolbar({
 
         {/* Search — expands to fill remaining space */}
         <div style={{ position: 'relative', flex: 1, minWidth: '140px', maxWidth: '280px' }}>
-          <svg
+          <Search
             style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--oc-muted)', pointerEvents: 'none' }}
-            width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-          >
-            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
+            size={13}
+            strokeWidth={2.2}
+          />
           <input
             type="search"
             value={search}
@@ -118,9 +117,7 @@ export function StageToolbar({
               onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
               onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.55' }}
             >
-              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
+              <IconX size={8} />
             </button>
           )}
         </div>
@@ -208,3 +205,5 @@ export function StageToolbar({
     </div>
   )
 }
+import { IconX } from '../../ui/icons'
+import { Search } from 'lucide-react'

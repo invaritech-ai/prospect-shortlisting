@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CampaignRead } from '../../../lib/types'
+import { IconChevronDown } from '../../ui/icons'
 
 interface CampaignPickerProps {
   campaigns: CampaignRead[]
@@ -56,10 +57,10 @@ export function CampaignPicker({ campaigns, selectedId, onSelect, onManage, coll
         )}
 
         {!collapsed && (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-            style={{ flexShrink: 0, color: 'var(--oc-muted)', transition: 'transform 160ms', transform: open ? 'rotate(180deg)' : 'none' }}>
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          <IconChevronDown
+            size={12}
+            style={{ flexShrink: 0, color: 'var(--oc-muted)', transition: 'transform 160ms', transform: open ? 'rotate(180deg)' : 'none' }}
+          />
         )}
       </button>
 
