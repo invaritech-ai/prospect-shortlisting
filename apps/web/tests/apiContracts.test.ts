@@ -67,6 +67,7 @@ test('getIntegrationSettings requests the masked integrations endpoint', async (
   assert.match(requested, /\/v1\/settings\/integrations$/)
 })
 
+
 test('updateIntegrationProvider serializes provider field updates', async () => {
   let requested = ''
   let method = ''

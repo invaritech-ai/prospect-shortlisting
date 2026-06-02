@@ -11,12 +11,14 @@ from app.api.schemas.campaign import (
     CampaignCreate,
     CampaignList,
     CampaignRead,
+    CampaignStageCounts,
     CampaignUpdate,
 )
 from app.api.schemas.pipeline_run import PipelineCostSummaryRead
 from app.db.session import get_session
 from app.models.core import Campaign, Upload, UploadedDomain
 from app.models.base import utcnow
+from app.services.campaign_stage_counts import build_campaign_stage_counts
 
 router = APIRouter(prefix="/v1", tags=["campaigns"])
 
@@ -30,7 +32,7 @@ def _domain_stats_subquery():
             func.count(col(UploadedDomain.scrape_status)).label("scrape_count"),
             func.count(col(UploadedDomain.decision_status)).label("classified_count"),
             func.sum(
-                case((col(UploadedDomain.decision_status) == "Possible", 1), else_=0)
+                case((func.lower(col(UploadedDomain.decision_status)) == "possible", 1), else_=0)
             ).label("possible_count"),
             func.count(col(UploadedDomain.fetch_status)).label("contact_count"),
         )
@@ -169,6 +171,14 @@ def get_campaign(campaign_id: UUID, session: Session = Depends(get_session)) -> 
         raise HTTPException(status_code=404, detail="Campaign not found.")
     counts = _get_campaign_counts(session, campaign_id)
     return _as_campaign_read(campaign=campaign, **counts)
+
+
+@router.get("/campaigns/{campaign_id}/stage-counts", response_model=CampaignStageCounts)
+def get_campaign_stage_counts(campaign_id: UUID, session: Session = Depends(get_session)) -> CampaignStageCounts:
+    counts = build_campaign_stage_counts(session=session, campaign_id=campaign_id)
+    if counts is None:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return counts
 
 
 @router.get("/campaigns/{campaign_id}/costs", response_model=PipelineCostSummaryRead)

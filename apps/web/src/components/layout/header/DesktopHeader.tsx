@@ -1,4 +1,4 @@
-import type { StatsResponse } from '../../../lib/types'
+import type { CampaignStageCounts } from '../../../lib/types'
 import { LiveStatus } from './LiveStatus'
 import { IconUsers } from '../../ui/icons'
 
@@ -8,7 +8,7 @@ interface DesktopHeaderProps {
   Icon: React.FC<{ size?: number; className?: string }>
   stageColor: string | undefined
   campaignName: string | null | undefined
-  stats: StatsResponse | null
+  stageCounts: CampaignStageCounts | null
   authEnabled: boolean
   userDisplayName?: string | null
   onLogout?: () => void
@@ -16,7 +16,7 @@ interface DesktopHeaderProps {
 
 export function DesktopHeader({
   viewLabel, activeView, Icon, stageColor, campaignName,
-  stats, authEnabled, userDisplayName, onLogout,
+  stageCounts, authEnabled, userDisplayName, onLogout,
 }: DesktopHeaderProps) {
   const accentColor = stageColor ?? 'var(--oc-accent)'
 
@@ -56,7 +56,7 @@ export function DesktopHeader({
 
       {/* Centre — live status (flex-1 so it fills remaining space) */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <LiveStatus stats={stats} stageColor={stageColor} activeView={activeView} />
+        <LiveStatus stageCounts={stageCounts} stageColor={stageColor} activeView={activeView} />
       </div>
 
       {/* Right — user + logout */}

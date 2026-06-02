@@ -1,6 +1,5 @@
-import type { CampaignRead, CompanyCounts, StatsResponse } from '../../lib/types'
+import type { CampaignRead, CampaignStageCounts } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
-import { MOCK_COMPANY_COUNTS, MOCK_STATS } from '../../lib/useAppData'
 import { CampaignPicker } from './sidebar/CampaignPicker'
 import { NavSection }    from './sidebar/NavSection'
 import { StageNavItem }  from './sidebar/StageNavItem'
@@ -17,11 +16,7 @@ interface SidebarProps {
   onSelectCampaign: (id: string) => void
   collapsed: boolean
   onToggleCollapsed: () => void
-  companyCounts?: CompanyCounts | null
-  stats?: StatsResponse | null
-  scrapeRemainingCount?: number | null
-  scrapeIsLive?: boolean
-  aiUnclassifiedCount?: number | null
+  stageCounts?: CampaignStageCounts | null
 }
 
 export function Sidebar({
@@ -29,33 +24,24 @@ export function Sidebar({
   campaigns: rawCampaigns,
   selectedCampaignId, onSelectCampaign,
   collapsed, onToggleCollapsed,
-  companyCounts: rawCounts,
-  stats: rawStats,
-  scrapeRemainingCount,
-  scrapeIsLive,
-  aiUnclassifiedCount,
+  stageCounts,
 }: SidebarProps) {
   const campaigns = rawCampaigns
-  const counts    = rawCounts ?? MOCK_COMPANY_COUNTS
-  const stats     = rawStats  ?? MOCK_STATS
 
   const selectedId = selectedCampaignId ?? (campaigns[0]?.id ?? null)
 
-  const aiRunning = stats.analysis?.running ?? 0
-  const aiQueued = stats.analysis?.queued ?? 0
-  const aiQueueLength = Math.max(0, aiRunning + aiQueued)
-  const stageCounts = {
-    s1: stats.scrape.running > 0 ? stats.scrape.running : (scrapeRemainingCount ?? counts.uploaded),
-    s2: aiRunning > 0 ? aiQueueLength : Math.max(0, aiUnclassifiedCount ?? 0),
-    s3: counts.contact_ready,
-    s5: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),
+  const navCounts = {
+    s1: stageCounts?.scraping.badge ?? 0,
+    s2: stageCounts?.ai_review.badge ?? 0,
+    s3: stageCounts?.contacts.badge ?? 0,
+    s5: stageCounts?.validation.badge ?? 0,
   }
 
   const stageLive = {
-    s1: scrapeIsLive ?? (stats.scrape.running > 0),
-    s2: aiRunning > 0,
-    s3: (stats.contact_fetch?.running ?? 0) > 0,
-    s5: (stats.validation?.running ?? 0) > 0,
+    s1: stageCounts?.scraping.is_live ?? false,
+    s2: stageCounts?.ai_review.is_live ?? false,
+    s3: stageCounts?.contacts.is_live ?? false,
+    s5: stageCounts?.validation.is_live ?? false,
   }
 
   function nav(view: ActiveView) { return () => setActiveView(view) }
@@ -119,10 +105,10 @@ export function Sidebar({
           </NavSection>
 
           <NavSection label="Pipeline" collapsed={collapsed}>
-            <StageNavItem view="s1-scraping"   label="Scraping"         stageColor="var(--s1)" Icon={IconGlobe}  isActive={isActive('s1-scraping')}   count={stageCounts.s1} isLive={stageLive.s1} collapsed={collapsed} onClick={nav('s1-scraping')} />
-            <StageNavItem view="s2-ai"         label="AI Review"        stageColor="var(--s2)" Icon={IconChart}  isActive={isActive('s2-ai')}         count={stageCounts.s2} isLive={stageLive.s2} collapsed={collapsed} onClick={nav('s2-ai')} />
-            <StageNavItem view="s3-contacts"   label="Contacts & Email" stageColor="var(--s3)" Icon={IconUsers}  isActive={isActive('s3-contacts')}   count={stageCounts.s3} isLive={stageLive.s3} collapsed={collapsed} onClick={nav('s3-contacts')} />
-            <StageNavItem view="s5-validation" label="Validation"       stageColor="var(--s5)" Icon={IconCheck}  isActive={isActive('s5-validation')} count={stageCounts.s5} isLive={stageLive.s5} collapsed={collapsed} onClick={nav('s5-validation')} />
+            <StageNavItem view="s1-scraping"   label="Scraping"         stageColor="var(--s1)" Icon={IconGlobe}  isActive={isActive('s1-scraping')}   count={navCounts.s1} isLive={stageLive.s1} collapsed={collapsed} onClick={nav('s1-scraping')} />
+            <StageNavItem view="s2-ai"         label="AI Review"        stageColor="var(--s2)" Icon={IconChart}  isActive={isActive('s2-ai')}         count={navCounts.s2} isLive={stageLive.s2} collapsed={collapsed} onClick={nav('s2-ai')} />
+            <StageNavItem view="s3-contacts"   label="Contacts & Email" stageColor="var(--s3)" Icon={IconUsers}  isActive={isActive('s3-contacts')}   count={navCounts.s3} isLive={stageLive.s3} collapsed={collapsed} onClick={nav('s3-contacts')} />
+            <StageNavItem view="s5-validation" label="Validation"       stageColor="var(--s5)" Icon={IconCheck}  isActive={isActive('s5-validation')} count={navCounts.s5} isLive={stageLive.s5} collapsed={collapsed} onClick={nav('s5-validation')} />
           </NavSection>
 
           <NavSection label="Tools" collapsed={collapsed}>

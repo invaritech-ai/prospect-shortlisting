@@ -1,6 +1,6 @@
-import type { ContactFetchStatus } from '../../../lib/useAppData'
+import type { EmailFetchCompanyStatus } from '../../../lib/types'
 
-const CONFIG: Record<ContactFetchStatus, { label: string; color: string; bg: string; dot?: boolean }> = {
+const CONFIG: Record<EmailFetchCompanyStatus, { label: string; color: string; bg: string; dot?: boolean }> = {
   pending:  { label: 'Pending',   color: 'var(--oc-muted)',         bg: 'var(--oc-surface-dim)' },
   running:  { label: 'Fetching',  color: 'var(--s3)',               bg: 'var(--s3-bg)',    dot: true },
   done:     { label: 'Done',      color: 'var(--oc-success-text)',   bg: 'var(--oc-success-bg)' },
@@ -8,7 +8,7 @@ const CONFIG: Record<ContactFetchStatus, { label: string; color: string; bg: str
   no_match: { label: 'No match',  color: 'var(--oc-warn-text)',      bg: 'var(--oc-warn-bg)' },
 }
 
-export function ContactStatusBadge({ status }: { status: ContactFetchStatus }) {
+export function ContactStatusBadge({ status }: { status: EmailFetchCompanyStatus }) {
   const cfg = CONFIG[status]
   return (
     <span style={{

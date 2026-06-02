@@ -66,18 +66,16 @@ _RESOLVE_SQL: dict[str, str] = {
         "JOIN uploads u ON u.id = j.upload_id "
         "WHERE j.id = :jid"
     ),
-    "contact_fetch": (
-        "SELECT u.campaign_id::text FROM contact_fetch_jobs j "
-        "JOIN companies c ON c.id = j.company_id "
-        "JOIN uploads u ON u.id = c.upload_id "
-        "WHERE j.id = :jid"
+    "email_fetch_batch": (
+        "SELECT campaign_id::text FROM email_fetch_batches "
+        "WHERE id = :jid"
     ),
 }
 
 _STAGE_LABEL: dict[str, str] = {
     "crawl": "s1",
     "analysis": "s2",
-    "contact_fetch": "s3",
+    "email_fetch_batch": "s3",
 }
 
 
@@ -104,6 +102,23 @@ def _format_sse(data: dict) -> bytes:
     return f"data: {json.dumps(data, default=str)}\n\n".encode("utf-8")
 
 
+def _batch_event_payload(payload: dict, *, stage: str, event_type: str) -> dict:
+    batch_id = payload.get("batch_id") or payload.get("job_id")
+    return {
+        "stage": stage,
+        "event_type": event_type,
+        "batch_id": batch_id,
+        "job_id": batch_id,
+        "campaign_id": payload.get("campaign_id"),
+        "state": payload.get("state"),
+        "selected_domain_count": payload.get("selected_domain_count"),
+        "success_count": payload.get("success_count"),
+        "failed_count": payload.get("failed_count"),
+        "queued_count": payload.get("queued_count"),
+        "finished_at": payload.get("finished_at"),
+    }
+
+
 @router.get("/campaigns/{campaign_id}/events/stream")
 async def stream_campaign_events(
     campaign_id: UUID,
@@ -128,31 +143,21 @@ async def stream_campaign_events(
                     continue
 
                 job_type = str(payload.get("job_type") or "")
-                job_id = str(payload.get("job_id") or "")
+                job_id = str(payload.get("job_id") or payload.get("batch_id") or "")
                 if not job_type or not job_id:
                     continue
 
-                resolved = _resolve_campaign(session, job_type, job_id)
-                if resolved != target_campaign:
-                    continue
-
-                # scrape_batch events carry campaign_id directly — no DB join needed
-                if job_type == "scrape_batch":
+                # batch events carry campaign_id directly — no DB join needed
+                if job_type in {"scrape_batch", "email_fetch_batch"}:
                     if str(payload.get("campaign_id") or "") != target_campaign:
                         continue
-                    out = {
-                        "stage": "s1",
-                        "event_type": "scrape_batch",
-                        "batch_id": payload.get("batch_id"),
-                        "campaign_id": payload.get("campaign_id"),
-                        "state": payload.get("state"),
-                        "selected_domain_count": payload.get("selected_domain_count"),
-                        "success_count": payload.get("success_count"),
-                        "failed_count": payload.get("failed_count"),
-                        "queued_count": payload.get("queued_count"),
-                        "finished_at": payload.get("finished_at"),
-                    }
-                    yield _format_sse(out)
+                    yield _format_sse(
+                        _batch_event_payload(
+                            payload,
+                            stage="s3" if job_type == "email_fetch_batch" else "s1",
+                            event_type=job_type,
+                        )
+                    )
                     continue
 
                 resolved = _resolve_campaign(session, job_type, job_id)

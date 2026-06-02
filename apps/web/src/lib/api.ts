@@ -8,6 +8,8 @@ import type {
   CampaignCreate,
   CampaignList,
   CampaignRead,
+  CampaignStageCounts,
+  ContactList,
   DecisionSettingsCreate,
   DecisionSettingsList,
   DecisionSettingsRead,
@@ -15,6 +17,16 @@ import type {
   DomainList,
   DomainLetterCounts,
   DomainScrapeCounts,
+  EmailFetchBatchCreate,
+  EmailFetchBatchRead,
+  EmailFetchCompanyIds,
+  EmailFetchCompanyList,
+  EmailFetchCompanyStatus,
+  EmailFetchCriteriaRead,
+  EmailFetchCriteriaSaveRequest,
+  EmailFetchPreviewRead,
+  EmailFetchPreviewRequest,
+  FetchedPersonList,
   IntegrationHealthItem,
   IntegrationProviderId,
   IntegrationProviderStatus,
@@ -144,6 +156,10 @@ export async function deleteCampaign(campaignId: string): Promise<void> {
 
 export async function getCampaignCosts(campaignId: string): Promise<PipelineCostSummaryRead> {
   return request<PipelineCostSummaryRead>(`/v1/campaigns/${encodeURIComponent(campaignId)}/costs`)
+}
+
+export async function getCampaignStageCounts(campaignId: string): Promise<CampaignStageCounts> {
+  return request<CampaignStageCounts>(`/v1/campaigns/${encodeURIComponent(campaignId)}/stage-counts`)
 }
 
 // ── Uploads ───────────────────────────────────────────────────────────────────
@@ -288,6 +304,149 @@ export async function getDomainLetterCounts(
 
 export async function getDomainScrapeCounts(campaignId: string): Promise<DomainScrapeCounts> {
   return request<DomainScrapeCounts>(`/v1/domains/scrape-counts?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+// ── S3 Email Fetch ───────────────────────────────────────────────────────────
+
+export async function getEmailFetchCriteria(campaignId: string): Promise<EmailFetchCriteriaRead> {
+  return request<EmailFetchCriteriaRead>(`/v1/email-fetch/criteria?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function saveEmailFetchCriteria(payload: EmailFetchCriteriaSaveRequest): Promise<EmailFetchCriteriaRead> {
+  return request<EmailFetchCriteriaRead>('/v1/email-fetch/criteria', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function listEmailFetchCompanies(
+  campaignId: string,
+  {
+    status,
+    letter,
+    search,
+    limit = 200,
+    offset = 0,
+  }: {
+    status?: 'all' | EmailFetchCompanyStatus
+    letter?: string
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<EmailFetchCompanyList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (status) params.set('status', status)
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<EmailFetchCompanyList>(`/v1/email-fetch/companies?${params.toString()}`)
+}
+
+export async function getEmailFetchLetterCounts(
+  campaignId: string,
+  {
+    status,
+    search,
+  }: {
+    status?: 'all' | EmailFetchCompanyStatus
+    search?: string
+  } = {},
+): Promise<DomainLetterCounts> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (status) params.set('status', status)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<DomainLetterCounts>(`/v1/email-fetch/letter-counts?${params.toString()}`)
+}
+
+export async function listEmailFetchCompanyIds(
+  campaignId: string,
+  {
+    status,
+    letter,
+    search,
+    fetchableOnly = false,
+    limit = 200,
+    offset = 0,
+  }: {
+    status?: 'all' | EmailFetchCompanyStatus
+    letter?: string
+    search?: string
+    fetchableOnly?: boolean
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<EmailFetchCompanyIds> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (status) params.set('status', status)
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
+  if (fetchableOnly) params.set('fetchable_only', 'true')
+  return request<EmailFetchCompanyIds>(`/v1/email-fetch/company-ids?${params.toString()}`)
+}
+
+export async function previewEmailFetch(body: EmailFetchPreviewRequest): Promise<EmailFetchPreviewRead> {
+  return request<EmailFetchPreviewRead>('/v1/email-fetch/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function createEmailFetchBatch(body: EmailFetchBatchCreate): Promise<EmailFetchBatchRead> {
+  return request<EmailFetchBatchRead>('/v1/email-fetch/batches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getEmailFetchBatch(batchId: string): Promise<EmailFetchBatchRead> {
+  return request<EmailFetchBatchRead>(`/v1/email-fetch/batches/${encodeURIComponent(batchId)}`)
+}
+
+export async function getActiveEmailFetchBatch(campaignId: string): Promise<EmailFetchBatchRead | null> {
+  return request<EmailFetchBatchRead | null>(`/v1/email-fetch/batches/active?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function listContacts(
+  campaignId: string,
+  {
+    domainId,
+    hasEmail,
+    limit = 200,
+    offset = 0,
+  }: {
+    domainId?: string
+    hasEmail?: boolean
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<ContactList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (domainId) params.set('domain_id', domainId)
+  if (typeof hasEmail === 'boolean') params.set('has_email', String(hasEmail))
+  return request<ContactList>(`/v1/contacts?${params.toString()}`)
+}
+
+export async function listFetchedPeople(
+  campaignId: string,
+  {
+    domainId,
+    status,
+    limit = 200,
+    offset = 0,
+  }: {
+    domainId?: string
+    status?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<FetchedPersonList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (domainId) params.set('domain_id', domainId)
+  if (status) params.set('status', status)
+  return request<FetchedPersonList>(`/v1/fetched-people?${params.toString()}`)
 }
 
 // ── S1 Scrape Batches ─────────────────────────────────────────────────────────

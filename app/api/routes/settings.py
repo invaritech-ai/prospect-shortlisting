@@ -60,7 +60,7 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "zerobounce": {
         "label": "ZeroBounce",
-        "description": "Email verification provider used in S4 validation.",
+        "description": "Email verification provider used after S3 email fetch.",
         "fields": ["api_key"],
     },
 }
@@ -250,7 +250,7 @@ def _check_apollo() -> tuple[bool, str, str, str]:
 
     # Step 2: probe enrichment permission via /people/match with an empty body.
     # A 200 (even with no match) means the plan allows enrichment.
-    # A 403 means the plan does not include enrichment — S4 reveal will fail.
+    # A 403 means the plan does not include enrichment, so S3 email fetch cannot reveal emails.
     try:
         enrich_resp = httpx.post(
             "https://api.apollo.io/api/v1/people/match",
@@ -264,7 +264,7 @@ def _check_apollo() -> tuple[bool, str, str, str]:
     if enrich_resp.status_code == 403:
         return False, source, ERR_APOLLO_AUTH_FAILED, (
             "Apollo key is valid for search but lacks enrichment permission "
-            "(people/match returned 403). S4 email reveal will not work. "
+            "(people/match returned 403). S3 email fetch will not be able to reveal emails. "
             "Upgrade to an Apollo plan that includes enrichment credits."
         )
     if enrich_resp.status_code in {401}:

@@ -29,6 +29,7 @@ services:
             - .env
         environment:
             PS_WORKER_PROCESS: "1"
+            PS_WORKER_CONCURRENCY: "2"
         depends_on:
             api:
                 condition: service_healthy
@@ -52,6 +53,7 @@ services:
             - .env
         environment:
             PS_WORKER_PROCESS: "1"
+            PS_WORKER_CONCURRENCY: "2"
         depends_on:
             api:
                 condition: service_healthy
@@ -75,6 +77,7 @@ services:
             - .env
         environment:
             PS_WORKER_PROCESS: "1"
+            PS_WORKER_CONCURRENCY: "1"
         depends_on:
             api:
                 condition: service_healthy
@@ -87,9 +90,9 @@ services:
             - "--app=app.queue.app"
             - "worker"
             - "-q"
-            - "contact_fetch,email_reveal,validation"
+            - "contact_fetch"
             - "-c"
-            - "5"
+            - "1"
         restart: unless-stopped
 
     # Operator UI (Vite). Pair with docker-compose.local.yml so the browser can

@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import type { ActiveView } from '../../lib/navigation'
-import type { CompanyCounts, StatsResponse } from '../../lib/types'
-import { MOCK_COMPANY_COUNTS, MOCK_STATS } from '../../lib/useAppData'
+import type { CampaignStageCounts } from '../../lib/types'
 import { BottomSheet } from './bottom-nav/BottomSheet'
 import type { SheetItem } from './bottom-nav/BottomSheet'
 import {
@@ -31,11 +30,7 @@ interface BottomNavProps {
   activeView: ActiveView
   setActiveView: (v: ActiveView) => void
   onOpenPromptLibrary: () => void
-  companyCounts?: CompanyCounts | null
-  stats?: StatsResponse | null
-  scrapeRemainingCount?: number | null
-  scrapeIsLive?: boolean
-  aiUnclassifiedCount?: number | null
+  stageCounts?: CampaignStageCounts | null
 }
 
 interface TabProps {
@@ -66,15 +61,8 @@ function Tab({ label, Icon, isActive, isOpen, onClick }: TabProps) {
 
 export function BottomNav({
   activeView, setActiveView,
-  companyCounts: rawCounts,
-  stats: rawStats,
-  scrapeRemainingCount,
-  scrapeIsLive,
-  aiUnclassifiedCount,
+  stageCounts,
 }: BottomNavProps) {
-  const counts = rawCounts ?? MOCK_COMPANY_COUNTS
-  const stats  = rawStats  ?? MOCK_STATS
-
   const [openSheet, setOpenSheet] = useState<OpenSheet>(null)
 
   function toggle(sheet: OpenSheet) {
@@ -86,17 +74,12 @@ export function BottomNav({
     setOpenSheet(null)
   }
 
-  // Pipeline items get live counts + dots from mock/real data
-  const aiRunning = stats.analysis?.running ?? 0
-  const aiQueued = stats.analysis?.queued ?? 0
-  const aiQueueLength = Math.max(0, aiRunning + aiQueued)
+  // Pipeline items are rendered from the shared campaign stage-count contract.
   const pipelineItems: SheetItem[] = [
-    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: stats.scrape.running > 0 ? stats.scrape.running : (scrapeRemainingCount ?? counts.uploaded), isLive: scrapeIsLive ?? (stats.scrape.running > 0) },
-    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: aiRunning > 0 ? aiQueueLength : Math.max(0, aiUnclassifiedCount ?? 0),        isLive: aiRunning > 0 },
-    { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: counts.contact_ready,  isLive: (stats.contact_fetch?.running ?? 0) > 0 },
-    { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)',
-      count: Math.max(0, (stats.validation?.total ?? 0) - (stats.validation?.succeeded ?? 0) - (stats.validation?.failed ?? 0)),
-      isLive: (stats.validation?.running ?? 0) > 0 },
+    { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: stageCounts?.scraping.badge ?? 0, isLive: stageCounts?.scraping.is_live ?? false },
+    { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: stageCounts?.ai_review.badge ?? 0, isLive: stageCounts?.ai_review.is_live ?? false },
+    { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: stageCounts?.contacts.badge ?? 0, isLive: stageCounts?.contacts.is_live ?? false },
+    { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)', count: stageCounts?.validation.badge ?? 0, isLive: stageCounts?.validation.is_live ?? false },
   ]
 
   const isHomeActive     = HOME_VIEWS.includes(activeView)

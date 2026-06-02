@@ -269,23 +269,24 @@ def get_active_batch(
     session: Session = Depends(get_session),
 ) -> ScrapeBatchRead | None:
     started = time.perf_counter()
-    rows = session.exec(
+    batch = session.exec(
         select(ScrapeBatch)
-        .where(col(ScrapeBatch.campaign_id) == campaign_id)
+        .where(
+            col(ScrapeBatch.campaign_id) == campaign_id,
+            col(ScrapeBatch.state).in_(["queued", "dispatching", "running"]),
+        )
         .order_by(col(ScrapeBatch.created_at).desc())
-        .limit(20)
-    ).all()
-    for batch in rows:
-        status = build_scrape_job_status(session=session, batch_id=batch.id)
-        if status and status.state in {"queued", "running"}:
-            elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-            logger.info(
-                "poll_active_batch campaign_id=%s active=true batch_id=%s elapsed_ms=%s",
-                campaign_id,
-                batch.id,
-                elapsed_ms,
-            )
-            return _status_to_batch_read(batch, status)
+        .limit(1)
+    ).first()
+    if batch is not None:
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        logger.info(
+            "poll_active_batch campaign_id=%s active=true batch_id=%s elapsed_ms=%s",
+            campaign_id,
+            batch.id,
+            elapsed_ms,
+        )
+        return _batch_read(batch)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     logger.info(
         "poll_active_batch campaign_id=%s active=false elapsed_ms=%s",

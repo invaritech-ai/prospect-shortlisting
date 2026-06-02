@@ -1,4 +1,4 @@
-import type { StatsResponse } from '../../../lib/types'
+import type { CampaignStageCounts } from '../../../lib/types'
 import { LiveDot } from '../../ui/LiveDot'
 
 interface MobileHeaderProps {
@@ -6,29 +6,25 @@ interface MobileHeaderProps {
   Icon: React.FC<{ size?: number; className?: string }>
   stageColor: string | undefined
   campaignName: string | null | undefined
-  stats: StatsResponse | null
+  stageCounts: CampaignStageCounts | null
   authEnabled: boolean
   onLogout?: () => void
 }
 
-function isAnyActive(stats: StatsResponse): boolean {
+function isAnyActive(stageCounts: CampaignStageCounts): boolean {
   return (
-    stats.scrape.running > 0
-    || stats.scrape.queued > 0
-    || (stats.analysis?.running ?? 0) > 0
-    || (stats.analysis?.queued ?? 0) > 0
-    || (stats.contact_fetch?.running ?? 0) > 0
-    || (stats.contact_fetch?.queued ?? 0) > 0
-    || (stats.validation?.running ?? 0) > 0
-    || (stats.validation?.queued ?? 0) > 0
+    stageCounts.scraping.is_live
+    || stageCounts.ai_review.is_live
+    || stageCounts.contacts.is_live
+    || stageCounts.validation.is_live
   )
 }
 
 export function MobileHeader({
-  viewLabel, Icon, stageColor, campaignName, stats, authEnabled, onLogout,
+  viewLabel, Icon, stageColor, campaignName, stageCounts, authEnabled, onLogout,
 }: MobileHeaderProps) {
   const accentColor  = stageColor ?? 'var(--oc-accent)'
-  const isLive       = stats ? isAnyActive(stats) : false
+  const isLive       = stageCounts ? isAnyActive(stageCounts) : false
 
   return (
     <header className="oc-mobile-header">

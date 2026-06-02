@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.models.core import Campaign, Upload, UploadedDomain  # noqa: F401
 from app.models.scrape import ScrapeSettings, ScrapeBatch, ScrapeResult  # noqa: F401
 from app.models.classification import DecisionSettings, ClassificationBatch, ClassificationResult  # noqa: F401
-from app.models.contacts import RoleFetchCriteria, EmailFetchBatch, VerificationBatch, Contact  # noqa: F401
+from app.models.contacts import RoleFetchCriteria, EmailFetchBatch, VerificationBatch, Contact, FetchedPerson  # noqa: F401
 from app.models.settings import IntegrationSecret  # noqa: F401
 
 # this is the Alembic Config object, which provides
@@ -44,6 +44,7 @@ MANAGED_TABLES = {
     "role_fetch_criteria",
     "email_fetch_batches",
     "contacts",
+    "fetched_people",
     "verification_batches",
     "integration_secrets",
 }

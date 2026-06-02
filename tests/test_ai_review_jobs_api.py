@@ -177,3 +177,30 @@ def test_ai_review_job_status_counts_terminal_states() -> None:
     assert status.queued == 1
     assert status.succeeded == 1
     assert status.failed == 1
+
+
+def test_active_ai_review_job_uses_batch_state_without_scanning_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    with _session() as session:
+        campaign = Campaign(id=uuid4(), name="C1")
+        batch = ClassificationBatch(
+            id=uuid4(),
+            campaign_id=campaign.id,
+            state="running",
+            selected_domain_count=5,
+            queued_count=3,
+            success_count=1,
+            failed_count=1,
+        )
+        session.add(campaign)
+        session.add(batch)
+        session.commit()
+
+        def fail_status_scan(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("active AI job discovery should not scan classification results")
+
+        monkeypatch.setattr(analysis, "_build_ai_review_job_status", fail_status_scan)
+        active = analysis.get_active_ai_review_job(campaign_id=campaign.id, session=session)
+
+    assert active is not None
+    assert active.id == batch.id
+    assert active.state == "running"

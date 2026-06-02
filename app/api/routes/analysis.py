@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -56,7 +53,8 @@ def _latest_classification_ts_sq(campaign_id: UUID):
         )
         .where(col(ClassificationResult.campaign_id) == campaign_id)
         .group_by(col(ClassificationResult.domain_id))
-        .subquery()
+        .cte("latest_classification")
+        .prefix_with("MATERIALIZED", dialect="postgresql")
     )
 
 
@@ -466,27 +464,18 @@ def get_active_ai_review_job(
     campaign_id: UUID = Query(...),
     session: Session = Depends(get_session),
 ) -> AiReviewJobRead | None:
-    rows = session.exec(
+    batch = session.exec(
         select(ClassificationBatch)
-        .where(col(ClassificationBatch.campaign_id) == campaign_id)
+        .where(
+            col(ClassificationBatch.campaign_id) == campaign_id,
+            col(ClassificationBatch.state).in_(["queued", "running"]),
+        )
         .order_by(col(ClassificationBatch.created_at).desc())
-        .limit(20)
-    ).all()
-    for batch in rows:
-        status = _build_ai_review_job_status(session, batch.id)
-        if status and status.state == "running":
-            return AiReviewJobRead(
-                id=batch.id,
-                campaign_id=batch.campaign_id,
-                state=status.state,
-                selected_domain_count=status.selected,
-                queued_count=status.queued + status.running,
-                success_count=status.succeeded,
-                failed_count=status.failed,
-                created_at=batch.created_at,
-                finished_at=batch.finished_at,
-            )
-    return None
+        .limit(1)
+    ).first()
+    if batch is None:
+        return None
+    return _job_read(batch)
 
 
 @router.get("/ai-review/jobs/{batch_id}/status", response_model=AiReviewJobStatusRead)

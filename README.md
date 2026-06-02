@@ -11,15 +11,13 @@ State vocabulary spec: [docs/superpowers/plans/2026-04-29-state-vocabulary-spec.
 
 Procrastinate uses PostgreSQL **LISTEN/NOTIFY** — when a job is enqueued the worker wakes up immediately via a Postgres notification. No Redis, no external broker. All job state lives in the `procrastinate_jobs` table alongside your business data.
 
-Five named queues, three worker processes:
+Named queues used by the current local pipeline:
 
 | Queue | Worker | Concurrency | Rate-limited by |
 |---|---|---|---|
 | `scrape` | `worker-scrape` | 2 | Local browser resources |
 | `ai_decision` | `worker-ai` | 2 | OpenRouter RPM |
-| `contact_fetch` | `worker-provider` | 2 | Apollo / Snov req/min |
-| `email_reveal` | `worker-provider` | 2 | Snov reveal credits |
-| `validation` | `worker-provider` | 1 | ZeroBounce req/sec |
+| `contact_fetch` | `worker-provider` | 1 | Apollo / Snov req/min |
 
 ---
 
@@ -88,9 +86,9 @@ Use the restart wrapper so a transient DB blip doesn't leave the worker permanen
 ./scripts/run_worker.sh ai_decision 2
 ```
 
-**S3/S4/S5 — Provider (contact fetch, reveal, validation):**
+**S3 — Contacts & Email:**
 ```bash
-./scripts/run_worker.sh "contact_fetch,email_reveal,validation" 5
+./scripts/run_worker.sh contact_fetch 1
 ```
 
 `run_worker.sh` is a thin `while true` loop that restarts the process after a 5 s delay on any exit. In production the same role is played by Docker's `restart: unless-stopped` policy.
@@ -145,7 +143,7 @@ This starts:
 | `api` | FastAPI on port 8000. Runs `alembic upgrade head` and `procrastinate schema --apply` on startup. |
 | `worker-scrape` | Procrastinate worker, queue=`scrape`, concurrency=2 |
 | `worker-ai` | Procrastinate worker, queue=`ai_decision`, concurrency=2 |
-| `worker-provider` | Procrastinate worker, queues=`contact_fetch,email_reveal,validation`, concurrency=5 |
+| `worker-provider` | Procrastinate worker, queue=`contact_fetch`, concurrency=1 |
 
 ### 3. Check health
 

@@ -1,4 +1,5 @@
 import type { IntegrationHealthItem } from '../../../lib/types'
+import { ServicesHealth } from '../dashboard/ServicesHealth'
 
 type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's5-validation'
 
@@ -99,29 +100,11 @@ export function DashboardView({
 
       {/* Services health */}
       {(servicesHealth || isLoadingHealth) && (
-        <div className="oc-panel" style={{ padding: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <p className="oc-label" style={{ margin: 0 }}>Services</p>
-            <button type="button" onClick={onOpenSettings} className="oc-btn oc-btn-secondary oc-btn-xs">
-              Configure
-            </button>
-          </div>
-          {isLoadingHealth && (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--oc-muted)' }}>Checking…</p>
-          )}
-          {servicesHealth && servicesHealth.map((svc) => (
-            <div key={svc.provider} style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '0.375rem' }}>
-              <span style={{
-                width: '6px', height: '6px', borderRadius: '9999px', flexShrink: 0,
-                background: svc.connected ? 'var(--oc-success-text)' : 'var(--oc-fail-text)',
-              }} />
-              <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--oc-text)' }}>{svc.label}</span>
-              {!svc.connected && (
-                <span style={{ fontSize: '0.75rem', color: 'var(--oc-fail-text)' }}>{svc.message || 'Not connected'}</span>
-              )}
-            </div>
-          ))}
-        </div>
+        <ServicesHealth
+          services={servicesHealth ?? []}
+          isLoading={isLoadingHealth}
+          onOpenSettings={onOpenSettings}
+        />
       )}
 
     </div>

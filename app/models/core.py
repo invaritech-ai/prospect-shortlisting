@@ -59,4 +59,5 @@ class UploadedDomain(SQLModel, table=True):
     fetch_status: str | None = Field(default=None, max_length=32, index=True)
     verify_status: str | None = Field(default=None, max_length=32, index=True)
 
+    fetch_updated_at: datetime | None = utc_datetime_field(default=None, nullable=True)
     created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)

@@ -6,7 +6,7 @@ import {
   deleteCampaign,
   getCurrentUser,
   getCampaignCosts,
-  getDomainScrapeCounts,
+  getCampaignStageCounts,
   getIntegrationsHealth,
   loginWithPassword,
   listCampaigns,
@@ -16,7 +16,9 @@ import {
 } from './lib/api'
 import type {
   CampaignRead,
-  DomainScrapeCounts,
+  CampaignStageCounts,
+  EmailFetchBatchRead,
+  EmailFetchCompanyCounts,
   IntegrationHealthItem,
   AiReviewJobRead,
   AiReviewJobStatusRead,
@@ -178,6 +180,19 @@ function isScrapeStatusLive(status: ScrapeJobStatusRead | null): boolean {
   return status.state === 'running' || status.state === 'queued'
 }
 
+function isAiReviewJobLive(job: AiReviewJobRead | null): boolean {
+  return Boolean(job && !['completed', 'failed', 'cancelled', 'succeeded'].includes(job.state))
+}
+
+function isAiReviewStatusLive(status: AiReviewJobStatusRead | null): boolean {
+  if (!status) return false
+  return status.state === 'running' || status.state === 'queued'
+}
+
+function isEmailFetchBatchLive(batch: EmailFetchBatchRead | null): boolean {
+  return Boolean(batch && ['queued', 'running'].includes(batch.state))
+}
+
 function App() {
   // ── Navigation ────────────────────────────────────────────────────────────
   const [activeView, setActiveView] = useState<ActiveView>(INITIAL_ROUTE_STATE.view)
@@ -204,9 +219,12 @@ function App() {
   const [activeScrapeStatus, setActiveScrapeStatus] = useState<ScrapeJobStatusRead | null>(null)
   const [activeAiReviewJob, setActiveAiReviewJob] = useState<AiReviewJobRead | null>(null)
   const [activeAiReviewStatus, setActiveAiReviewStatus] = useState<AiReviewJobStatusRead | null>(null)
-  const [aiUnclassifiedCount, setAiUnclassifiedCount] = useState<number>(0)
-  const [scrapeCounts, setScrapeCounts] = useState<DomainScrapeCounts | null>(null)
+  const [activeEmailFetchBatch, setActiveEmailFetchBatch] = useState<EmailFetchBatchRead | null>(null)
+  const [stageCounts, setStageCounts] = useState<CampaignStageCounts | null>(null)
+  const stageCountsRequestRef = useRef<{ campaignId: string; promise: Promise<void> } | null>(null)
   const wasScrapeLiveRef = useRef(false)
+  const wasAiReviewLiveRef = useRef(false)
+  const wasEmailFetchLiveRef = useRef(false)
 
   // ── Services health ───────────────────────────────────────────────────────
   const [servicesHealth, setServicesHealth] = useState<IntegrationHealthItem[] | null>(null)
@@ -229,8 +247,6 @@ function App() {
     : activeView === 's2-ai'
       ? statsFromAiReviewJob(activeAiReviewJob, activeAiReviewStatus)
       : null
-  const scrapeIsLive = isScrapeStatusLive(activeScrapeStatus) || isScrapeBatchLive(activeScrapeBatch)
-
   // ── Load functions ────────────────────────────────────────────────────────
 
   const loadServicesHealth = useCallback(async () => {
@@ -287,17 +303,56 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authRequestsEnabled])
 
-  const loadScrapeCounts = useCallback(async (campaignId: string | null) => {
+  const loadStageCounts = useCallback(async (campaignId: string | null) => {
     if (!authRequestsEnabled || !campaignId) {
-      setScrapeCounts(null)
+      setStageCounts(null)
       return
     }
-    try {
-      setScrapeCounts(await getDomainScrapeCounts(campaignId))
-    } catch {
-      setScrapeCounts(null)
-    }
+    const activeRequest = stageCountsRequestRef.current
+    if (activeRequest?.campaignId === campaignId) return activeRequest.promise
+    let promise!: Promise<void>
+    promise = (async () => {
+      try {
+        setStageCounts(await getCampaignStageCounts(campaignId))
+      } catch {
+        setStageCounts((current) => (current?.campaign_id === campaignId ? current : null))
+      } finally {
+        if (stageCountsRequestRef.current?.promise === promise) {
+          stageCountsRequestRef.current = null
+        }
+      }
+    })()
+    stageCountsRequestRef.current = { campaignId, promise }
+    return promise
   }, [authRequestsEnabled])
+
+  const refreshSelectedStageCounts = useCallback(() => {
+    void loadStageCounts(selectedCampaignId)
+  }, [loadStageCounts, selectedCampaignId])
+
+  const mergeContactCountsIntoStageCounts = useCallback((counts: EmailFetchCompanyCounts | null) => {
+    if (!selectedCampaignId || !counts) return
+    setStageCounts((current) => {
+      if (!current || current.campaign_id !== selectedCampaignId) return current
+      return {
+        ...current,
+        updated_at: new Date().toISOString(),
+        contacts: {
+          badge: counts.pending + counts.running + counts.failed + counts.no_match,
+          all: counts.all,
+          pending: counts.pending,
+          running: counts.running,
+          done: counts.done,
+          failed: counts.failed,
+          no_match: counts.no_match,
+          contacts_found: counts.contacts_found,
+          emails_found: counts.emails_found,
+          fetched_people_found: counts.fetched_people_found,
+          is_live: counts.running > 0,
+        },
+      }
+    })
+  }, [selectedCampaignId])
 
   const onActiveAiReviewJobChange = useCallback((job: AiReviewJobRead | null, status: AiReviewJobStatusRead | null) => {
     setActiveAiReviewJob(job)
@@ -348,12 +403,8 @@ function App() {
   }, [selectedCampaignId, loadCampaignCostSummary])
 
   useEffect(() => {
-    void loadScrapeCounts(selectedCampaignId)
-  }, [selectedCampaignId, loadScrapeCounts])
-
-  useEffect(() => {
-    setAiUnclassifiedCount(0)
-  }, [selectedCampaignId])
+    void loadStageCounts(selectedCampaignId)
+  }, [selectedCampaignId, loadStageCounts])
 
   useEffect(() => {
     if (!selectedCampaignId) {
@@ -362,10 +413,34 @@ function App() {
     }
     const isLive = isScrapeStatusLive(activeScrapeStatus) || isScrapeBatchLive(activeScrapeBatch)
     if (wasScrapeLiveRef.current && !isLive) {
-      void loadScrapeCounts(selectedCampaignId)
+      void loadStageCounts(selectedCampaignId)
     }
     wasScrapeLiveRef.current = isLive
-  }, [selectedCampaignId, activeScrapeBatch, activeScrapeStatus, loadScrapeCounts])
+  }, [selectedCampaignId, activeScrapeBatch, activeScrapeStatus, loadStageCounts])
+
+  useEffect(() => {
+    if (!selectedCampaignId) {
+      wasAiReviewLiveRef.current = false
+      return
+    }
+    const isLive = isAiReviewStatusLive(activeAiReviewStatus) || isAiReviewJobLive(activeAiReviewJob)
+    if (wasAiReviewLiveRef.current && !isLive) {
+      void loadStageCounts(selectedCampaignId)
+    }
+    wasAiReviewLiveRef.current = isLive
+  }, [selectedCampaignId, activeAiReviewJob, activeAiReviewStatus, loadStageCounts])
+
+  useEffect(() => {
+    if (!selectedCampaignId) {
+      wasEmailFetchLiveRef.current = false
+      return
+    }
+    const isLive = isEmailFetchBatchLive(activeEmailFetchBatch)
+    if (wasEmailFetchLiveRef.current && !isLive) {
+      void loadStageCounts(selectedCampaignId)
+    }
+    wasEmailFetchLiveRef.current = isLive
+  }, [selectedCampaignId, activeEmailFetchBatch, loadStageCounts])
 
   useEffect(() => {
     if (!error) return
@@ -428,7 +503,7 @@ function App() {
   const onUploadFromView = async (file: File, campaignId: string): Promise<{ new_count: number; dupe_count: number }> => {
     const result = await uploadFileToCampaign(file, campaignId)
     void loadCampaignData()
-    void loadScrapeCounts(campaignId)
+    void loadStageCounts(campaignId)
     return { new_count: result.new_count, dupe_count: result.dupe_count }
   }
 
@@ -440,6 +515,7 @@ function App() {
       setSelectedCampaignId(created.id)
       setNotice(`Campaign "${created.name}" created.`)
       await loadCampaignData()
+      await loadStageCounts(created.id)
     } catch (err) {
       setError(parseApiError(err))
     } finally {
@@ -454,6 +530,7 @@ function App() {
     try {
       await deleteCampaign(campaignId)
       if (selectedCampaignId === campaignId) setSelectedCampaignId(null)
+      if (selectedCampaignId === campaignId) setStageCounts(null)
       setNotice('Campaign deleted.')
       await loadCampaignData()
     } catch (err) {
@@ -513,11 +590,8 @@ function App() {
         activeCampaignName={activeCampaignName}
         campaigns={campaigns}
         selectedCampaignId={selectedCampaignId}
-        onSelectCampaign={setSelectedCampaignId}
-        stats={shellStats}
-        scrapeRemainingCount={scrapeCounts?.remaining_work ?? null}
-        scrapeIsLive={scrapeIsLive}
-        aiUnclassifiedCount={aiUnclassifiedCount}
+        onSelectCampaign={setCampaignFromUser}
+        stageCounts={stageCounts}
         onOpenPromptLibrary={() => {}}
         authEnabled={AUTH_REQUIRED}
         userDisplayName={authSession?.displayName ?? null}
@@ -590,10 +664,17 @@ function App() {
             stats={shellStats}
             campaignId={selectedCampaignId}
             onActiveJobChange={onActiveAiReviewJobChange}
-            onUnclassifiedCountChange={setAiUnclassifiedCount}
+            onUnclassifiedCountChange={refreshSelectedStageCounts}
           />
         )}
-        {selectedCampaignId && activeView === 's3-contacts'     && <ContactsView stats={null} />}
+        {selectedCampaignId && activeView === 's3-contacts'     && (
+          <ContactsView
+            campaignId={selectedCampaignId}
+            onStageCountsRefresh={refreshSelectedStageCounts}
+            onActiveBatchChange={setActiveEmailFetchBatch}
+            onContactCountsChange={mergeContactCountsIntoStageCounts}
+          />
+        )}
         {selectedCampaignId && activeView === 's4-reveal'       && <ComingSoon label="S4 · Reveal" />}
         {selectedCampaignId && activeView === 's5-validation'   && <ValidationView stats={null} />}
         {selectedCampaignId && activeView === 'operations'      && <ComingSoon label="Operations Log" />}

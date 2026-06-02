@@ -9,7 +9,7 @@ import pandas as pd
 import polars as pl
 from sqlmodel import Session, col, select
 
-from app.models import Company, Upload
+from app.models import Upload, UploadedDomain
 from app.services.url_utils import domain_from_url, normalize_url
 
 
@@ -39,6 +39,8 @@ class UploadService:
         campaign_id: UUID | None = None,
     ) -> tuple[Upload, list[UploadIssue], int]:
         """Returns (upload, issues, already_in_campaign_count)."""
+        if campaign_id is None:
+            raise ValueError("campaign_id is required.")
         if not raw_bytes:
             raise ValueError("Uploaded file is empty.")
         if len(raw_bytes) > MAX_UPLOAD_BYTES:
@@ -52,8 +54,8 @@ class UploadService:
         checksum = hashlib.sha256(raw_bytes).hexdigest()
 
         issues: list[UploadIssue] = []
-        company_rows: list[tuple[str, str, str, int]] = []
-        seen_normalized: set[str] = set()
+        domain_rows: list[tuple[str, str, str]] = []
+        seen_dedupe_keys: set[str] = set()
 
         for row_number, raw_value in rows:
             raw_url = raw_value.strip()
@@ -104,7 +106,8 @@ class UploadService:
                     ),
                 )
                 continue
-            if normalized in seen_normalized:
+            dedupe_key = domain.lower()
+            if dedupe_key in seen_dedupe_keys:
                 self._append_issue(
                     issues,
                     UploadIssue(
@@ -116,54 +119,43 @@ class UploadService:
                 )
                 continue
 
-            seen_normalized.add(normalized)
-            company_rows.append((raw_url, normalized, domain, row_number))
+            seen_dedupe_keys.add(dedupe_key)
+            domain_rows.append((raw_url, normalized, domain))
 
         # Cross-upload dedup: find URLs already in this campaign (any prior upload).
         already_in_campaign: set[str] = set()
-        if campaign_id and company_rows:
+        if domain_rows:
             existing = session.exec(
-                select(Company.normalized_url)
-                .join(Upload, Upload.id == Company.upload_id)
-                .where(col(Upload.campaign_id) == campaign_id)
+                select(UploadedDomain.dedupe_key)
+                .where(col(UploadedDomain.campaign_id) == campaign_id)
             )
             already_in_campaign = set(existing)
 
-        new_company_rows = [row for row in company_rows if row[1] not in already_in_campaign]
-        already_in_campaign_count = len(company_rows) - len(new_company_rows)
+        new_domain_rows = [row for row in domain_rows if row[2].lower() not in already_in_campaign]
+        already_in_campaign_count = len(domain_rows) - len(new_domain_rows)
 
         upload = Upload(
             campaign_id=campaign_id,
             filename=filename or "upload",
             checksum=checksum,
             row_count=len(rows),
-            valid_count=len(company_rows),
-            invalid_count=len(rows) - len(company_rows),
-            validation_errors_json=[
-                {
-                    "row_number": issue.row_number,
-                    "raw_value": issue.raw_value,
-                    "error_code": issue.error_code,
-                    "error_message": issue.error_message,
-                }
-                for issue in issues
-            ],
         )
         session.add(upload)
         session.flush()
 
-        # Insert in batches to avoid accumulating all Company objects in the
+        # Insert in batches to avoid accumulating all UploadedDomain objects in the
         # SQLAlchemy identity map simultaneously (OOM risk for large uploads).
         batch_size = 1000
-        for i in range(0, len(new_company_rows), batch_size):
-            for raw_url, normalized_url, domain, source_row_number in new_company_rows[i : i + batch_size]:
+        for i in range(0, len(new_domain_rows), batch_size):
+            for raw_url, normalized_url, domain in new_domain_rows[i : i + batch_size]:
                 session.add(
-                    Company(
+                    UploadedDomain(
+                        campaign_id=campaign_id,
                         upload_id=upload.id,
                         raw_url=raw_url,
                         normalized_url=normalized_url,
                         domain=domain,
-                        source_row_number=source_row_number,
+                        dedupe_key=domain.lower(),
                     )
                 )
             session.flush()

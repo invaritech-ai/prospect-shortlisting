@@ -1,75 +1,307 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
+import { getEmailFetchCriteria, saveEmailFetchCriteria } from '../../../lib/api'
+import type { EmailFetchCriteriaRead } from '../../../lib/types'
+import { parseApiError } from '../../../lib/utils'
 import { Drawer } from '../../ui/Drawer'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
-import { Loader2 } from 'lucide-react'
+import { Loader2, X } from 'lucide-react'
 
-const DEFAULT_TITLES = `# Target job titles (exact or partial match)
+const DEFAULT_INCLUDE_RULES = [
+  'CEO',
+  'Chief Executive Officer',
+  'Founder',
+  'Co-founder',
+  'Owner',
+  'President',
+  'Managing Director',
+  'CTO',
+  'Chief Technology Officer',
+  'VP Sales',
+  'Head of Sales',
+  'Sales Director',
+  'Marketing Director',
+  'Head of Marketing',
+]
 
-## C-Suite
-CEO, Chief Executive Officer
-CTO, Chief Technology Officer
-COO, Chief Operating Officer
-CFO, Chief Financial Officer
-CPO, Chief Product Officer
-
-## VP-level
-VP Engineering
-VP Product
-VP Sales
-VP Marketing
-Head of Engineering
-Head of Product
-
-## Director-level
-Director of Engineering
-Director of Product
-Engineering Manager`
-
-const PROVIDERS = [
-  { id: 'apollo',  label: 'Apollo.io',  desc: 'Best for US/global SMB & mid-market' },
-  { id: 'snov',    label: 'Snov.io',    desc: 'Good for European companies' },
+const DEFAULT_EXCLUDE_RULES = [
+  'Assistant',
+  'Executive Assistant',
+  'Intern',
+  'Consultant',
+  'Advisor',
+  'Recruiter',
+  'Talent Acquisition',
+  'Human Resources',
+  'Student',
 ]
 
 function Spinner() {
   return <Loader2 size={13} style={{ animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />
 }
 
-interface ContactsSettingsDrawerProps {
-  isOpen: boolean
-  onClose: () => void
+function normalizeRule(value: string): string {
+  return value.trim().replace(/\s+/g, ' ')
 }
 
-export function ContactsSettingsDrawer({ isOpen, onClose }: ContactsSettingsDrawerProps) {
-  const [titles, setTitles]     = useState(DEFAULT_TITLES)
-  const [provider, setProvider] = useState('apollo')
-  const [activeTab, setActiveTab] = useState<'titles' | 'provider'>('titles')
+function cleanRules(values: string[]): string[] {
+  const seen = new Set<string>()
+  const rules: string[] = []
+  for (const raw of values) {
+    const value = normalizeRule(raw)
+    if (!value || value.startsWith('#')) continue
+    const key = value.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    rules.push(value)
+  }
+  return rules
+}
 
-  const [isDirty, setIsDirty]         = useState(false)
-  const [isSaving, setIsSaving]       = useState(false)
+function parseRulesFromText(text: string): string[] {
+  return cleanRules(text.split(/[\n,]+/))
+}
+
+function rulesEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
+interface RuleChipEditorProps {
+  label: string
+  rules: string[]
+  draft: string
+  placeholder: string
+  tone: 'include' | 'exclude'
+  disabled?: boolean
+  onDraftChange: (value: string) => void
+  onRulesChange: (rules: string[]) => void
+  onDirty: () => void
+}
+
+function RuleChipEditor({
+  label,
+  rules,
+  draft,
+  placeholder,
+  tone,
+  disabled = false,
+  onDraftChange,
+  onRulesChange,
+  onDirty,
+}: RuleChipEditorProps) {
+  const accent = tone === 'include' ? 'var(--s3)' : 'var(--oc-warn-text)'
+  const bg = tone === 'include' ? 'var(--s3-bg)' : 'var(--oc-warn-bg)'
+
+  function applyRules(nextRules: string[]) {
+    const cleaned = cleanRules(nextRules)
+    if (!rulesEqual(cleaned, rules)) {
+      onRulesChange(cleaned)
+      onDirty()
+    }
+  }
+
+  function addDraftRules() {
+    const additions = parseRulesFromText(draft)
+    if (additions.length === 0) return
+    applyRules([...rules, ...additions])
+    onDraftChange('')
+  }
+
+  function removeRule(index: number) {
+    applyRules(rules.filter((_, i) => i !== index))
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      addDraftRules()
+      return
+    }
+    if (e.key === 'Backspace' && draft.length === 0 && rules.length > 0) {
+      e.preventDefault()
+      removeRule(rules.length - 1)
+    }
+  }
+
+  function handlePaste(e: ClipboardEvent<HTMLInputElement>) {
+    const pasted = e.clipboardData.getData('text')
+    if (!/[\n,]/.test(pasted)) return
+    e.preventDefault()
+    const additions = parseRulesFromText(pasted)
+    if (additions.length === 0) return
+    applyRules([...rules, ...additions])
+  }
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+        <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--oc-text)' }}>{label}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6875rem', color: 'var(--oc-muted)' }}>
+          {rules.length}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '0.375rem',
+          alignItems: 'center',
+          minHeight: '92px',
+          borderRadius: '0.625rem',
+          border: `1.5px solid color-mix(in srgb, ${accent} 24%, var(--oc-border))`,
+          background: 'var(--oc-surface)',
+          padding: '0.625rem',
+        }}
+      >
+        {rules.map((rule, index) => (
+          <span
+            key={`${rule}:${index}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.25rem',
+              maxWidth: '100%',
+              borderRadius: '9999px',
+              border: `1px solid color-mix(in srgb, ${accent} 38%, var(--oc-border))`,
+              background: bg,
+              color: accent,
+              padding: '0.25rem 0.375rem 0.25rem 0.625rem',
+              fontSize: '0.75rem',
+              fontWeight: 650,
+            }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rule}</span>
+            <button
+              type="button"
+              aria-label={`Remove ${rule}`}
+              disabled={disabled}
+              onClick={() => removeRule(index)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '18px',
+                height: '18px',
+                borderRadius: '9999px',
+                border: 'none',
+                background: 'transparent',
+                color: accent,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                padding: 0,
+                opacity: disabled ? 0.45 : 0.8,
+              }}
+            >
+              <X size={12} strokeWidth={2.5} />
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          disabled={disabled}
+          onChange={(e) => onDraftChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          placeholder={rules.length === 0 ? placeholder : 'Add title...'}
+          style={{
+            flex: '1 1 160px',
+            minWidth: '140px',
+            border: 'none',
+            outline: 'none',
+            background: 'transparent',
+            color: 'var(--oc-text)',
+            font: 'inherit',
+            fontSize: '0.8125rem',
+            padding: '0.25rem',
+          }}
+        />
+      </div>
+    </section>
+  )
+}
+
+interface ContactsSettingsDrawerProps {
+  campaignId: string
+  isOpen: boolean
+  onClose: () => void
+  onSaved: (criteria: EmailFetchCriteriaRead) => void
+}
+
+export function ContactsSettingsDrawer({ campaignId, isOpen, onClose, onSaved }: ContactsSettingsDrawerProps) {
+  const [includeRules, setIncludeRules] = useState<string[]>(DEFAULT_INCLUDE_RULES)
+  const [excludeRules, setExcludeRules] = useState<string[]>(DEFAULT_EXCLUDE_RULES)
+  const [includeDraft, setIncludeDraft] = useState('')
+  const [excludeDraft, setExcludeDraft] = useState('')
+  const [isDirty, setIsDirty] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [error, setError] = useState('')
   const [showUnsaved, setShowUnsaved] = useState(false)
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  function markDirty() { setIsDirty(true); setSaveSuccess(false) }
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    setIsLoading(true)
+    setError('')
+    void getEmailFetchCriteria(campaignId)
+      .then((criteria) => {
+        if (cancelled) return
+        const shouldUseDefaults = !criteria.id || criteria.include_titles.length === 0
+        setIncludeRules(shouldUseDefaults ? DEFAULT_INCLUDE_RULES : cleanRules(criteria.include_titles))
+        setExcludeRules(!criteria.id ? DEFAULT_EXCLUDE_RULES : cleanRules(criteria.exclude_titles))
+        setIncludeDraft('')
+        setExcludeDraft('')
+        setIsDirty(shouldUseDefaults)
+        onSaved(criteria)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(parseApiError(err))
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [campaignId, isOpen, onSaved])
+
+  function markDirty() {
+    setIsDirty(true)
+    setSaveSuccess(false)
+    setError('')
+  }
 
   function handleClose() {
-    if (isDirty) { setShowUnsaved(true) } else { onClose() }
+    if (isDirty || includeDraft.trim() || excludeDraft.trim()) { setShowUnsaved(true) } else { onClose() }
   }
 
   async function handleSave() {
+    const finalIncludeRules = cleanRules([...includeRules, ...parseRulesFromText(includeDraft)])
+    const finalExcludeRules = cleanRules([...excludeRules, ...parseRulesFromText(excludeDraft)])
     setIsSaving(true)
-    await new Promise((r) => setTimeout(r, 600))
-    setIsDirty(false)
-    setIsSaving(false)
-    setSaveSuccess(true)
-    if (successTimer.current) clearTimeout(successTimer.current)
-    successTimer.current = setTimeout(() => setSaveSuccess(false), 2000)
+    setError('')
+    try {
+      const criteria = await saveEmailFetchCriteria({
+        campaign_id: campaignId,
+        include_titles: finalIncludeRules,
+        exclude_titles: finalExcludeRules,
+        target_contacts_per_company: 3,
+      })
+      setIncludeRules(finalIncludeRules)
+      setExcludeRules(finalExcludeRules)
+      setIncludeDraft('')
+      setExcludeDraft('')
+      setIsDirty(false)
+      setSaveSuccess(true)
+      onSaved(criteria)
+      if (successTimer.current) clearTimeout(successTimer.current)
+      successTimer.current = setTimeout(() => setSaveSuccess(false), 2000)
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  const tabs: { id: 'titles' | 'provider'; label: string }[] = [
-    { id: 'titles',   label: 'Title rules' },
-    { id: 'provider', label: 'Provider' },
-  ]
+  const savingDisabled = isSaving || isLoading || (!isDirty && !includeDraft.trim() && !excludeDraft.trim()) || includeRules.length === 0
 
   return (
     <>
@@ -82,76 +314,63 @@ export function ContactsSettingsDrawer({ isOpen, onClose }: ContactsSettingsDraw
         footer={
           <button
             type="button"
-            disabled={isSaving || !isDirty}
+            disabled={savingDisabled}
             onClick={() => void handleSave()}
             className="oc-btn oc-btn-sm"
             style={{
               backgroundColor: 'var(--s3)', borderColor: 'var(--s3)', color: '#fff',
               display: 'inline-flex', alignItems: 'center', gap: '0.375rem',
-              opacity: (!isDirty && !isSaving) ? 0.5 : 1, transition: 'opacity 200ms',
+              opacity: savingDisabled && !isSaving ? 0.5 : 1,
+              transition: 'opacity 200ms',
             }}
           >
-            {isSaving ? <Spinner /> : saveSuccess ? '✓' : isDirty ? (
-              <span style={{ width: '6px', height: '6px', borderRadius: '9999px', backgroundColor: '#fbbf24', flexShrink: 0 }} />
-            ) : null}
-            {isSaving ? 'Saving…' : saveSuccess ? 'Saved' : 'Save changes'}
+            {isSaving ? <Spinner /> : saveSuccess ? 'Saved' : 'Save changes'}
           </button>
         }
       >
-        <div className="oc-drawer-tabs">
-          {tabs.map((t) => (
-            <button key={t.id} type="button" className="oc-drawer-tab"
-              data-active={activeTab === t.id ? 'true' : 'false'}
-              onClick={() => setActiveTab(t.id)}
-            >{t.label}</button>
-          ))}
-        </div>
-
-        {activeTab === 'titles' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-            <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--oc-muted)', lineHeight: 1.55 }}>
-              Contacts are filtered to only people with titles that match these rules. One title or pattern per line.
-            </p>
-            <textarea
-              value={titles}
-              onChange={(e) => { setTitles(e.target.value); markDirty() }}
-              className="oc-textarea"
-              rows={20}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem', resize: 'vertical' }}
-            />
-          </div>
-        )}
-
-        {activeTab === 'provider' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-            <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--oc-muted)', lineHeight: 1.55 }}>
-              Select the contact data provider. Credits are consumed per company fetched.
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {PROVIDERS.map((p) => (
-                <label
-                  key={p.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.875rem',
-                    padding: '0.875rem 1rem', borderRadius: '0.75rem', cursor: 'pointer',
-                    border: `1.5px solid ${provider === p.id ? 'var(--s3)' : 'var(--oc-border)'}`,
-                    backgroundColor: provider === p.id ? 'var(--s3-bg)' : 'var(--oc-surface)',
-                    transition: 'all 140ms',
-                  }}
-                >
-                  <input type="radio" name="provider" value={p.id} checked={provider === p.id}
-                    onChange={() => { setProvider(p.id); markDirty() }}
-                    style={{ accentColor: 'var(--s3)', flexShrink: 0 }}
-                  />
-                  <div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: provider === p.id ? 'var(--s3-text)' : 'var(--oc-text)' }}>{p.label}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--oc-muted)', marginTop: '0.125rem' }}>{p.desc}</div>
-                  </div>
-                </label>
-              ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {isLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--oc-muted)', fontSize: '0.875rem' }}>
+              <Spinner /> Loading title rules
             </div>
-          </div>
-        )}
+          )}
+          {error && (
+            <div style={{
+              border: '1.5px solid var(--oc-fail-bg)',
+              background: 'var(--oc-fail-bg)',
+              color: 'var(--oc-fail-text)',
+              borderRadius: '0.5rem',
+              padding: '0.75rem 0.875rem',
+              fontSize: '0.8125rem',
+            }}>
+              {error}
+            </div>
+          )}
+
+          <RuleChipEditor
+            label="Include titles"
+            tone="include"
+            rules={includeRules}
+            draft={includeDraft}
+            placeholder="Add target title"
+            disabled={isLoading || isSaving}
+            onDraftChange={(value) => { setIncludeDraft(value); setSaveSuccess(false); setError('') }}
+            onRulesChange={setIncludeRules}
+            onDirty={markDirty}
+          />
+
+          <RuleChipEditor
+            label="Exclude titles"
+            tone="exclude"
+            rules={excludeRules}
+            draft={excludeDraft}
+            placeholder="Add excluded title"
+            disabled={isLoading || isSaving}
+            onDraftChange={(value) => { setExcludeDraft(value); setSaveSuccess(false); setError('') }}
+            onRulesChange={setExcludeRules}
+            onDirty={markDirty}
+          />
+        </div>
       </Drawer>
 
       <ConfirmDialog
@@ -161,7 +380,13 @@ export function ContactsSettingsDrawer({ isOpen, onClose }: ContactsSettingsDraw
         cancelLabel="Keep editing"
         confirmVariant="danger"
         onClose={() => setShowUnsaved(false)}
-        onConfirm={() => { setShowUnsaved(false); setIsDirty(false); onClose() }}
+        onConfirm={() => {
+          setShowUnsaved(false)
+          setIsDirty(false)
+          setIncludeDraft('')
+          setExcludeDraft('')
+          onClose()
+        }}
       >
         You have unsaved changes. They will be lost if you close without saving.
       </ConfirmDialog>

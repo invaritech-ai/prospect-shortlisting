@@ -12,9 +12,9 @@ from app.models.base import utc_datetime_field, utcnow
 
 class RoleFetchCriteria(SQLModel, table=True):
     """
-    Append-only title/role targeting rules for a campaign.
-    Create a new row when criteria change; never mutate the old row.
-    Frontend detects stale contacts when contact.criteria_hash != latest active criteria_hash.
+    Current editable title/role targeting rules for a campaign.
+    EmailFetchBatch snapshots these criteria at enqueue time so historical
+    fetches remain explainable after the current campaign criteria changes.
     """
 
     __tablename__ = "role_fetch_criteria"
@@ -48,6 +48,12 @@ class EmailFetchBatch(SQLModel, table=True):
     )
     criteria_hash: str | None = Field(default=None, max_length=64)
     provider_order_json: list[str] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    selected_domain_ids_json: list[str] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    result_summary_json: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
     state: str = Field(default="queued", max_length=32, index=True)
@@ -132,6 +138,54 @@ class Contact(SQLModel, table=True):
     )
     verification_applied: bool = Field(default=False)
     verified_at: datetime | None = utc_datetime_field(default=None, nullable=True)
+
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow)
+
+
+class FetchedPerson(SQLModel, table=True):
+    """
+    Provider-returned person record from a confirmed S3 fetch.
+
+    Contacts remain the qualified outreach/verification surface. This table is
+    the transparency ledger for every person returned by paid provider searches,
+    including people rejected by local title rules.
+    """
+
+    __tablename__ = "fetched_people"
+    __table_args__ = (
+        Index("ix_fetched_people_campaign_domain", "campaign_id", "domain_id"),
+        Index("ix_fetched_people_batch_provider", "email_fetch_batch_id", "provider", "provider_person_id"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    campaign_id: UUID = Field(foreign_key="campaigns.id", index=True)
+    domain_id: UUID = Field(foreign_key="uploaded_domains.id", index=True)
+    email_fetch_batch_id: UUID | None = Field(
+        default=None, foreign_key="email_fetch_batches.id", index=True
+    )
+    contact_id: UUID | None = Field(default=None, foreign_key="contacts.id", index=True)
+    criteria_hash: str | None = Field(default=None, max_length=64, index=True)
+
+    provider: str = Field(max_length=32, index=True)
+    provider_person_id: str = Field(max_length=255, index=True)
+    first_name: str = Field(default="", max_length=255)
+    last_name: str = Field(default="", max_length=255)
+    title: str | None = Field(default=None, max_length=512)
+    linkedin_url: str | None = Field(default=None, max_length=2048)
+    raw_summary_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+    match_status: str = Field(default="not_matched", max_length=64, index=True)
+    match_reason: str = Field(default="", max_length=512)
+    email_lookup_attempted: bool = Field(default=False, index=True)
+    email_result: str | None = Field(default=None, max_length=512)
+    email_status: str | None = Field(default=None, max_length=64)
+    email_error_code: str = Field(default="", max_length=128)
+    email_raw_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
     updated_at: datetime = utc_datetime_field(default_factory=utcnow)

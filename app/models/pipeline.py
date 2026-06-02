@@ -16,4 +16,5 @@ from app.models.contacts import (  # noqa: F401
     EmailFetchBatch,
     VerificationBatch,
     Contact,
+    FetchedPerson,
 )

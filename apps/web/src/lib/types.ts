@@ -125,6 +125,193 @@ export type AiReviewJobStatusRead = {
   finished_at: string | null
 }
 
+export type EmailFetchCompanyStatus = 'pending' | 'running' | 'done' | 'failed' | 'no_match'
+export type EmailFetchMode = 'fetch' | 'refetch'
+
+export type EmailFetchCriteriaRead = {
+  id: string | null
+  campaign_id: string
+  include_titles: string[]
+  exclude_titles: string[]
+  target_contacts_per_company: number
+  criteria_hash: string
+  is_active: boolean
+  created_at: string | null
+}
+
+export type EmailFetchCriteriaSaveRequest = {
+  campaign_id: string
+  include_titles: string[]
+  exclude_titles: string[]
+  target_contacts_per_company: 3
+}
+
+export type EmailFetchPreviewRequest = {
+  campaign_id: string
+  domain_ids: string[]
+  mode?: EmailFetchMode
+}
+
+export type EmailFetchBatchCreate = EmailFetchPreviewRequest
+
+export type EmailFetchCreditPlan = {
+  apollo_preview_is_free: boolean
+  title_hint_count: number
+  snov_positions_per_search: number
+  snov_title_chunks_per_company: number
+  estimated_apollo_reveals: number
+  estimated_snov_discovery_searches: number
+  estimated_snov_email_lookups: number
+}
+
+export type EmailFetchPreviewCandidate = {
+  domain_id: string
+  domain: string
+  provider: string
+  provider_person_id: string
+  first_name: string
+  last_name: string
+  title: string
+  linkedin_url: string | null
+}
+
+export type EmailFetchPreviewDomain = {
+  domain_id: string
+  domain: string
+  matched_candidate_count: number
+  estimated_apollo_reveals: number
+  estimated_snov_fallback: number
+  candidates: EmailFetchPreviewCandidate[]
+  warnings: string[]
+}
+
+export type EmailFetchPreviewRead = {
+  campaign_id: string
+  mode: EmailFetchMode
+  selected_domain_count: number
+  target_contacts_per_company: number
+  estimated_apollo_reveals: number
+  estimated_snov_fallback_min: number
+  credit_plan: EmailFetchCreditPlan
+  criteria_hash: string
+  criteria_snapshot: Record<string, unknown>
+  domains: EmailFetchPreviewDomain[]
+  warnings: string[]
+}
+
+export type EmailFetchBatchRead = {
+  id: string
+  campaign_id: string
+  state: string
+  selected_domain_count: number
+  queued_count: number
+  success_count: number
+  failed_count: number
+  criteria_hash: string | null
+  criteria_snapshot: Record<string, unknown> | null
+  provider_order: string[]
+  result_summary: Record<string, unknown> | null
+  created_at: string
+  finished_at: string | null
+}
+
+export type EmailFetchCompanyCounts = {
+  all: number
+  pending: number
+  running: number
+  done: number
+  failed: number
+  no_match: number
+  contacts_found: number
+  emails_found: number
+  fetched_people_found: number
+}
+
+export type EmailFetchCompanyRow = {
+  domain_id: string
+  campaign_id: string
+  domain: string
+  normalized_url: string
+  fetch_status: string | null
+  status: EmailFetchCompanyStatus
+  contacts_found: number
+  emails_found: number
+  fetched_people_found: number
+  updated_at: string
+}
+
+export type EmailFetchCompanyList = {
+  total: number
+  limit: number
+  offset: number
+  counts: EmailFetchCompanyCounts
+  items: EmailFetchCompanyRow[]
+}
+
+export type EmailFetchCompanyIds = {
+  ids: string[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type ContactRead = {
+  id: string
+  campaign_id: string
+  domain_id: string
+  domain: string
+  first_name: string
+  last_name: string
+  title: string | null
+  linkedin_url: string | null
+  title_match: boolean
+  selected_email: string | null
+  selected_email_provider: string | null
+  verification_status: string | null
+  criteria_hash: string | null
+  provider_evidence_json: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export type ContactList = {
+  total: number
+  limit: number
+  offset: number
+  items: ContactRead[]
+}
+
+export type FetchedPersonRead = {
+  id: string
+  campaign_id: string
+  domain_id: string
+  domain: string
+  email_fetch_batch_id: string | null
+  contact_id: string | null
+  criteria_hash: string | null
+  provider: string
+  provider_person_id: string
+  first_name: string
+  last_name: string
+  title: string | null
+  linkedin_url: string | null
+  match_status: string
+  match_reason: string
+  email_lookup_attempted: boolean
+  email_result: string | null
+  email_status: string | null
+  email_error_code: string
+  created_at: string
+  updated_at: string
+}
+
+export type FetchedPersonList = {
+  total: number
+  limit: number
+  offset: number
+  items: FetchedPersonRead[]
+}
+
 export type CampaignRead = {
   id: string
   name: string
@@ -145,6 +332,64 @@ export type CampaignList = {
   offset: number
   has_more: boolean
   items: CampaignRead[]
+}
+
+export type ScrapingStageCounts = {
+  badge: number
+  total: number
+  pending: number
+  queued: number
+  running: number
+  succeeded: number
+  failed: number
+  retryable_failed: number
+  is_live: boolean
+}
+
+export type AiReviewStageCounts = {
+  badge: number
+  all: number
+  unclassified: number
+  possible: number
+  unknown: number
+  crap: number
+  queued: number
+  running: number
+  is_live: boolean
+}
+
+export type ContactsStageCounts = {
+  badge: number
+  all: number
+  pending: number
+  running: number
+  done: number
+  failed: number
+  no_match: number
+  contacts_found: number
+  emails_found: number
+  fetched_people_found: number
+  is_live: boolean
+}
+
+export type ValidationStageCounts = {
+  badge: number
+  total: number
+  pending: number
+  running: number
+  valid: number
+  invalid: number
+  unknown: number
+  is_live: boolean
+}
+
+export type CampaignStageCounts = {
+  campaign_id: string
+  updated_at: string
+  scraping: ScrapingStageCounts
+  ai_review: AiReviewStageCounts
+  contacts: ContactsStageCounts
+  validation: ValidationStageCounts
 }
 
 export type CampaignCreate = {

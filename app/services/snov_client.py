@@ -316,7 +316,14 @@ class SnovClient:
         count = int(data.get("result") or data.get("count") or 0)
         return count, ""
 
-    def search_prospects(self, domain: str, page: int = 1) -> tuple[list[dict], int, str]:
+    def search_prospects(
+        self,
+        domain: str,
+        page: int = 1,
+        positions: list[str] | None = None,
+        chunk_index: int | None = None,
+        chunk_count: int | None = None,
+    ) -> tuple[list[dict], int, str]:
         """Start a domain prospect search and poll for results.
 
         Returns (prospects_list, total_count, error_code).
@@ -326,10 +333,14 @@ class SnovClient:
         if err:
             return [], 0, err
 
-        start_data, err = self._post("/v2/domain-search/prospects/start", {
+        payload: dict[str, object] = {
             "domain": domain,
             "page": page,
-        }, bearer=token)
+        }
+        if positions:
+            payload["positions[]"] = positions[:10]
+
+        start_data, err = self._post("/v2/domain-search/prospects/start", payload, bearer=token)
         if err:
             return [], 0, err
 
@@ -345,8 +356,17 @@ class SnovClient:
         prospects = result.get("data") or []
         total = int((result.get("meta") or {}).get("total_count") or len(prospects))
 
-        log_event(logger, "snov_prospects_found", domain=domain, page=page,
-                  prospects=len(prospects), total=total)
+        log_event(
+            logger,
+            "snov_prospects_found",
+            domain=domain,
+            page=page,
+            prospects=len(prospects),
+            total=total,
+            title_chunk=chunk_index,
+            title_chunks=chunk_count,
+            title_hint_count=len(positions or []),
+        )
         return prospects, total, ""
 
     def search_prospect_email(self, prospect_hash: str) -> tuple[list[dict], str]:

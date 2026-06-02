@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { CampaignRead, StatsResponse } from '../../lib/types'
+import type { CampaignRead, CampaignStageCounts } from '../../lib/types'
 import type { ActiveView } from '../../lib/navigation'
 import { Sidebar }        from './Sidebar'
 import { BottomNav }      from './BottomNav'
@@ -43,10 +43,7 @@ interface AppShellProps {
   campaigns: CampaignRead[]
   selectedCampaignId: string | null
   onSelectCampaign: (id: string) => void
-  stats: StatsResponse | null
-  scrapeRemainingCount?: number | null
-  scrapeIsLive?: boolean
-  aiUnclassifiedCount?: number | null
+  stageCounts: CampaignStageCounts | null
   onOpenPromptLibrary: () => void
   authEnabled?: boolean
   userDisplayName?: string | null
@@ -59,10 +56,7 @@ export function AppShell({
   activeView, setActiveView,
   activeCampaignName,
   campaigns, selectedCampaignId, onSelectCampaign,
-  stats,
-  scrapeRemainingCount = null,
-  scrapeIsLive = false,
-  aiUnclassifiedCount = null,
+  stageCounts,
   onOpenPromptLibrary,
   authEnabled = false,
   userDisplayName = null,
@@ -96,10 +90,7 @@ export function AppShell({
         onSelectCampaign={onSelectCampaign}
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
-        stats={stats}
-        scrapeRemainingCount={scrapeRemainingCount}
-        scrapeIsLive={scrapeIsLive}
-        aiUnclassifiedCount={aiUnclassifiedCount}
+        stageCounts={stageCounts}
       />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -108,7 +99,7 @@ export function AppShell({
           Icon={Icon}
           stageColor={stageColor}
           campaignName={activeCampaignName}
-          stats={stats}
+          stageCounts={stageCounts}
           authEnabled={authEnabled}
           onLogout={onLogout}
         />
@@ -119,7 +110,7 @@ export function AppShell({
           Icon={Icon}
           stageColor={stageColor}
           campaignName={activeCampaignName}
-          stats={stats}
+          stageCounts={stageCounts}
           authEnabled={authEnabled}
           userDisplayName={userDisplayName}
           onLogout={onLogout}
@@ -136,10 +127,7 @@ export function AppShell({
         activeView={activeView}
         setActiveView={setActiveView}
         onOpenPromptLibrary={onOpenPromptLibrary}
-        stats={stats}
-        scrapeRemainingCount={scrapeRemainingCount}
-        scrapeIsLive={scrapeIsLive}
-        aiUnclassifiedCount={aiUnclassifiedCount}
+        stageCounts={stageCounts}
       />
     </div>
   )

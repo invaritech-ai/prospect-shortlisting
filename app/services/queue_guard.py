@@ -12,8 +12,6 @@ MAX_QUEUE_DEPTHS: dict[str, int] = {
     "scrape": 300,
     "ai_decision": 200,
     "contact_fetch": 150,
-    "email_reveal": 150,
-    "validation": 100,
 }
 
 logger = logging.getLogger(__name__)

@@ -2,11 +2,18 @@
 # Local dev restart loop for a Procrastinate worker.
 # Usage: ./scripts/run_worker.sh scrape 2
 #        ./scripts/run_worker.sh ai_decision 2
-#        ./scripts/run_worker.sh "contact_fetch,email_reveal,validation" 5
+#        ./scripts/run_worker.sh contact_fetch 1
 set -euo pipefail
 
 QUEUE="${1:-scrape}"
-CONCURRENCY="${2:-2}"
+if [ "${2+x}" ]; then
+    CONCURRENCY="$2"
+else
+    case "$QUEUE" in
+        contact_fetch) CONCURRENCY="1" ;;
+        *) CONCURRENCY="2" ;;
+    esac
+fi
 RESTART_DELAY=5
 PROCRASTINATE_POOL_MAX_SIZE="${PS_PROCRASTINATE_POOL_MAX_SIZE:-$((CONCURRENCY + 2))}"
 if [ "$PROCRASTINATE_POOL_MAX_SIZE" -lt 4 ]; then
