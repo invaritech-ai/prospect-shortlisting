@@ -406,6 +406,29 @@ def test_preview_uses_fresh_cache_but_not_stale_cache(db_session: Session) -> No
     assert preview.skipped_count == 0
 
 
+def test_preview_counts_duplicate_uncached_email_as_one_paid_validation(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    first = _contact(db_session, campaign, domain, "shared@example.com")
+    second = _contact(db_session, campaign, domain, " SHARED@example.com ")
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    preview = EmailVerificationService().preview(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[first.id, second.id],
+    )
+
+    assert preview.selected_count == 2
+    assert preview.eligible_count == 2
+    assert preview.cached_count == 0
+    assert preview.paid_validation_count == 1
+    assert preview.skipped_count == 0
+
+
 def test_preview_caps_selected_count_at_max_batch_size(db_session: Session) -> None:
     campaign = _campaign(db_session)
 
@@ -769,6 +792,74 @@ def test_create_batch_all_cache_hit_does_not_require_credentials(
     assert batch.queued_count == 1
     assert batch.result_summary_json["cached_count"] == 1
     assert batch.result_summary_json["paid_validation_count"] == 0
+
+
+def test_create_batch_summary_dedupes_paid_validation_count_for_shared_email(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    first = _contact(db_session, campaign, domain, "shared@example.com")
+    second = _contact(db_session, campaign, domain, " SHARED@example.com ")
+    fake = FakeZeroBounce([])
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    batch = EmailVerificationService(zerobounce=fake).create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[first.id, second.id],
+    )
+
+    assert batch.queued_count == 2
+    assert batch.result_summary_json["paid_validation_count"] == 1
+    assert batch.result_summary_json["skipped_count"] == 0
+    assert batch.selected_contact_snapshots_json == [
+        {"contact_id": str(first.id), "email": "shared@example.com"},
+        {"contact_id": str(second.id), "email": "shared@example.com"},
+    ]
+
+
+def test_run_batch_reuses_one_provider_result_for_duplicate_selected_email(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    first = _contact(db_session, campaign, domain, "shared@example.com")
+    second = _contact(db_session, campaign, domain, " SHARED@example.com ")
+    fake = FakeZeroBounce(
+        [
+            {
+                "address": "shared@example.com",
+                "status": "valid",
+            }
+        ]
+    )
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[first.id, second.id],
+    )
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    db_session.refresh(first)
+    db_session.refresh(second)
+    cache_rows = db_session.exec(select(EmailVerificationCache)).all()
+    assert fake.calls == [["shared@example.com"]]
+    assert finished.verified_count == 2
+    assert finished.valid_count == 2
+    assert first.verification_status == "valid"
+    assert first.verification_applied is True
+    assert first.verification_batch_id is None
+    assert second.verification_status == "valid"
+    assert second.verification_applied is True
+    assert second.verification_batch_id is None
+    assert len(cache_rows) == 1
+    assert cache_rows[0].normalized_email == "shared@example.com"
 
 
 @pytest.mark.parametrize(

@@ -99,7 +99,6 @@ class ZeroBounceClient:
 
         if isinstance(body, dict):
             email_batch = body.get("email_batch")
-            results = [item for item in email_batch if isinstance(item, dict)] if isinstance(email_batch, list) else []
             errors = body.get("errors")
             usable_errors = [item for item in errors if isinstance(item, dict)] if isinstance(errors, list) else []
             if usable_errors:
@@ -111,6 +110,16 @@ class ZeroBounceClient:
                         body=str(body)[:500],
                     )
                     return [], self.last_error_code
+            if not isinstance(email_batch, list):
+                self.last_error_code = ERR_ZEROBOUNCE_FAILED
+                log_event(
+                    logger,
+                    "zerobounce_malformed_batch_envelope",
+                    body=str(body)[:500],
+                )
+                return [], self.last_error_code
+            results = [item for item in email_batch if isinstance(item, dict)]
+            if usable_errors:
                 if not results:
                     self.last_error_code = ERR_ZEROBOUNCE_FAILED
                     log_event(

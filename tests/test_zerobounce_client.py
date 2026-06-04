@@ -8,6 +8,7 @@ import pytest
 from app.services import credentials_resolver
 from app.services.zerobounce_client import (
     ERR_ZEROBOUNCE_AUTH_FAILED,
+    ERR_ZEROBOUNCE_FAILED,
     ZeroBounceClient,
 )
 
@@ -115,3 +116,27 @@ def test_validate_batch_keeps_usable_rows_with_nonfatal_row_errors(
             "status": "valid",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"errors": []},
+        {"email_batch": {"address": "valid@example.com"}, "errors": []},
+    ],
+)
+def test_validate_batch_rejects_malformed_envelope_email_batch(
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, Any],
+) -> None:
+    monkeypatch.setattr(credentials_resolver, "resolve", lambda provider, field: "api-key")
+
+    def fake_post(*args: Any, **kwargs: Any) -> _FakeResponse:
+        return _FakeResponse(body)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    results, error_code = ZeroBounceClient().validate_batch(["valid@example.com"])
+
+    assert results == []
+    assert error_code == ERR_ZEROBOUNCE_FAILED

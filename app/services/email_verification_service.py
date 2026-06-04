@@ -239,8 +239,9 @@ class EmailVerificationService:
         )
 
         seen: set[UUID] = set()
+        eligible_count = 0
         cached_count = 0
-        paid_validation_count = 0
+        paid_validation_emails: set[str] = set()
         skipped_reasons: dict[str, int] = {}
         for contact_id in selected_ids:
             if contact_id in seen:
@@ -268,12 +269,13 @@ class EmailVerificationService:
                 self._increment_reason(skipped_reasons, reason)
                 continue
 
+            eligible_count += 1
             if normalized_email in fresh_cache_emails:
                 cached_count += 1
             else:
-                paid_validation_count += 1
+                paid_validation_emails.add(normalized_email)
 
-        eligible_count = cached_count + paid_validation_count
+        paid_validation_count = len(paid_validation_emails)
         return EmailVerificationPreviewRead(
             campaign_id=campaign_id,
             selected_count=selected_count,
