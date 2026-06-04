@@ -12,3 +12,11 @@ test('S4 selection allows mixed rows and previews eligible subset', () => {
   assert.match(source, /paid_validation_count/)
   assert.doesNotMatch(source, /disabled=\{row\.status === 'valid'\}/)
 })
+
+test('S4 matching actionability excludes ZeroBounce unknown verdicts', () => {
+  const source = readFileSync(new URL('../src/components/views/validation/ValidationView.tsx', import.meta.url), 'utf8')
+
+  assert.match(source, /counts\.pending \+ counts\.stale \+ counts\.failed/)
+  assert.doesNotMatch(source, /counts\.pending \+ counts\.stale \+ counts\.unknown \+ counts\.failed/)
+  assert.doesNotMatch(source, /filter === 'unknown' \|\| filter === 'failed'/)
+})

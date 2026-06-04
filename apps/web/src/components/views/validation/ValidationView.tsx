@@ -305,8 +305,8 @@ export function ValidationView({
   ], [counts])
 
   const matchingActionableCount = filter === 'all'
-    ? counts.pending + counts.stale + counts.unknown + counts.failed
-    : filter === 'pending' || filter === 'stale' || filter === 'unknown' || filter === 'failed'
+    ? counts.pending + counts.stale + counts.failed
+    : filter === 'pending' || filter === 'stale' || filter === 'failed'
       ? contactTotal
       : 0
   const validationBatchCount = Math.min(MAX_VERIFICATION_BATCH_SIZE, matchingActionableCount)
