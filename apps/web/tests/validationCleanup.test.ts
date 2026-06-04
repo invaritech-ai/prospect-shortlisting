@@ -1,12 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-const projectRoot = process.cwd()
+import { fileURLToPath } from 'node:url'
 
 function readSource(path: string): string {
-  return readFileSync(join(projectRoot, 'apps/web', path), 'utf8')
+  return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
+}
+
+function testPath(path: string): string {
+  return fileURLToPath(new URL(path, import.meta.url))
 }
 
 test('obsolete validation mocks are removed from mock data exports', () => {
@@ -55,7 +57,7 @@ test('queue history uses S4 as the validation queue stage', () => {
 })
 
 test('standalone reveal view test is deleted and validation comment is current', () => {
-  assert.equal(existsSync(join(projectRoot, 'apps/web/tests/s4RevealView.test.tsx')), false)
+  assert.equal(existsSync(testPath('s4RevealView.test.tsx')), false)
 
   const globals = readSource('src/globals.css')
   assert.doesNotMatch(globals, /S5 · Validation/)
