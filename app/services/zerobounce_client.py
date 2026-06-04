@@ -103,12 +103,24 @@ class ZeroBounceClient:
             usable_errors = [item for item in errors if isinstance(item, dict)] if isinstance(errors, list) else []
             if usable_errors:
                 if any(self._is_auth_or_credit_error(error) for error in usable_errors):
-                    self.last_error_code = ERR_ZEROBOUNCE_AUTH_FAILED
                     log_event(
                         logger,
                         "zerobounce_auth_or_credits_error",
                         body=str(body)[:500],
                     )
+                    fallback_results, fallback_error = self._validate_batch_via_single_endpoint(
+                        emails,
+                        api_key=api_key,
+                        timeout_sec=timeout_sec,
+                    )
+                    if not fallback_error:
+                        log_event(
+                            logger,
+                            "zerobounce_batch_single_endpoint_fallback_succeeded",
+                            email_count=len(fallback_results),
+                        )
+                        return fallback_results, ""
+                    self.last_error_code = fallback_error
                     return [], self.last_error_code
             if not isinstance(email_batch, list):
                 self.last_error_code = ERR_ZEROBOUNCE_FAILED
@@ -138,3 +150,75 @@ class ZeroBounceClient:
     def _is_auth_or_credit_error(self, error: dict[str, Any]) -> bool:
         error_text = str(error.get("error") or "").lower()
         return "invalid api key" in error_text or "credits" in error_text
+
+    def _validate_batch_via_single_endpoint(
+        self,
+        emails: list[str],
+        *,
+        api_key: str,
+        timeout_sec: int,
+    ) -> tuple[list[dict[str, Any]], str]:
+        results: list[dict[str, Any]] = []
+        single_timeout = max(3, min(timeout_sec, 60))
+        for email in emails:
+            result, error_code = self._validate_one(
+                email,
+                api_key=api_key,
+                timeout_sec=single_timeout,
+            )
+            if error_code:
+                return [], error_code
+            if result is not None:
+                results.append(result)
+        return results, ""
+
+    def _validate_one(
+        self,
+        email: str,
+        *,
+        api_key: str,
+        timeout_sec: int,
+    ) -> tuple[dict[str, Any] | None, str]:
+        try:
+            response = httpx.get(
+                f"{self._base_url}/v2/validate",
+                params={"api_key": api_key, "email": email, "timeout": timeout_sec},
+                timeout=timeout_sec + 10,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "zerobounce_single_http_error", error=str(exc))
+            return None, ERR_ZEROBOUNCE_FAILED
+
+        if response.status_code in {401, 403}:
+            return None, ERR_ZEROBOUNCE_AUTH_FAILED
+        if response.status_code == 429:
+            return None, ERR_ZEROBOUNCE_RATE_LIMITED
+        if response.status_code >= 400:
+            log_event(
+                logger,
+                "zerobounce_single_non_ok_response",
+                status=response.status_code,
+                body=response.text[:500],
+            )
+            return None, ERR_ZEROBOUNCE_FAILED
+
+        try:
+            body = response.json()
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "zerobounce_single_invalid_json", error=str(exc), body=response.text[:500])
+            return None, ERR_ZEROBOUNCE_FAILED
+        if not isinstance(body, dict):
+            log_event(logger, "zerobounce_single_unexpected_body", body=str(body)[:500])
+            return None, ERR_ZEROBOUNCE_FAILED
+        if "error" in body:
+            error_code = (
+                ERR_ZEROBOUNCE_AUTH_FAILED
+                if self._is_auth_or_credit_error(body)
+                else ERR_ZEROBOUNCE_FAILED
+            )
+            log_event(logger, "zerobounce_single_error", body=str(body)[:500])
+            return None, error_code
+        if not body.get("address") or not body.get("status"):
+            log_event(logger, "zerobounce_single_malformed_body", body=str(body)[:500])
+            return None, ERR_ZEROBOUNCE_FAILED
+        return body, ""

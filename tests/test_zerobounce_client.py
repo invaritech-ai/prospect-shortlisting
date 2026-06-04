@@ -82,6 +82,48 @@ def test_validate_batch_maps_documented_auth_error_envelope(
     assert error_code == ERR_ZEROBOUNCE_AUTH_FAILED
 
 
+def test_validate_batch_falls_back_to_single_validate_when_batch_endpoint_rejects_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(credentials_resolver, "resolve", lambda provider, field: "api-key")
+
+    def fake_post(*args: Any, **kwargs: Any) -> _FakeResponse:
+        return _FakeResponse(
+            {
+                "email_batch": [],
+                "errors": [
+                    {
+                        "error": "Invalid API Key or your account ran out of credits",
+                        "email_address": "all",
+                    }
+                ],
+            }
+        )
+
+    def fake_get(*args: Any, **kwargs: Any) -> _FakeResponse:
+        return _FakeResponse(
+            {
+                "address": "valid@example.com",
+                "status": "valid",
+                "sub_status": "",
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    results, error_code = ZeroBounceClient().validate_batch(["valid@example.com"])
+
+    assert error_code == ""
+    assert results == [
+        {
+            "address": "valid@example.com",
+            "status": "valid",
+            "sub_status": "",
+        }
+    ]
+
+
 def test_validate_batch_keeps_usable_rows_with_nonfatal_row_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
