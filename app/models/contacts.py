@@ -65,6 +65,32 @@ class EmailFetchBatch(SQLModel, table=True):
     finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
 
 
+class EmailVerificationCache(SQLModel, table=True):
+    """Provider verification results cached by normalized email."""
+
+    __tablename__ = "email_verification_cache"
+    __table_args__ = (
+        Index(
+            "ux_email_verification_cache_provider_email",
+            "provider",
+            "normalized_email",
+            unique=True,
+        ),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True, index=True)
+    provider: str = Field(default="zerobounce", max_length=32, index=True)
+    normalized_email: str = Field(max_length=512, index=True)
+    status: str = Field(max_length=32, index=True)
+    sub_status: str | None = Field(default=None, max_length=64)
+    raw_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    validated_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
+    updated_at: datetime = utc_datetime_field(default_factory=utcnow)
+
+
 class VerificationBatch(SQLModel, table=True):
     """One operator action to verify a set of contact emails via ZeroBounce."""
 
@@ -79,6 +105,12 @@ class VerificationBatch(SQLModel, table=True):
     valid_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
     skipped_count: int = Field(default=0, ge=0)
+    selected_contact_snapshots_json: list[dict[str, Any]] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    result_summary_json: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     created_at: datetime = utc_datetime_field(default_factory=utcnow, index=True)
     finished_at: datetime | None = utc_datetime_field(default=None, nullable=True)
 
