@@ -19,6 +19,7 @@ import type {
   CampaignStageCounts,
   EmailFetchBatchRead,
   EmailFetchCompanyCounts,
+  EmailVerificationBatchRead,
   IntegrationHealthItem,
   AiReviewJobRead,
   AiReviewJobStatusRead,
@@ -193,6 +194,10 @@ function isEmailFetchBatchLive(batch: EmailFetchBatchRead | null): boolean {
   return Boolean(batch && ['queued', 'running'].includes(batch.state))
 }
 
+function isEmailVerificationBatchLive(batch: EmailVerificationBatchRead | null): boolean {
+  return Boolean(batch && ['queued', 'running'].includes(batch.state))
+}
+
 function App() {
   // ── Navigation ────────────────────────────────────────────────────────────
   const [activeView, setActiveView] = useState<ActiveView>(INITIAL_ROUTE_STATE.view)
@@ -220,11 +225,13 @@ function App() {
   const [activeAiReviewJob, setActiveAiReviewJob] = useState<AiReviewJobRead | null>(null)
   const [activeAiReviewStatus, setActiveAiReviewStatus] = useState<AiReviewJobStatusRead | null>(null)
   const [activeEmailFetchBatch, setActiveEmailFetchBatch] = useState<EmailFetchBatchRead | null>(null)
+  const [activeVerificationBatch, setActiveVerificationBatch] = useState<EmailVerificationBatchRead | null>(null)
   const [stageCounts, setStageCounts] = useState<CampaignStageCounts | null>(null)
   const stageCountsRequestRef = useRef<{ campaignId: string; promise: Promise<void> } | null>(null)
   const wasScrapeLiveRef = useRef(false)
   const wasAiReviewLiveRef = useRef(false)
   const wasEmailFetchLiveRef = useRef(false)
+  const wasVerificationLiveRef = useRef(false)
 
   // ── Services health ───────────────────────────────────────────────────────
   const [servicesHealth, setServicesHealth] = useState<IntegrationHealthItem[] | null>(null)
@@ -441,6 +448,18 @@ function App() {
     }
     wasEmailFetchLiveRef.current = isLive
   }, [selectedCampaignId, activeEmailFetchBatch, loadStageCounts])
+
+  useEffect(() => {
+    if (!selectedCampaignId) {
+      wasVerificationLiveRef.current = false
+      return
+    }
+    const isLive = isEmailVerificationBatchLive(activeVerificationBatch)
+    if (wasVerificationLiveRef.current && !isLive) {
+      void loadStageCounts(selectedCampaignId)
+    }
+    wasVerificationLiveRef.current = isLive
+  }, [selectedCampaignId, activeVerificationBatch, loadStageCounts])
 
   useEffect(() => {
     if (!error) return
@@ -675,7 +694,13 @@ function App() {
             onContactCountsChange={mergeContactCountsIntoStageCounts}
           />
         )}
-        {selectedCampaignId && activeView === 's4-validation'   && <ValidationView stats={null} />}
+        {selectedCampaignId && activeView === 's4-validation'   && (
+          <ValidationView
+            campaignId={selectedCampaignId}
+            onStageCountsRefresh={refreshSelectedStageCounts}
+            onActiveBatchChange={setActiveVerificationBatch}
+          />
+        )}
         {selectedCampaignId && activeView === 'operations'      && <ComingSoon label="Operations Log" />}
 
       </AppShell>
