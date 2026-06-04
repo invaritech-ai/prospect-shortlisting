@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -10,6 +10,7 @@ from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain
 from app.models.base import utcnow
 from app.services.email_verification_service import (
     is_campaign_ready_contact,
+    is_fresh_verified_at,
     normalize_email,
 )
 
@@ -83,3 +84,10 @@ def test_contact_ready_rule_uses_current_email_snapshot(db_session: Session) -> 
 
     contact.verified_at = now - timedelta(days=31)
     assert is_campaign_ready_contact(contact, now=now) is False
+
+
+def test_fresh_verified_at_normalizes_naive_and_aware_datetimes_at_boundary() -> None:
+    aware_now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+
+    assert is_fresh_verified_at(datetime(2026, 5, 5, 12, 0), now=aware_now) is True
+    assert is_fresh_verified_at(datetime(2026, 5, 5, 11, 59, 59), now=aware_now) is False
