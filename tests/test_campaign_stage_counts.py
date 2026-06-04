@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models import Campaign, ClassificationResult, Contact, UploadedDomain
+from app.models.base import utcnow
 from app.models.scrape import ScrapeResult
 
 
@@ -124,6 +126,41 @@ def test_campaign_stage_counts_use_shared_real_pipeline_state(db_session: Sessio
                 selected_email="valid@possible-done.example",
                 verification_status="valid",
                 verification_applied=True,
+                verified_email_snapshot="valid@possible-done.example",
+                verified_at=utcnow(),
+            ),
+            Contact(
+                campaign_id=campaign.id,
+                domain_id=crap.id,
+                first_name="Stale",
+                last_name="Contact",
+                selected_email="stale@crap.example",
+                verification_status="valid",
+                verification_applied=True,
+                verified_email_snapshot="stale@crap.example",
+                verified_at=utcnow() - timedelta(days=31),
+            ),
+            Contact(
+                campaign_id=campaign.id,
+                domain_id=crap.id,
+                first_name="Failed",
+                last_name="Contact",
+                selected_email="failed@crap.example",
+                verification_status="failed",
+                verification_sub_status="zerobounce_failed",
+                verification_applied=False,
+                verified_email_snapshot="failed@crap.example",
+            ),
+            Contact(
+                campaign_id=campaign.id,
+                domain_id=unknown.id,
+                first_name="Catch",
+                last_name="All",
+                selected_email="catch@unknown.example",
+                verification_status="catch-all",
+                verification_applied=True,
+                verified_email_snapshot="catch@unknown.example",
+                verified_at=utcnow(),
             ),
         ]
     )
@@ -153,10 +190,16 @@ def test_campaign_stage_counts_use_shared_real_pipeline_state(db_session: Sessio
     assert out.contacts.badge == 3
     assert out.contacts.contacts_found == 2
     assert out.contacts.emails_found == 2
-    assert out.validation.total == 2
+    assert out.validation.total == 5
+    assert out.validation.checking == 0
+    assert out.validation.running == out.validation.checking
     assert out.validation.pending == 1
     assert out.validation.valid == 1
-    assert out.validation.badge == 1
+    assert out.validation.stale == 1
+    assert out.validation.failed == 1
+    assert out.validation.catch_all == 1
+    assert out.validation.invalid == out.validation.undeliverable
+    assert out.validation.badge == 3
 
 
 def test_campaign_stage_counts_missing_campaign_404(db_session: Session) -> None:

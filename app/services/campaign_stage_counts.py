@@ -21,6 +21,7 @@ from app.services.classification_scope import (
     effective_possible_domain_ids_query,
     materialized_cte,
 )
+from app.services.email_verification_service import contact_verification_bucket
 
 
 def build_campaign_stage_counts(*, session: Session, campaign_id: UUID) -> CampaignStageCounts | None:
@@ -209,51 +210,49 @@ def _contact_counts(*, session: Session, campaign_id: UUID) -> ContactsStageCoun
 
 
 def _validation_counts(*, session: Session, campaign_id: UUID) -> ValidationStageCounts:
-    rows = session.exec(
-        select(
-            col(Contact.verification_status),
-            col(Contact.verification_applied),
-            col(Contact.verification_batch_id),
-            func.count(col(Contact.id)),
-        )
+    contacts = session.exec(
+        select(Contact)
         .where(
             col(Contact.campaign_id) == campaign_id,
             col(Contact.selected_email).is_not(None),
         )
-        .group_by(
-            col(Contact.verification_status),
-            col(Contact.verification_applied),
-            col(Contact.verification_batch_id),
-        )
     ).all()
-    pending = 0
-    running = 0
-    valid = 0
-    invalid = 0
-    unknown = 0
-    total = 0
-    for status, applied, batch_id, count in rows:
-        amount = int(count or 0)
-        total += amount
-        normalized = (status or "").lower()
-        if not applied:
-            if batch_id:
-                running += amount
-            else:
-                pending += amount
-        elif normalized in {"valid", "deliverable"}:
-            valid += amount
-        elif normalized in {"invalid", "do_not_mail"}:
-            invalid += amount
-        else:
-            unknown += amount
+    counts = {
+        "pending": 0,
+        "checking": 0,
+        "stale": 0,
+        "valid": 0,
+        "undeliverable": 0,
+        "catch_all": 0,
+        "unknown": 0,
+        "failed": 0,
+    }
+    now = utcnow()
+    for contact in contacts:
+        bucket = contact_verification_bucket(contact, now=now)
+        if bucket in counts:
+            counts[bucket] += 1
+
+    pending = counts["pending"]
+    checking = counts["checking"]
+    stale = counts["stale"]
+    valid = counts["valid"]
+    undeliverable = counts["undeliverable"]
+    catch_all = counts["catch_all"]
+    unknown = counts["unknown"]
+    failed = counts["failed"]
     return ValidationStageCounts(
-        badge=pending + running,
-        total=total,
+        badge=pending + stale + failed + checking,
+        total=len(contacts),
         pending=pending,
-        running=running,
+        checking=checking,
+        running=checking,
+        stale=stale,
         valid=valid,
-        invalid=invalid,
+        undeliverable=undeliverable,
+        catch_all=catch_all,
         unknown=unknown,
-        is_live=running > 0,
+        failed=failed,
+        invalid=undeliverable,
+        is_live=checking > 0,
     )

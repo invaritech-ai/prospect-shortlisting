@@ -86,10 +86,15 @@ class ValidationStageCounts(BaseModel):
     badge: int = 0
     total: int = 0
     pending: int = 0
+    checking: int = 0
     running: int = 0
+    stale: int = 0
     valid: int = 0
-    invalid: int = 0
+    undeliverable: int = 0
+    catch_all: int = 0
     unknown: int = 0
+    failed: int = 0
+    invalid: int = 0
     is_live: bool = False
 
 
