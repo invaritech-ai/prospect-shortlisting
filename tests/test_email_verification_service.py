@@ -214,3 +214,140 @@ def test_status_bucket_snapshot_mismatch_with_batch_id_returns_pending(db_sessio
     from app.services.email_verification_service import contact_verification_bucket
 
     assert contact_verification_bucket(changed, now=utcnow()) == "pending"
+
+
+def test_list_contacts_shows_only_contacts_with_email_and_filters_by_domain_letter(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    _contact(db_session, campaign, domain, "ada@example.com")
+    _contact(db_session, campaign, domain, None)
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    out = EmailVerificationService().list_contacts(
+        session=db_session,
+        campaign_id=campaign.id,
+        status="all",
+        search=None,
+        letter="E",
+        limit=50,
+        offset=0,
+    )
+
+    assert out.total == 1
+    assert out.counts.all == 1
+    assert out.items[0].selected_email == "ada@example.com"
+    assert out.items[0].domain == "example.com"
+    assert out.items[0].status == "pending"
+
+
+def test_preview_reports_cached_paid_and_skipped_counts(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    pending = _contact(db_session, campaign, domain, "pending@example.com")
+    cached = _contact(db_session, campaign, domain, "cached@example.com")
+    valid = _contact(db_session, campaign, domain, "valid@example.com")
+
+    valid.verified_email_snapshot = "valid@example.com"
+    valid.verification_status = "valid"
+    valid.verification_applied = True
+    valid.verified_at = utcnow()
+    db_session.add(valid)
+    db_session.add(
+        EmailVerificationCache(
+            provider="zerobounce",
+            normalized_email="cached@example.com",
+            status="valid",
+            raw_json={"address": "cached@example.com", "status": "valid"},
+            validated_at=utcnow(),
+        )
+    )
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    preview = EmailVerificationService().preview(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[pending.id, cached.id, valid.id],
+    )
+
+    assert preview.selected_count == 3
+    assert preview.eligible_count == 2
+    assert preview.cached_count == 1
+    assert preview.paid_validation_count == 1
+    assert preview.skipped_count == 1
+
+
+def test_list_contact_ids_returns_actionable_filtered_ids(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    pending = _contact(db_session, campaign, domain, "pending@example.com")
+    failed = _contact(db_session, campaign, domain, "failed@example.com")
+    valid = _contact(db_session, campaign, domain, "valid@example.com")
+
+    failed.verified_email_snapshot = failed.selected_email
+    failed.verification_status = "failed"
+    failed.verification_sub_status = "zerobounce_failed"
+    failed.verification_applied = False
+
+    valid.verified_email_snapshot = valid.selected_email
+    valid.verification_status = "valid"
+    valid.verification_applied = True
+    valid.verified_at = utcnow()
+    db_session.add_all([failed, valid])
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    out = EmailVerificationService().list_contact_ids(
+        session=db_session,
+        campaign_id=campaign.id,
+        status="all",
+        search=None,
+        letter="E",
+        actionable_only=True,
+        limit=200,
+        offset=0,
+    )
+
+    assert out.total == 2
+    assert out.ids == [pending.id, failed.id]
+
+
+def test_get_letter_counts_applies_status_and_search_filters(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    example = _domain(db_session, campaign.id)
+    alpha = UploadedDomain(
+        campaign_id=campaign.id,
+        raw_url="https://alpha.com",
+        normalized_url="https://alpha.com",
+        domain="alpha.com",
+        dedupe_key="alpha.com",
+    )
+    db_session.add(alpha)
+    db_session.commit()
+    db_session.refresh(alpha)
+
+    _contact(db_session, campaign, example, "pending@example.com")
+    stale = _contact(db_session, campaign, alpha, "stale@alpha.com")
+    stale.title = "Operations Lead"
+    stale.verified_email_snapshot = stale.selected_email
+    stale.verification_status = "valid"
+    stale.verification_applied = True
+    stale.verified_at = utcnow() - timedelta(days=31)
+    db_session.add(stale)
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    counts = EmailVerificationService().get_letter_counts(
+        session=db_session,
+        campaign_id=campaign.id,
+        status="stale",
+        search="operations",
+    )
+
+    assert counts == {"A": 1}
