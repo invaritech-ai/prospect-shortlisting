@@ -335,6 +335,7 @@ class EmailVerificationService:
         )
         now = utcnow()
         session.add(batch)
+        session.flush()
         for contact, normalized_email in eligible_snapshots:
             contact.verification_batch_id = batch.id
             contact.verified_email_snapshot = normalized_email

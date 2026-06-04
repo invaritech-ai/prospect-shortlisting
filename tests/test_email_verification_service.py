@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain, VerificationBatch
@@ -20,6 +21,19 @@ from app.services.email_verification_service import (
 @pytest.fixture()
 def db_session() -> Session:
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
+
+
+@pytest.fixture()
+def fk_db_session() -> Session:
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
@@ -592,6 +606,25 @@ def test_create_batch_snapshots_contacts_and_marks_checking(db_session: Session)
     assert contact.verification_status is None
     assert contact.verification_sub_status is None
     assert contact.verification_raw_json is None
+
+
+def test_create_batch_inserts_batch_before_contact_fk_update(fk_db_session: Session) -> None:
+    campaign = _campaign(fk_db_session)
+    domain = _domain(fk_db_session, campaign.id)
+    contact = _contact(fk_db_session, campaign, domain, " fk@example.com ")
+
+    fake = FakeZeroBounce([])
+    from app.services.email_verification_service import EmailVerificationService
+
+    batch = EmailVerificationService(zerobounce=fake).create_batch(
+        session=fk_db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+
+    fk_db_session.refresh(contact)
+    assert fk_db_session.get(VerificationBatch, batch.id) is not None
+    assert contact.verification_batch_id == batch.id
 
 
 def test_get_active_batch_finds_older_real_batch_after_newer_orphans(
