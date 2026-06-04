@@ -862,6 +862,82 @@ def test_run_batch_reuses_one_provider_result_for_duplicate_selected_email(
     assert cache_rows[0].normalized_email == "shared@example.com"
 
 
+def test_run_batch_preserves_create_time_skipped_count_for_duplicate_selected_id(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "duplicate@example.com")
+    fake = FakeZeroBounce(
+        [
+            {
+                "address": "duplicate@example.com",
+                "status": "valid",
+            }
+        ]
+    )
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id, contact.id],
+    )
+    assert batch.selected_count == 2
+    assert batch.queued_count == 1
+    assert batch.result_summary_json["skipped_count"] == 1
+
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    assert finished.verified_count == 1
+    assert finished.skipped_count == 1
+    assert finished.result_summary_json["skipped_count"] == 1
+
+
+def test_run_batch_preserves_create_time_skipped_count_for_non_actionable_selection(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    pending = _contact(db_session, campaign, domain, "pending@example.com")
+    already_verified = _contact(db_session, campaign, domain, "valid@example.com")
+    already_verified.verified_email_snapshot = "valid@example.com"
+    already_verified.verification_status = "valid"
+    already_verified.verification_applied = True
+    already_verified.verified_at = utcnow()
+    db_session.add(already_verified)
+    db_session.commit()
+
+    fake = FakeZeroBounce(
+        [
+            {
+                "address": "pending@example.com",
+                "status": "valid",
+            }
+        ]
+    )
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[pending.id, already_verified.id],
+    )
+    assert batch.selected_count == 2
+    assert batch.queued_count == 1
+    assert batch.result_summary_json["skipped_count"] == 1
+
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    assert finished.verified_count == 1
+    assert finished.skipped_count == 1
+    assert finished.result_summary_json["skipped_count"] == 1
+
+
 @pytest.mark.parametrize(
     ("credential_result", "expected_code"),
     [

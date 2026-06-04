@@ -366,18 +366,21 @@ class EmailVerificationService:
         session.commit()
         session.refresh(batch)
 
+        previous_summary = batch.result_summary_json if isinstance(batch.result_summary_json, dict) else {}
+        initial_skipped_count = self._coerce_nonnegative_int(previous_summary.get("skipped_count"))
+
         remaining: list[tuple[Contact, str]] = []
-        skipped_count = 0
+        runtime_skipped_count = 0
         for snapshot in batch.selected_contact_snapshots_json or []:
             contact_id = self._snapshot_contact_id(snapshot)
             normalized_email = normalize_email(str(snapshot.get("email") or ""))
             if contact_id is None or not normalized_email:
-                skipped_count += 1
+                runtime_skipped_count += 1
                 continue
 
             contact = session.get(Contact, contact_id)
             if contact is None or contact.campaign_id != batch.campaign_id:
-                skipped_count += 1
+                runtime_skipped_count += 1
                 continue
 
             current_email = normalize_email(contact.selected_email)
@@ -386,7 +389,7 @@ class EmailVerificationService:
                     contact.verification_batch_id = None
                     contact.updated_at = utcnow()
                     session.add(contact)
-                skipped_count += 1
+                runtime_skipped_count += 1
                 continue
 
             remaining.append((contact, normalized_email))
@@ -427,7 +430,7 @@ class EmailVerificationService:
                 if status in RESULT_UNDELIVERABLE:
                     invalid_count += 1
             else:
-                skipped_count += 1
+                runtime_skipped_count += 1
 
         api_results_by_email: dict[str, dict[str, Any]] = {}
         provider_error_code = ""
@@ -445,7 +448,7 @@ class EmailVerificationService:
                     ):
                         technical_failed_count += 1
                     else:
-                        skipped_count += 1
+                        runtime_skipped_count += 1
             else:
                 validated_at = utcnow()
                 api_results_by_email = self._upsert_provider_results(
@@ -461,14 +464,14 @@ class EmailVerificationService:
                             contact.verification_batch_id = None
                             contact.updated_at = utcnow()
                             session.add(contact)
-                        skipped_count += 1
+                        runtime_skipped_count += 1
                         continue
                     cache = self._cache_for_email(
                         session=session,
                         normalized_email=normalized_email,
                     )
                     if cache is None:
-                        skipped_count += 1
+                        runtime_skipped_count += 1
                         continue
                     if self._apply_api_result_to_contact(
                         session=session,
@@ -486,13 +489,13 @@ class EmailVerificationService:
                         if status in RESULT_UNDELIVERABLE:
                             invalid_count += 1
                     else:
-                        skipped_count += 1
+                        runtime_skipped_count += 1
 
-        previous_summary = batch.result_summary_json or {}
+        total_skipped_count = initial_skipped_count + runtime_skipped_count
         batch.verified_count = verified_count
         batch.valid_count = valid_count
         batch.invalid_count = invalid_count
-        batch.skipped_count = skipped_count
+        batch.skipped_count = total_skipped_count
         batch.queued_count = 0
         batch.state = (
             "failed"
@@ -504,7 +507,7 @@ class EmailVerificationService:
             **previous_summary,
             "cache_result_count": cache_result_count,
             "api_result_count": api_result_count,
-            "skipped_count": skipped_count,
+            "skipped_count": total_skipped_count,
             "technical_failed_count": technical_failed_count,
         }
         session.add(batch)
@@ -526,6 +529,12 @@ class EmailVerificationService:
             error_code or "zerobounce_failed",
             message or "ZeroBounce credential check failed.",
         )
+
+    def _coerce_nonnegative_int(self, value: Any) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
 
     def _eligible_contact_snapshots(
         self,
