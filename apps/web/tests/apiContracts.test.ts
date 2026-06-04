@@ -185,7 +185,16 @@ test('getCampaignCosts requests campaign costs endpoint', async () => {
   let requested = ''
   mockFetch((url) => {
     requested = url
-    return { campaign_id: 'camp-1', totals: {}, stages: [] }
+    return {
+      pipeline_run_id: null,
+      campaign_id: 'camp-1',
+      company_id: null,
+      total_cost_usd: '0.000000',
+      event_count: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      by_stage: {},
+    }
   })
 
   await getCampaignCosts('camp-1')
