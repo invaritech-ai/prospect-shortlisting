@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,7 +32,7 @@ class EmailVerificationCounts(BaseModel):
     unknown: int = 0
     failed: int = 0
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class EmailVerificationContactRow(UTCReadModel):
@@ -83,3 +83,28 @@ class EmailVerificationPreviewRead(BaseModel):
     skipped_reasons: dict[str, int] = Field(default_factory=dict)
     max_batch_size: int = 200
     warnings: list[str] = Field(default_factory=list)
+
+
+class EmailVerificationBatchCreate(BaseModel):
+    campaign_id: UUID
+    contact_ids: list[UUID] = Field(min_length=1, max_length=200)
+
+
+class EmailVerificationBatchRead(UTCReadModel):
+    id: UUID
+    campaign_id: UUID
+    state: str
+    selected_count: int
+    queued_count: int
+    verified_count: int
+    valid_count: int
+    invalid_count: int
+    skipped_count: int
+    result_summary: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias="result_summary_json",
+    )
+    created_at: datetime
+    finished_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)

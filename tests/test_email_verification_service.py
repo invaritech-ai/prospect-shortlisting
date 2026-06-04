@@ -10,6 +10,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain
 from app.models.base import utcnow
 from app.services.email_verification_service import (
+    EmailVerificationServiceError,
     is_campaign_ready_contact,
     is_fresh_verified_at,
     normalize_email,
@@ -511,3 +512,329 @@ def test_get_letter_counts_applies_status_and_search_filters(db_session: Session
     )
 
     assert counts == {"A": 1}
+
+
+class FakeZeroBounce:
+    def __init__(
+        self,
+        results: list[dict],
+        error: str = "",
+        credential_result: tuple[bool, str, str] = (True, "", "ok"),
+    ) -> None:
+        self.results = results
+        self.error = error
+        self.credential_result = credential_result
+        self.calls: list[list[str]] = []
+        self.credential_checks = 0
+
+    def check_credentials(self) -> tuple[bool, str, str]:
+        self.credential_checks += 1
+        return self.credential_result
+
+    def validate_batch(self, emails: list[str], *, timeout_sec: int = 45):  # noqa: ANN001
+        self.calls.append(emails)
+        return self.results, self.error
+
+
+def test_create_batch_snapshots_contacts_and_marks_checking(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, " Ada@Example.COM ")
+
+    fake = FakeZeroBounce([])
+    from app.services.email_verification_service import EmailVerificationService
+
+    batch = EmailVerificationService(zerobounce=fake).create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+
+    db_session.refresh(contact)
+    assert fake.credential_checks == 1
+    assert batch.state == "queued"
+    assert batch.selected_count == 1
+    assert batch.queued_count == 1
+    assert batch.selected_contact_snapshots_json == [
+        {"contact_id": str(contact.id), "email": "ada@example.com"}
+    ]
+    assert batch.result_summary_json == {
+        "cached_count": 0,
+        "paid_validation_count": 1,
+        "skipped_count": 0,
+    }
+    assert contact.verification_batch_id == batch.id
+    assert contact.verified_email_snapshot == "ada@example.com"
+    assert contact.verification_applied is False
+    assert contact.verification_status is None
+    assert contact.verification_sub_status is None
+    assert contact.verification_raw_json is None
+
+
+def test_run_batch_applies_fresh_cache_without_provider_call(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "cached@example.com")
+    db_session.add(
+        EmailVerificationCache(
+            provider="zerobounce",
+            normalized_email="cached@example.com",
+            status="valid",
+            sub_status=None,
+            raw_json={"address": "cached@example.com", "status": "valid"},
+            validated_at=utcnow(),
+        )
+    )
+    db_session.commit()
+
+    fake = FakeZeroBounce([])
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    db_session.refresh(contact)
+    assert fake.credential_checks == 0
+    assert fake.calls == []
+    assert finished.state == "succeeded"
+    assert finished.verified_count == 1
+    assert finished.valid_count == 1
+    assert finished.invalid_count == 0
+    assert contact.verification_status == "valid"
+    assert contact.verification_applied is True
+    assert contact.verification_batch_id is None
+    assert contact.verification_raw_json == {
+        "provider": "zerobounce",
+        "source": "cache",
+        "result": {"address": "cached@example.com", "status": "valid"},
+    }
+
+
+def test_run_batch_calls_zerobounce_for_paid_misses_and_writes_cache(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "paid@example.com")
+
+    fake = FakeZeroBounce(
+        [
+            {
+                "address": "paid@example.com",
+                "status": "catch-all",
+                "sub_status": "mailbox_quota_exceeded",
+            }
+        ]
+    )
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    db_session.refresh(contact)
+    cache = db_session.exec(select(EmailVerificationCache)).one()
+    assert fake.credential_checks == 1
+    assert fake.calls == [["paid@example.com"]]
+    assert finished.state == "succeeded"
+    assert finished.verified_count == 1
+    assert finished.valid_count == 0
+    assert finished.invalid_count == 0
+    assert contact.verification_status == "catch_all"
+    assert contact.verification_sub_status == "mailbox_quota_exceeded"
+    assert contact.verification_applied is True
+    assert contact.verification_batch_id is None
+    assert contact.verification_raw_json == {
+        "provider": "zerobounce",
+        "source": "api",
+        "result": {
+            "address": "paid@example.com",
+            "status": "catch-all",
+            "sub_status": "mailbox_quota_exceeded",
+        },
+    }
+    assert cache.normalized_email == "paid@example.com"
+    assert cache.status == "catch_all"
+    assert cache.sub_status == "mailbox_quota_exceeded"
+
+
+def test_run_batch_skips_writeback_when_selected_email_changed_after_snapshot(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "old@example.com")
+
+    fake = FakeZeroBounce([{"address": "old@example.com", "status": "valid"}])
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+    contact.selected_email = "new@example.com"
+    db_session.add(contact)
+    db_session.commit()
+
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    db_session.refresh(contact)
+    assert fake.calls == []
+    assert finished.state == "succeeded"
+    assert finished.verified_count == 0
+    assert finished.skipped_count == 1
+    assert contact.verification_status is None
+    assert contact.verification_applied is False
+    assert contact.verification_batch_id is None
+
+
+def test_run_batch_provider_technical_error_marks_paid_misses_failed_retryably(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "paid@example.com")
+
+    fake = FakeZeroBounce([], error="zerobounce_rate_limited")
+    from app.services.email_verification_service import EmailVerificationService
+
+    service = EmailVerificationService(zerobounce=fake)
+    batch = service.create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+    finished = service.run_batch(session=db_session, batch_id=batch.id)
+
+    db_session.refresh(contact)
+    assert fake.calls == [["paid@example.com"]]
+    assert finished.state == "failed"
+    assert finished.verified_count == 0
+    assert finished.skipped_count == 0
+    assert contact.verification_status == "failed"
+    assert contact.verification_sub_status == "zerobounce_rate_limited"
+    assert contact.verification_applied is False
+    assert contact.verification_batch_id is None
+    assert contact.verification_raw_json == {
+        "provider": "zerobounce",
+        "error_code": "zerobounce_rate_limited",
+    }
+
+
+def test_create_batch_all_cache_hit_does_not_require_credentials(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "cached@example.com")
+    db_session.add(
+        EmailVerificationCache(
+            provider="zerobounce",
+            normalized_email="cached@example.com",
+            status="valid",
+            raw_json={"address": "cached@example.com", "status": "valid"},
+            validated_at=utcnow(),
+        )
+    )
+    db_session.commit()
+
+    fake = FakeZeroBounce(
+        [],
+        credential_result=(
+            False,
+            "zerobounce_api_key_missing",
+            "ZeroBounce API key is missing.",
+        ),
+    )
+    from app.services.email_verification_service import EmailVerificationService
+
+    batch = EmailVerificationService(zerobounce=fake).create_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[contact.id],
+    )
+
+    assert fake.credential_checks == 0
+    assert batch.queued_count == 1
+    assert batch.result_summary_json["cached_count"] == 1
+    assert batch.result_summary_json["paid_validation_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("credential_result", "expected_code"),
+    [
+        (
+            (
+                False,
+                "zerobounce_api_key_missing",
+                "ZeroBounce API key is missing.",
+            ),
+            "zerobounce_api_key_missing",
+        ),
+        (
+            (
+                False,
+                "zerobounce_auth_failed",
+                "ZeroBounce rejected the API key.",
+            ),
+            "zerobounce_auth_failed",
+        ),
+    ],
+)
+def test_create_batch_with_paid_validations_checks_credentials_and_maps_failures(
+    db_session: Session,
+    credential_result: tuple[bool, str, str],
+    expected_code: str,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "paid@example.com")
+    fake = FakeZeroBounce([], credential_result=credential_result)
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    with pytest.raises(EmailVerificationServiceError) as exc_info:
+        EmailVerificationService(zerobounce=fake).create_batch(
+            session=db_session,
+            campaign_id=campaign.id,
+            contact_ids=[contact.id],
+        )
+
+    assert fake.credential_checks == 1
+    assert exc_info.value.code == expected_code
+
+
+def test_create_batch_rejects_zero_eligible_contacts(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "valid@example.com")
+    contact.verified_email_snapshot = "valid@example.com"
+    contact.verification_status = "valid"
+    contact.verification_applied = True
+    contact.verified_at = utcnow()
+    db_session.add(contact)
+    db_session.commit()
+
+    fake = FakeZeroBounce([])
+    from app.services.email_verification_service import EmailVerificationService
+
+    with pytest.raises(EmailVerificationServiceError) as exc_info:
+        EmailVerificationService(zerobounce=fake).create_batch(
+            session=db_session,
+            campaign_id=campaign.id,
+            contact_ids=[contact.id],
+        )
+
+    assert fake.credential_checks == 0
+    assert exc_info.value.code == "no_eligible_contacts"

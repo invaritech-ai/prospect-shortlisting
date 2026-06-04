@@ -25,6 +25,32 @@ class ZeroBounceClient:
     def _resolve_api_key(self) -> str:
         return credentials_resolver.resolve("zerobounce", "api_key") or (self._api_key or "").strip()
 
+    def check_credentials(self) -> tuple[bool, str, str]:
+        api_key = self._resolve_api_key()
+        if not api_key:
+            return False, ERR_ZEROBOUNCE_KEY_MISSING, "ZeroBounce API key is missing."
+        try:
+            response = httpx.get(
+                f"{self._base_url}/v2/getcredits",
+                params={"api_key": api_key},
+                timeout=10,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(logger, "zerobounce_credential_check_http_error", error=str(exc))
+            return False, ERR_ZEROBOUNCE_FAILED, "ZeroBounce credential check failed."
+        if response.status_code in {401, 403}:
+            return False, ERR_ZEROBOUNCE_AUTH_FAILED, "ZeroBounce rejected the API key."
+        if response.status_code >= 400:
+            return False, ERR_ZEROBOUNCE_FAILED, f"ZeroBounce returned HTTP {response.status_code}."
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001
+            return False, ERR_ZEROBOUNCE_FAILED, "ZeroBounce returned invalid JSON."
+        credits = body.get("Credits") if isinstance(body, dict) else None
+        if credits == -1:
+            return False, ERR_ZEROBOUNCE_AUTH_FAILED, "ZeroBounce rejected the API key."
+        return True, "", "ZeroBounce credentials are valid."
+
     def validate_batch(self, emails: list[str], *, timeout_sec: int = 45) -> tuple[list[dict[str, Any]], str]:
         self.last_error_code = ""
         api_key = self._resolve_api_key()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, or_
@@ -13,8 +14,9 @@ from app.api.schemas.email_verification import (
     EmailVerificationCounts,
     EmailVerificationPreviewRead,
 )
-from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain
+from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain, VerificationBatch
 from app.models.base import coerce_utc_datetime, utcnow
+from app.services.zerobounce_client import ZeroBounceClient
 
 VERIFICATION_STALE_AFTER_DAYS = 30
 MAX_EMAILS_PER_BATCH = 200
@@ -103,6 +105,9 @@ def is_campaign_ready_contact(contact: Contact, *, now: datetime) -> bool:
 
 
 class EmailVerificationService:
+    def __init__(self, zerobounce: Any | None = None) -> None:
+        self.zerobounce = zerobounce or ZeroBounceClient()
+
     def list_contacts(
         self,
         *,
@@ -280,9 +285,490 @@ class EmailVerificationService:
             max_batch_size=MAX_EMAILS_PER_BATCH,
         )
 
+    def create_batch(
+        self,
+        *,
+        session: Session,
+        campaign_id: UUID,
+        contact_ids: list[UUID],
+    ) -> VerificationBatch:
+        preview = self.preview(
+            session=session,
+            campaign_id=campaign_id,
+            contact_ids=contact_ids,
+        )
+        if preview.eligible_count <= 0:
+            raise EmailVerificationServiceError(
+                "no_eligible_contacts",
+                "No eligible contacts were selected for email verification.",
+            )
+        self._check_paid_credentials(preview.paid_validation_count)
+
+        selected_ids = list(contact_ids[:MAX_EMAILS_PER_BATCH])
+        eligible_snapshots = self._eligible_contact_snapshots(
+            session=session,
+            campaign_id=campaign_id,
+            contact_ids=selected_ids,
+        )
+        if not eligible_snapshots:
+            raise EmailVerificationServiceError(
+                "no_eligible_contacts",
+                "No eligible contacts were selected for email verification.",
+            )
+
+        batch = VerificationBatch(
+            campaign_id=campaign_id,
+            state="queued",
+            selected_count=len(selected_ids),
+            queued_count=len(eligible_snapshots),
+            selected_contact_snapshots_json=[
+                {"contact_id": str(contact.id), "email": normalized_email}
+                for contact, normalized_email in eligible_snapshots
+            ],
+            result_summary_json={
+                "cached_count": preview.cached_count,
+                "paid_validation_count": preview.paid_validation_count,
+                "skipped_count": preview.skipped_count,
+            },
+        )
+        now = utcnow()
+        session.add(batch)
+        for contact, normalized_email in eligible_snapshots:
+            contact.verification_batch_id = batch.id
+            contact.verified_email_snapshot = normalized_email
+            contact.verification_applied = False
+            contact.verification_status = None
+            contact.verification_sub_status = None
+            contact.verification_raw_json = None
+            contact.updated_at = now
+            session.add(contact)
+
+        session.commit()
+        session.refresh(batch)
+        return batch
+
+    def run_batch(
+        self,
+        *,
+        session: Session,
+        batch_id: UUID,
+    ) -> VerificationBatch:
+        batch = session.get(VerificationBatch, batch_id)
+        if batch is None:
+            raise EmailVerificationServiceError("batch_not_found", "Verification batch not found.")
+        if batch.state in {"succeeded", "failed"}:
+            return batch
+
+        batch.state = "running"
+        session.add(batch)
+        session.commit()
+        session.refresh(batch)
+
+        remaining: list[tuple[Contact, str]] = []
+        skipped_count = 0
+        for snapshot in batch.selected_contact_snapshots_json or []:
+            contact_id = self._snapshot_contact_id(snapshot)
+            normalized_email = normalize_email(str(snapshot.get("email") or ""))
+            if contact_id is None or not normalized_email:
+                skipped_count += 1
+                continue
+
+            contact = session.get(Contact, contact_id)
+            if contact is None or contact.campaign_id != batch.campaign_id:
+                skipped_count += 1
+                continue
+
+            current_email = normalize_email(contact.selected_email)
+            if not current_email or current_email != normalized_email:
+                if contact.verification_batch_id == batch.id:
+                    contact.verification_batch_id = None
+                    contact.updated_at = utcnow()
+                    session.add(contact)
+                skipped_count += 1
+                continue
+
+            remaining.append((contact, normalized_email))
+
+        run_started_at = utcnow()
+        cache_by_email = self._fresh_caches_by_email(
+            session=session,
+            emails=[email for _contact, email in remaining],
+            now=run_started_at,
+        )
+
+        verified_count = 0
+        valid_count = 0
+        invalid_count = 0
+        cache_result_count = 0
+        api_result_count = 0
+        technical_failed_count = 0
+
+        paid_misses: list[tuple[Contact, str]] = []
+        for contact, normalized_email in remaining:
+            cache = cache_by_email.get(normalized_email)
+            if cache is None:
+                paid_misses.append((contact, normalized_email))
+                continue
+
+            if self._apply_cache_result_to_contact(
+                session=session,
+                batch=batch,
+                contact=contact,
+                normalized_email=normalized_email,
+                cache=cache,
+            ):
+                verified_count += 1
+                cache_result_count += 1
+                status = normalize_zerobounce_status(cache.status)
+                if status in RESULT_VALID:
+                    valid_count += 1
+                if status in RESULT_UNDELIVERABLE:
+                    invalid_count += 1
+            else:
+                skipped_count += 1
+
+        api_results_by_email: dict[str, dict[str, Any]] = {}
+        provider_error_code = ""
+        paid_emails = list(dict.fromkeys(email for _contact, email in paid_misses))
+        if paid_emails:
+            provider_results, provider_error_code = self.zerobounce.validate_batch(paid_emails)
+            if provider_error_code:
+                for contact, normalized_email in paid_misses:
+                    if self._mark_contact_technical_failed(
+                        session=session,
+                        batch=batch,
+                        contact=contact,
+                        normalized_email=normalized_email,
+                        error_code=provider_error_code,
+                    ):
+                        technical_failed_count += 1
+                    else:
+                        skipped_count += 1
+            else:
+                validated_at = utcnow()
+                api_results_by_email = self._upsert_provider_results(
+                    session=session,
+                    results=provider_results,
+                    validated_at=validated_at,
+                )
+
+                for contact, normalized_email in paid_misses:
+                    result = api_results_by_email.get(normalized_email)
+                    if result is None:
+                        if contact.verification_batch_id == batch.id:
+                            contact.verification_batch_id = None
+                            contact.updated_at = utcnow()
+                            session.add(contact)
+                        skipped_count += 1
+                        continue
+                    cache = self._cache_for_email(
+                        session=session,
+                        normalized_email=normalized_email,
+                    )
+                    if cache is None:
+                        skipped_count += 1
+                        continue
+                    if self._apply_api_result_to_contact(
+                        session=session,
+                        batch=batch,
+                        contact=contact,
+                        normalized_email=normalized_email,
+                        cache=cache,
+                        result=result,
+                    ):
+                        verified_count += 1
+                        api_result_count += 1
+                        status = normalize_zerobounce_status(result.get("status"))
+                        if status in RESULT_VALID:
+                            valid_count += 1
+                        if status in RESULT_UNDELIVERABLE:
+                            invalid_count += 1
+                    else:
+                        skipped_count += 1
+
+        previous_summary = batch.result_summary_json or {}
+        batch.verified_count = verified_count
+        batch.valid_count = valid_count
+        batch.invalid_count = invalid_count
+        batch.skipped_count = skipped_count
+        batch.queued_count = 0
+        batch.state = (
+            "failed"
+            if provider_error_code and verified_count == 0 and paid_misses
+            else "succeeded"
+        )
+        batch.finished_at = utcnow()
+        batch.result_summary_json = {
+            **previous_summary,
+            "cache_result_count": cache_result_count,
+            "api_result_count": api_result_count,
+            "skipped_count": skipped_count,
+            "technical_failed_count": technical_failed_count,
+        }
+        session.add(batch)
+        session.commit()
+        session.refresh(batch)
+        return batch
+
     def _ensure_campaign(self, *, session: Session, campaign_id: UUID) -> None:
         if session.get(Campaign, campaign_id) is None:
             raise EmailVerificationServiceError("campaign_not_found", "Campaign not found.")
+
+    def _check_paid_credentials(self, paid_count: int) -> None:
+        if paid_count <= 0:
+            return
+        ok, error_code, message = self.zerobounce.check_credentials()
+        if ok:
+            return
+        raise EmailVerificationServiceError(
+            error_code or "zerobounce_failed",
+            message or "ZeroBounce credential check failed.",
+        )
+
+    def _eligible_contact_snapshots(
+        self,
+        *,
+        session: Session,
+        campaign_id: UUID,
+        contact_ids: list[UUID],
+    ) -> list[tuple[Contact, str]]:
+        contacts_by_id = self._contacts_by_id(
+            session=session,
+            campaign_id=campaign_id,
+            contact_ids=contact_ids,
+        )
+        now = utcnow()
+        seen: set[UUID] = set()
+        snapshots: list[tuple[Contact, str]] = []
+        for contact_id in contact_ids:
+            if contact_id in seen:
+                continue
+            seen.add(contact_id)
+            contact = contacts_by_id.get(contact_id)
+            if contact is None:
+                continue
+            normalized_email = normalize_email(contact.selected_email)
+            if not normalized_email:
+                continue
+            if contact_verification_bucket(contact, now=now) not in ACTIONABLE_BUCKETS:
+                continue
+            snapshots.append((contact, normalized_email))
+        return snapshots
+
+    def _snapshot_contact_id(self, snapshot: dict[str, Any]) -> UUID | None:
+        try:
+            return UUID(str(snapshot.get("contact_id")))
+        except (TypeError, ValueError):
+            return None
+
+    def _fresh_caches_by_email(
+        self,
+        *,
+        session: Session,
+        emails: list[str],
+        now: datetime,
+    ) -> dict[str, EmailVerificationCache]:
+        unique_emails = list(dict.fromkeys(email for email in emails if email))
+        if not unique_emails:
+            return {}
+        rows = session.exec(
+            select(EmailVerificationCache).where(
+                col(EmailVerificationCache.provider) == "zerobounce",
+                col(EmailVerificationCache.normalized_email).in_(unique_emails),
+            )
+        ).all()
+        return {
+            cache.normalized_email: cache
+            for cache in rows
+            if is_fresh_verified_at(cache.validated_at, now=now)
+        }
+
+    def _cache_result_payload(self, cache: EmailVerificationCache) -> dict[str, Any]:
+        if isinstance(cache.raw_json, dict):
+            return cache.raw_json
+        result: dict[str, Any] = {
+            "address": cache.normalized_email,
+            "status": cache.status,
+        }
+        if cache.sub_status:
+            result["sub_status"] = cache.sub_status
+        return result
+
+    def _apply_cache_result_to_contact(
+        self,
+        *,
+        session: Session,
+        batch: VerificationBatch,
+        contact: Contact,
+        normalized_email: str,
+        cache: EmailVerificationCache,
+    ) -> bool:
+        result = self._cache_result_payload(cache)
+        status = normalize_zerobounce_status(str(result.get("status") or cache.status))
+        sub_status = result.get("sub_status") or cache.sub_status
+        return self._apply_result_to_contact(
+            session=session,
+            batch=batch,
+            contact=contact,
+            normalized_email=normalized_email,
+            status=status,
+            sub_status=str(sub_status) if sub_status else None,
+            raw_json={
+                "provider": "zerobounce",
+                "source": "cache",
+                "result": result,
+            },
+            verified_at=cache.validated_at,
+        )
+
+    def _apply_api_result_to_contact(
+        self,
+        *,
+        session: Session,
+        batch: VerificationBatch,
+        contact: Contact,
+        normalized_email: str,
+        cache: EmailVerificationCache,
+        result: dict[str, Any],
+    ) -> bool:
+        status = normalize_zerobounce_status(str(result.get("status") or cache.status))
+        sub_status = result.get("sub_status") or cache.sub_status
+        return self._apply_result_to_contact(
+            session=session,
+            batch=batch,
+            contact=contact,
+            normalized_email=normalized_email,
+            status=status,
+            sub_status=str(sub_status) if sub_status else None,
+            raw_json={
+                "provider": "zerobounce",
+                "source": "api",
+                "result": result,
+            },
+            verified_at=cache.validated_at,
+        )
+
+    def _apply_result_to_contact(
+        self,
+        *,
+        session: Session,
+        batch: VerificationBatch,
+        contact: Contact,
+        normalized_email: str,
+        status: str,
+        sub_status: str | None,
+        raw_json: dict[str, Any],
+        verified_at: datetime,
+    ) -> bool:
+        session.refresh(contact)
+        if (
+            contact.campaign_id != batch.campaign_id
+            or normalize_email(contact.selected_email) != normalized_email
+        ):
+            if contact.verification_batch_id == batch.id:
+                contact.verification_batch_id = None
+                contact.updated_at = utcnow()
+                session.add(contact)
+            return False
+
+        contact.verification_status = status
+        contact.verification_sub_status = sub_status
+        contact.verification_raw_json = raw_json
+        contact.verification_applied = True
+        contact.verified_at = verified_at
+        contact.verified_email_snapshot = normalized_email
+        contact.verification_batch_id = None
+        contact.updated_at = utcnow()
+        session.add(contact)
+        return True
+
+    def _mark_contact_technical_failed(
+        self,
+        *,
+        session: Session,
+        batch: VerificationBatch,
+        contact: Contact,
+        normalized_email: str,
+        error_code: str,
+    ) -> bool:
+        session.refresh(contact)
+        if (
+            contact.campaign_id != batch.campaign_id
+            or normalize_email(contact.selected_email) != normalized_email
+        ):
+            if contact.verification_batch_id == batch.id:
+                contact.verification_batch_id = None
+                contact.updated_at = utcnow()
+                session.add(contact)
+            return False
+
+        contact.verification_status = "failed"
+        contact.verification_sub_status = error_code
+        contact.verification_raw_json = {
+            "provider": "zerobounce",
+            "error_code": error_code,
+        }
+        contact.verification_applied = False
+        contact.verified_email_snapshot = normalized_email
+        contact.verification_batch_id = None
+        contact.updated_at = utcnow()
+        session.add(contact)
+        return True
+
+    def _upsert_provider_results(
+        self,
+        *,
+        session: Session,
+        results: list[dict[str, Any]],
+        validated_at: datetime,
+    ) -> dict[str, dict[str, Any]]:
+        results_by_email: dict[str, dict[str, Any]] = {}
+        for result in results:
+            normalized_email = normalize_email(
+                str(result.get("address") or result.get("email_address") or "")
+            )
+            if not normalized_email:
+                continue
+            status = normalize_zerobounce_status(str(result.get("status") or ""))
+            sub_status = result.get("sub_status")
+            cache = self._cache_for_email(
+                session=session,
+                normalized_email=normalized_email,
+            )
+            now = utcnow()
+            if cache is None:
+                cache = EmailVerificationCache(
+                    provider="zerobounce",
+                    normalized_email=normalized_email,
+                    status=status,
+                    sub_status=str(sub_status) if sub_status else None,
+                    raw_json=result,
+                    validated_at=validated_at,
+                    updated_at=now,
+                )
+            else:
+                cache.status = status
+                cache.sub_status = str(sub_status) if sub_status else None
+                cache.raw_json = result
+                cache.validated_at = validated_at
+                cache.updated_at = now
+            session.add(cache)
+            results_by_email[normalized_email] = result
+        session.flush()
+        return results_by_email
+
+    def _cache_for_email(
+        self,
+        *,
+        session: Session,
+        normalized_email: str,
+    ) -> EmailVerificationCache | None:
+        return session.exec(
+            select(EmailVerificationCache).where(
+                col(EmailVerificationCache.provider) == "zerobounce",
+                col(EmailVerificationCache.normalized_email) == normalized_email,
+            )
+        ).first()
 
     def _contact_domain_rows(
         self,
