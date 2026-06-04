@@ -373,8 +373,6 @@ class EmailVerificationService:
             linkedin_url=contact.linkedin_url,
             selected_email=normalize_email(contact.selected_email),
             status=bucket,
-            raw_status=contact.verification_status,
-            sub_status=contact.verification_sub_status,
             verified_at=contact.verified_at,
             updated_at=contact.updated_at,
             action_label=self._action_label(bucket),

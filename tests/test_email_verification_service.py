@@ -243,6 +243,38 @@ def test_list_contacts_shows_only_contacts_with_email_and_filters_by_domain_lett
     assert out.items[0].status == "pending"
 
 
+def test_list_contact_row_serialization_does_not_expose_provider_result_fields(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "bad@example.com")
+    contact.verified_email_snapshot = contact.selected_email
+    contact.verification_status = "do_not_mail"
+    contact.verification_sub_status = "zerobounce_failed"
+    contact.verification_applied = True
+    contact.verified_at = utcnow()
+    db_session.add(contact)
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    out = EmailVerificationService().list_contacts(
+        session=db_session,
+        campaign_id=campaign.id,
+        status="all",
+        search=None,
+        letter="E",
+        limit=50,
+        offset=0,
+    )
+
+    row = out.items[0].model_dump()
+    assert row["status"] == "undeliverable"
+    assert "raw_status" not in row
+    assert "sub_status" not in row
+
+
 def test_preview_reports_cached_paid_and_skipped_counts(db_session: Session) -> None:
     campaign = _campaign(db_session)
     domain = _domain(db_session, campaign.id)
@@ -279,6 +311,114 @@ def test_preview_reports_cached_paid_and_skipped_counts(db_session: Session) -> 
     assert preview.cached_count == 1
     assert preview.paid_validation_count == 1
     assert preview.skipped_count == 1
+
+
+def test_preview_counts_duplicate_missing_and_out_of_campaign_ids_as_skipped(
+    db_session: Session,
+) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    pending = _contact(db_session, campaign, domain, "pending@example.com")
+    other_campaign = _campaign(db_session)
+    other_domain = _domain(db_session, other_campaign.id)
+    other_contact = _contact(db_session, other_campaign, other_domain, "other@example.com")
+    missing_id = uuid4()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    preview = EmailVerificationService().preview(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[pending.id, pending.id, missing_id, other_contact.id],
+    )
+
+    assert preview.selected_count == 4
+    assert preview.eligible_count == 1
+    assert preview.paid_validation_count == 1
+    assert preview.skipped_count == 3
+    assert preview.skipped_reasons == {"duplicate": 1, "not_found": 2}
+
+
+def test_preview_skips_no_email_and_non_actionable_contacts(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    blank = _contact(db_session, campaign, domain, "   ")
+    checking = _contact(db_session, campaign, domain, "checking@example.com")
+    checking.verification_batch_id = uuid4()
+    checking.verified_email_snapshot = checking.selected_email
+    checking.verification_applied = False
+    db_session.add(checking)
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    preview = EmailVerificationService().preview(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[blank.id, checking.id],
+    )
+
+    assert preview.selected_count == 2
+    assert preview.eligible_count == 0
+    assert preview.skipped_count == 2
+    assert preview.skipped_reasons == {"no_email": 1, "not_actionable": 1}
+
+
+def test_preview_uses_fresh_cache_but_not_stale_cache(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    fresh = _contact(db_session, campaign, domain, "fresh@example.com")
+    stale = _contact(db_session, campaign, domain, "stale@example.com")
+    db_session.add_all(
+        [
+            EmailVerificationCache(
+                provider="zerobounce",
+                normalized_email="fresh@example.com",
+                status="valid",
+                raw_json={"address": "fresh@example.com", "status": "valid"},
+                validated_at=utcnow(),
+            ),
+            EmailVerificationCache(
+                provider="zerobounce",
+                normalized_email="stale@example.com",
+                status="valid",
+                raw_json={"address": "stale@example.com", "status": "valid"},
+                validated_at=utcnow() - timedelta(days=31),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    preview = EmailVerificationService().preview(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[fresh.id, stale.id],
+    )
+
+    assert preview.selected_count == 2
+    assert preview.eligible_count == 2
+    assert preview.cached_count == 1
+    assert preview.paid_validation_count == 1
+    assert preview.skipped_count == 0
+
+
+def test_preview_caps_selected_count_at_max_batch_size(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    preview = EmailVerificationService().preview(
+        session=db_session,
+        campaign_id=campaign.id,
+        contact_ids=[uuid4() for _ in range(201)],
+    )
+
+    assert preview.selected_count == 200
+    assert preview.max_batch_size == 200
+    assert preview.skipped_count == 200
+    assert preview.skipped_reasons == {"not_found": 200}
 
 
 def test_list_contact_ids_returns_actionable_filtered_ids(db_session: Session) -> None:

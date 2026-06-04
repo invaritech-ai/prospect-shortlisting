@@ -46,8 +46,6 @@ class EmailVerificationContactRow(UTCReadModel):
     linkedin_url: str | None
     selected_email: str
     status: EmailVerificationStatus
-    raw_status: str | None
-    sub_status: str | None
     verified_at: datetime | None
     updated_at: datetime
     action_label: str | None
