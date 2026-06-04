@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain
@@ -419,6 +420,25 @@ def test_preview_caps_selected_count_at_max_batch_size(db_session: Session) -> N
     assert preview.max_batch_size == 200
     assert preview.skipped_count == 200
     assert preview.skipped_reasons == {"not_found": 200}
+
+
+def test_preview_request_accepts_200_contact_ids_and_rejects_201() -> None:
+    from app.api.schemas.email_verification import EmailVerificationPreviewRequest
+
+    campaign_id = uuid4()
+    accepted = EmailVerificationPreviewRequest(
+        campaign_id=campaign_id,
+        contact_ids=[uuid4() for _ in range(200)],
+    )
+
+    assert accepted.campaign_id == campaign_id
+    assert len(accepted.contact_ids) == 200
+
+    with pytest.raises(ValidationError):
+        EmailVerificationPreviewRequest(
+            campaign_id=campaign_id,
+            contact_ids=[uuid4() for _ in range(201)],
+        )
 
 
 def test_list_contact_ids_returns_actionable_filtered_ids(db_session: Session) -> None:
