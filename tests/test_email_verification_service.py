@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain
+from app.models import Campaign, Contact, EmailVerificationCache, UploadedDomain, VerificationBatch
 from app.models.base import utcnow
 from app.services.email_verification_service import (
     EmailVerificationServiceError,
@@ -592,6 +592,55 @@ def test_create_batch_snapshots_contacts_and_marks_checking(db_session: Session)
     assert contact.verification_status is None
     assert contact.verification_sub_status is None
     assert contact.verification_raw_json is None
+
+
+def test_get_active_batch_finds_older_real_batch_after_newer_orphans(
+    db_session: Session,
+) -> None:
+    from app.services.email_verification_service import EmailVerificationService
+
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    contact = _contact(db_session, campaign, domain, "active@example.com")
+    now = utcnow()
+    active_batch = VerificationBatch(
+        campaign_id=campaign.id,
+        state="queued",
+        selected_count=1,
+        queued_count=1,
+        selected_contact_snapshots_json=[
+            {"contact_id": str(contact.id), "email": "active@example.com"}
+        ],
+        created_at=now - timedelta(hours=1),
+    )
+    db_session.add(active_batch)
+    db_session.flush()
+    contact.verification_batch_id = active_batch.id
+    contact.verified_email_snapshot = "active@example.com"
+    contact.verification_applied = False
+    db_session.add(contact)
+    db_session.add_all(
+        [
+            VerificationBatch(
+                campaign_id=campaign.id,
+                state="queued",
+                selected_count=1,
+                queued_count=1,
+                selected_contact_snapshots_json=[{"contact_id": str(uuid4()), "email": "orphan@example.com"}],
+                created_at=now + timedelta(minutes=index),
+            )
+            for index in range(11)
+        ]
+    )
+    db_session.commit()
+
+    active = EmailVerificationService().get_active_batch(
+        session=db_session,
+        campaign_id=campaign.id,
+    )
+
+    assert active is not None
+    assert active.id == active_batch.id
 
 
 def test_run_batch_applies_fresh_cache_without_provider_call(db_session: Session) -> None:

@@ -372,7 +372,6 @@ class EmailVerificationService:
                 col(VerificationBatch.state).in_(["queued", "running"]),
             )
             .order_by(col(VerificationBatch.created_at).desc())
-            .limit(10)
         ).all()
         for batch in batches:
             if self._batch_has_active_contacts(session=session, batch=batch):

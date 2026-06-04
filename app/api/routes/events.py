@@ -78,6 +78,7 @@ _RESOLVE_SQL: dict[str, str] = {
 
 _STAGE_LABEL: dict[str, str] = {
     "crawl": "s1",
+    "scrape_batch": "s1",
     "analysis": "s2",
     "email_fetch_batch": "s3",
     "verification_batch": "s4",
