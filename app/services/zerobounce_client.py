@@ -98,10 +98,12 @@ class ZeroBounceClient:
             return [], self.last_error_code
 
         if isinstance(body, dict):
+            email_batch = body.get("email_batch")
+            results = [item for item in email_batch if isinstance(item, dict)] if isinstance(email_batch, list) else []
             errors = body.get("errors")
-            if isinstance(errors, list) and errors:
-                first_error_text = str(errors[0].get("error") or "").lower() if isinstance(errors[0], dict) else ""
-                if "invalid api key" in first_error_text or "credits" in first_error_text:
+            usable_errors = [item for item in errors if isinstance(item, dict)] if isinstance(errors, list) else []
+            if usable_errors:
+                if any(self._is_auth_or_credit_error(error) for error in usable_errors):
                     self.last_error_code = ERR_ZEROBOUNCE_AUTH_FAILED
                     log_event(
                         logger,
@@ -109,8 +111,21 @@ class ZeroBounceClient:
                         body=str(body)[:500],
                     )
                     return [], self.last_error_code
+                if not results:
+                    self.last_error_code = ERR_ZEROBOUNCE_FAILED
+                    log_event(
+                        logger,
+                        "zerobounce_batch_errors",
+                        body=str(body)[:500],
+                    )
+                    return [], self.last_error_code
+            return results, ""
         if not isinstance(body, list):
             self.last_error_code = ERR_ZEROBOUNCE_FAILED
             log_event(logger, "zerobounce_unexpected_body", body=str(body)[:500])
             return [], self.last_error_code
         return [item for item in body if isinstance(item, dict)], ""
+
+    def _is_auth_or_credit_error(self, error: dict[str, Any]) -> bool:
+        error_text = str(error.get("error") or "").lower()
+        return "invalid api key" in error_text or "credits" in error_text
