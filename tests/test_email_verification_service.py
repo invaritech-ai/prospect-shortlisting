@@ -181,3 +181,36 @@ def test_status_bucket_maps_zerobounce_results(db_session: Session) -> None:
     assert contact_verification_bucket(catch_all, now=now) == "catch_all"
     assert contact_verification_bucket(unknown, now=now) == "unknown"
     assert contact_verification_bucket(failed, now=now) == "failed"
+
+
+def test_status_bucket_failed_with_batch_id_returns_failed(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    failed = _contact(db_session, campaign, domain, "failed@example.com")
+    failed.verification_batch_id = uuid4()
+    failed.verified_email_snapshot = failed.selected_email
+    failed.verification_status = "failed"
+    failed.verification_sub_status = "zerobounce_failed"
+    failed.verification_applied = False
+    db_session.add(failed)
+    db_session.commit()
+
+    from app.services.email_verification_service import contact_verification_bucket
+
+    assert contact_verification_bucket(failed, now=utcnow()) == "failed"
+
+
+def test_status_bucket_snapshot_mismatch_with_batch_id_returns_pending(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    changed = _contact(db_session, campaign, domain, "new@example.com")
+    changed.verification_batch_id = uuid4()
+    changed.verified_email_snapshot = "old@example.com"
+    changed.verification_status = "valid"
+    changed.verification_applied = False
+    db_session.add(changed)
+    db_session.commit()
+
+    from app.services.email_verification_service import contact_verification_bucket
+
+    assert contact_verification_bucket(changed, now=utcnow()) == "pending"

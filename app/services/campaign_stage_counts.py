@@ -228,8 +228,12 @@ def _validation_counts(*, session: Session, campaign_id: UUID) -> ValidationStag
         "failed": 0,
     }
     now = utcnow()
+    total = 0
     for contact in contacts:
         bucket = contact_verification_bucket(contact, now=now)
+        if bucket == "no_email":
+            continue
+        total += 1
         if bucket in counts:
             counts[bucket] += 1
 
@@ -243,7 +247,7 @@ def _validation_counts(*, session: Session, campaign_id: UUID) -> ValidationStag
     failed = counts["failed"]
     return ValidationStageCounts(
         badge=pending + stale + failed + checking,
-        total=len(contacts),
+        total=total,
         pending=pending,
         checking=checking,
         running=checking,

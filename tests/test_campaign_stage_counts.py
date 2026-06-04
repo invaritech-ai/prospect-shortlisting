@@ -202,6 +202,50 @@ def test_campaign_stage_counts_use_shared_real_pipeline_state(db_session: Sessio
     assert out.validation.badge == 3
 
 
+def test_validation_counts_ignore_blank_selected_emails(db_session: Session) -> None:
+    from app.api.routes.campaigns import get_campaign_stage_counts
+
+    campaign = Campaign(id=uuid4(), name="Blank Email Counts")
+    domain = _domain(campaign, "blank.example", scrape_status="succeeded")
+    db_session.add_all([campaign, domain])
+    db_session.add_all(
+        [
+            Contact(
+                campaign_id=campaign.id,
+                domain_id=domain.id,
+                first_name="Pending",
+                last_name="Contact",
+                selected_email="pending@blank.example",
+                verification_applied=False,
+            ),
+            Contact(
+                campaign_id=campaign.id,
+                domain_id=domain.id,
+                first_name="Blank",
+                last_name="Contact",
+                selected_email="",
+                verification_applied=False,
+            ),
+            Contact(
+                campaign_id=campaign.id,
+                domain_id=domain.id,
+                first_name="Whitespace",
+                last_name="Contact",
+                selected_email="   ",
+                verification_batch_id=uuid4(),
+                verification_applied=False,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    out = get_campaign_stage_counts(campaign_id=campaign.id, session=db_session)
+
+    assert out.validation.total == 1
+    assert out.validation.pending == 1
+    assert out.validation.badge == 1
+
+
 def test_campaign_stage_counts_missing_campaign_404(db_session: Session) -> None:
     from app.api.routes.campaigns import get_campaign_stage_counts
 

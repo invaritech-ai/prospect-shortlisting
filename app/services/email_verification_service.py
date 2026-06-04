@@ -40,13 +40,13 @@ def contact_verification_bucket(contact: Contact, *, now: datetime) -> str:
         return "no_email"
     snapshot = normalize_email(contact.verified_email_snapshot)
     status = normalize_zerobounce_status(contact.verification_status)
-    if contact.verification_batch_id and contact.verification_applied is False:
-        return "checking"
+    if snapshot and snapshot != selected:
+        return "pending"
     if status == "failed" and contact.verification_applied is False:
         return "failed"
+    if contact.verification_batch_id and contact.verification_applied is False:
+        return "checking"
     if not contact.verification_applied or not snapshot:
-        return "pending"
-    if snapshot != selected:
         return "pending"
     if not is_fresh_verified_at(contact.verified_at, now=now):
         return "stale"
