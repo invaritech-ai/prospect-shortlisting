@@ -518,58 +518,6 @@ export const MOCK_CONTACT_STATS = {
   totalEmails:   MOCK_CONTACT_ROWS.reduce((s, r) => s + r.emailsFound, 0),
 }
 
-// ── Validation rows ───────────────────────────────────────────
-
-export type ValidationStatus = 'pending' | 'running' | 'valid' | 'risky' | 'invalid' | 'unknown'
-
-export interface MockValidationRow {
-  id: string
-  contactName: string
-  title: string
-  domain: string
-  email: string
-  status: ValidationStatus
-  subStatus: string | null
-  score: number | null
-  updatedAt: string
-}
-
-const tV = (minAgo: number) => new Date(Date.now() - minAgo * 60_000).toISOString()
-
-export const MOCK_VALIDATION_ROWS: MockValidationRow[] = [
-  { id: 'v-01', contactName: 'Karri Saarinen',   title: 'CEO',            domain: 'linear.app',   email: 'karri@linear.app',         status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(4)  },
-  { id: 'v-02', contactName: 'Tuomas Artman',     title: 'CTO',            domain: 'linear.app',   email: 'tuomas@linear.app',        status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(5)  },
-  { id: 'v-03', contactName: 'Emily Nakamura',    title: 'VP Engineering', domain: 'linear.app',   email: 'emily@linear.app',         status: 'valid',   subStatus: null,               score: 9,    updatedAt: tV(6)  },
-  { id: 'v-04', contactName: 'Parker Conrad',     title: 'CEO',            domain: 'rippling.com', email: 'parker@rippling.com',      status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(8)  },
-  { id: 'v-05', contactName: 'Matt MacInnis',     title: 'COO',            domain: 'rippling.com', email: 'matt@rippling.com',        status: 'valid',   subStatus: null,               score: 9,    updatedAt: tV(9)  },
-  { id: 'v-06', contactName: 'Alex Bouaziz',      title: 'CEO',            domain: 'deel.com',     email: 'alex@deel.com',            status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(10) },
-  { id: 'v-07', contactName: 'Shuo Wang',         title: 'CTO',            domain: 'deel.com',     email: 'shuo@deel.com',            status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(11) },
-  { id: 'v-08', contactName: 'Nadia Vatalidis',   title: 'VP People',      domain: 'deel.com',     email: 'nadia@deel.com',           status: 'risky',   subStatus: 'catch_all',        score: 5,    updatedAt: tV(12) },
-  { id: 'v-09', contactName: 'Dana Kuo',          title: 'Head of Eng',    domain: 'deel.com',     email: 'dana@deel.com',            status: 'risky',   subStatus: 'role_address',     score: 4,    updatedAt: tV(13) },
-  { id: 'v-10', contactName: 'Ivan Zhao',         title: 'CEO',            domain: 'notion.so',    email: 'ivan@makenotion.com',      status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(14) },
-  { id: 'v-11', contactName: 'Simon Last',        title: 'CTO',            domain: 'notion.so',    email: 'simon@makenotion.com',     status: 'valid',   subStatus: null,               score: 9,    updatedAt: tV(15) },
-  { id: 'v-12', contactName: 'Guillermo Rauch',   title: 'CEO',            domain: 'vercel.com',   email: 'rauchg@vercel.com',        status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(16) },
-  { id: 'v-13', contactName: 'Malte Ubl',         title: 'CTO',            domain: 'vercel.com',   email: 'malte@vercel.com',         status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(17) },
-  { id: 'v-14', contactName: 'Lee Robinson',      title: 'VP Product',     domain: 'vercel.com',   email: 'lee@vercel.com',           status: 'risky',   subStatus: 'catch_all',        score: 5,    updatedAt: tV(18) },
-  { id: 'v-15', contactName: 'David Hsu',         title: 'CEO',            domain: 'retool.com',   email: 'david@retool.com',         status: 'valid',   subStatus: null,               score: 10,   updatedAt: tV(20) },
-  { id: 'v-16', contactName: 'Old Contact',       title: 'Ex-VP Sales',    domain: 'rippling.com', email: 'old@rippling.com',         status: 'invalid', subStatus: 'mailbox_not_found', score: 0,   updatedAt: tV(22) },
-  { id: 'v-17', contactName: 'Sales Generic',     title: 'Sales',          domain: 'deel.com',     email: 'sales@deel.com',           status: 'invalid', subStatus: 'role_address',     score: 0,    updatedAt: tV(24) },
-  { id: 'v-18', contactName: 'Unknown Person',    title: 'Unknown',        domain: 'notion.so',    email: 'info@makenotion.com',      status: 'unknown', subStatus: 'smtp_error',       score: null, updatedAt: tV(26) },
-  { id: 'v-19', contactName: 'Ryan Breslow',      title: 'VP Sales',       domain: 'deel.com',     email: 'ryan@deel.com',            status: 'running', subStatus: null,               score: null, updatedAt: tV(1)  },
-  { id: 'v-20', contactName: 'Alex Xiao',         title: 'CTO',            domain: 'retool.com',   email: 'alex@retool.com',          status: 'pending', subStatus: null,               score: null, updatedAt: tV(60) },
-  { id: 'v-21', contactName: 'Prasanna Sankar',   title: 'CTO',            domain: 'rippling.com', email: 'prasanna@rippling.com',    status: 'pending', subStatus: null,               score: null, updatedAt: tV(60) },
-  { id: 'v-22', contactName: 'Jori Lallo',        title: 'Co-founder',     domain: 'linear.app',   email: 'jori@linear.app',          status: 'pending', subStatus: null,               score: null, updatedAt: tV(60) },
-]
-
-export const MOCK_VALIDATION_STATS = {
-  valid:   MOCK_VALIDATION_ROWS.filter((r) => r.status === 'valid').length,
-  risky:   MOCK_VALIDATION_ROWS.filter((r) => r.status === 'risky').length,
-  invalid: MOCK_VALIDATION_ROWS.filter((r) => r.status === 'invalid').length,
-  unknown: MOCK_VALIDATION_ROWS.filter((r) => r.status === 'unknown').length,
-  pending: MOCK_VALIDATION_ROWS.filter((r) => r.status === 'pending').length,
-  running: MOCK_VALIDATION_ROWS.filter((r) => r.status === 'running').length,
-}
-
 // ── Full pipeline mock companies ──────────────────────────────
 
 import type { CompanyListItem } from './types'

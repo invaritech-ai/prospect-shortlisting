@@ -1,4 +1,4 @@
-import type { ContactStageFilter, S4VerifFilter, ScrapeFilter, ScrapeSubFilter } from './types'
+import type { ScrapeFilter, ScrapeSubFilter } from './types'
 
 const SCRAPE_SUB_FILTER_ALIASES: Record<string, ScrapeFilter> = {
   all: 'all',
@@ -19,25 +19,6 @@ const SCRAPE_SUB_FILTER_ALIASES: Record<string, ScrapeFilter> = {
 
 export function scrapeSubToFilter(sub: ScrapeSubFilter): ScrapeFilter {
   return SCRAPE_SUB_FILTER_ALIASES[sub] ?? 'all'
-}
-
-export function verifFilterToParams(filter: S4VerifFilter): {
-  verificationStatus?: string
-  stageFilter?: ContactStageFilter
-  titleMatch?: boolean
-  staleDays?: number
-} {
-  switch (filter) {
-    case 'valid': return { verificationStatus: 'valid' }
-    case 'invalid': return { verificationStatus: 'invalid' }
-    case 'catch-all': return { verificationStatus: 'catch-all' }
-    case 'unverified': return { verificationStatus: 'unverified' }
-    case 'email_revealed': return { stageFilter: 'email_revealed' }
-    case 'campaign_ready': return { stageFilter: 'campaign_ready' }
-    case 'title_match': return { titleMatch: true }
-    case 'stale_30d': return { staleDays: 30 }
-    default: return {}
-  }
 }
 
 export function getResumeStageForCompany(company: {

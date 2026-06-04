@@ -4,7 +4,6 @@ import assert from 'node:assert/strict'
 import {
   getResumeStageForCompany,
   scrapeSubToFilter,
-  verifFilterToParams,
 } from '../src/lib/pipelineMappings.ts'
 
 test('resume stage favors earliest failed stage', () => {
@@ -53,11 +52,4 @@ test('scrape sub-filter mapping stays explicit', () => {
   assert.equal(scrapeSubToFilter('failed'), 'soft')
   assert.equal(scrapeSubToFilter('soft'), 'soft')
   assert.equal(scrapeSubToFilter('all'), 'all')
-})
-
-test('verification filters map stale_30d to server parameter', () => {
-  assert.deepEqual(verifFilterToParams('all'), {})
-  assert.deepEqual(verifFilterToParams('valid'), { verificationStatus: 'valid' })
-  assert.deepEqual(verifFilterToParams('campaign_ready'), { stageFilter: 'campaign_ready' })
-  assert.deepEqual(verifFilterToParams('stale_30d'), { staleDays: 30 })
 })

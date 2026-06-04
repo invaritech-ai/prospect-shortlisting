@@ -11,20 +11,20 @@ interface QueueHistoryViewProps {
 }
 
 type ViewMode = 'live' | 'history'
-type StageFilter = 'all' | 's1' | 's2' | 's3' | 's5'
+type StageFilter = 'all' | 's1' | 's2' | 's3' | 's4'
 
 const STAGE_LABELS: Record<string, string> = {
   s1: 'S1 · Scrape',
   s2: 'S2 · AI',
   s3: 'S3 · Contacts',
-  s5: 'S4 · Verify',
+  s4: 'S4 · Verify',
 }
 
 const STAGE_COLORS: Record<string, string> = {
   s1: 'var(--s1)',
   s2: 'var(--s2)',
   s3: 'var(--s3)',
-  s5: 'var(--s5)',
+  s4: 'var(--s5)',
 }
 
 function stateVariant(state: string): BadgeVariant {
@@ -95,7 +95,7 @@ export function QueueHistoryView({ campaignId }: QueueHistoryViewProps) {
     }
   }, [viewMode, load])
 
-  const STAGE_FILTERS: StageFilter[] = ['all', 's1', 's2', 's3', 's5']
+  const STAGE_FILTERS: StageFilter[] = ['all', 's1', 's2', 's3', 's4']
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">

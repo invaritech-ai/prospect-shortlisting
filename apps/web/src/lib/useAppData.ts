@@ -23,15 +23,13 @@ import {
   MOCK_AI_STATS,
   MOCK_CONTACT_ROWS,
   MOCK_CONTACT_STATS,
-  MOCK_VALIDATION_ROWS,
-  MOCK_VALIDATION_STATS,
   MOCK_FULL_PIPELINE_COMPANIES,
   MOCK_INTEGRATIONS_STATUS,
   buildFunnelSummary,
 } from './mockData'
 
 // Re-export types that components reference from this module.
-export type { CampaignPipelineSummary, FunnelSummary, ScrapeStatus, MockScrapeRow, AIVerdict, MockAIRow, ContactFetchStatus, MockContact, MockContactRow, ValidationStatus, MockValidationRow } from './mockData'
+export type { CampaignPipelineSummary, FunnelSummary, ScrapeStatus, MockScrapeRow, AIVerdict, MockAIRow, ContactFetchStatus, MockContact, MockContactRow } from './mockData'
 
 // Re-export mock data through this module so no component
 // ever imports from mockData.ts directly.
@@ -51,8 +49,6 @@ export {
   MOCK_AI_STATS,
   MOCK_CONTACT_ROWS,
   MOCK_CONTACT_STATS,
-  MOCK_VALIDATION_ROWS,
-  MOCK_VALIDATION_STATS,
   MOCK_FULL_PIPELINE_COMPANIES,
   MOCK_INTEGRATIONS_STATUS,
   buildFunnelSummary,

@@ -564,7 +564,6 @@ export type ScrapeSubFilter =
   | 'pending'
   | 'active'
   | 'failed'
-export type S4VerifFilter = 'all' | 'valid' | 'invalid' | 'catch-all' | 'unverified' | 'email_revealed' | 'campaign_ready' | 'title_match' | 'stale_30d'
 
 export type CompanyIdsResult = {
   ids: string[]
@@ -1123,132 +1122,6 @@ export type ContactListResponse = {
   letter_counts?: Record<string, number>
 }
 
-export type ContactFetchResult = {
-  requested_count: number
-  queued_count: number
-  already_fetching_count: number
-  queued_job_ids: string[]
-  reused_count?: number
-  stale_reused_count?: number
-  batch_id?: string | null
-  idempotency_key?: string | null
-  idempotency_replayed?: boolean
-}
-
-export type ContactCompanySummary = {
-  company_id: string
-  domain: string
-  total_count: number
-  title_matched_count: number
-  unmatched_count?: number
-  matched_no_email_count?: number
-  email_count: number
-  fetched_count: number
-  verified_count: number
-  campaign_ready_count: number
-  eligible_verify_count: number
-  last_contact_attempted_at?: string | null
-}
-
-export type ContactCompanyListResponse = {
-  total: number
-  has_more: boolean
-  limit: number
-  offset: number
-  items: ContactCompanySummary[]
-}
-
-export type ContactCountsResponse = {
-  total: number
-  matched: number
-  stale: number
-  fresh: number
-  already_revealed: number
-  fetched_no_email?: number
-}
-
-export type ContactVerifyRequest = {
-  campaign_id: string
-  contact_ids?: string[]
-  company_ids?: string[]
-  title_match?: boolean
-  verification_status?: string
-  search?: string
-  stage_filter?: ContactStageFilter
-}
-
-export type ContactVerifyResult = {
-  job_id: string
-  selected_count: number
-  message: string
-  idempotency_key?: string | null
-  idempotency_replayed?: boolean
-}
-
-export type DiscoveredContactRead = {
-  id: string
-  company_id: string
-  contact_fetch_job_id?: string | null
-  domain: string
-  source_provider: string
-  provider_person_id: string
-  first_name: string
-  last_name: string
-  title: string | null
-  title_match: boolean
-  linkedin_url: string | null
-  source_url: string | null
-  provider_has_email: boolean | null
-  is_active: boolean
-  backfilled: boolean
-  freshness_status: 'fresh' | 'stale'
-  group_key: string
-  discovered_at: string
-  last_seen_at: string
-  created_at: string
-  updated_at: string
-}
-
-export type DiscoveredContactListResponse = {
-  total: number
-  has_more: boolean
-  limit: number
-  offset: number
-  items: DiscoveredContactRead[]
-  letter_counts?: Record<string, number>
-}
-
-export type DiscoveredContactCountsResponse = {
-  total: number
-  matched: number
-  stale: number
-  fresh: number
-  already_revealed: number
-  fetched_no_email?: number
-}
-
-export type DiscoveredContactIdsResult = {
-  ids: string[]
-  total: number
-}
-
-export type ContactRevealRequest = {
-  campaign_id: string
-  discovered_contact_ids?: string[]
-  company_ids?: string[]
-}
-
-export type ContactRevealResult = {
-  batch_id?: string | null
-  selected_count: number
-  queued_count: number
-  already_revealing_count: number
-  skipped_revealed_count: number
-  message: string
-  idempotency_key?: string | null
-  idempotency_replayed?: boolean
-}
-
 export type MatchGapFilter = 'all' | 'contacts_no_match' | 'matched_no_email' | 'ready_candidates'
 
 export type TitleMatchRuleRead = {
@@ -1343,7 +1216,7 @@ export type IntegrationHealthItem = {
 
 export type QueueHistoryItem = {
   id: string
-  stage: 's1' | 's2' | 's3' | 's5'
+  stage: 's1' | 's2' | 's3' | 's4'
   company_domain: string | null
   state: string
   created_at: string
