@@ -20,7 +20,7 @@ const TOOLS_ITEMS: SheetItem[] = [
 ]
 
 const HOME_VIEWS:     ActiveView[] = ['dashboard', 'campaigns']
-const PIPELINE_VIEWS: ActiveView[] = ['s1-scraping', 's2-ai', 's3-contacts', 's5-validation']
+const PIPELINE_VIEWS: ActiveView[] = ['s1-scraping', 's2-ai', 's3-contacts', 's4-validation']
 const TOOLS_VIEWS:    ActiveView[] = ['full-pipeline']
 const CONFIG_VIEWS:   ActiveView[] = ['settings', 'operations', 'queue-history']
 
@@ -79,7 +79,7 @@ export function BottomNav({
     { view: 's1-scraping',   label: 'Scraping',        Icon: IconGlobe, stageColor: 'var(--s1)', count: stageCounts?.scraping.badge ?? 0, isLive: stageCounts?.scraping.is_live ?? false },
     { view: 's2-ai',         label: 'AI Review',       Icon: IconChart, stageColor: 'var(--s2)', count: stageCounts?.ai_review.badge ?? 0, isLive: stageCounts?.ai_review.is_live ?? false },
     { view: 's3-contacts',   label: 'Contacts & Email',Icon: IconUsers, stageColor: 'var(--s3)', count: stageCounts?.contacts.badge ?? 0, isLive: stageCounts?.contacts.is_live ?? false },
-    { view: 's5-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)', count: stageCounts?.validation.badge ?? 0, isLive: stageCounts?.validation.is_live ?? false },
+    { view: 's4-validation', label: 'Validation',      Icon: IconCheck, stageColor: 'var(--s5)', count: stageCounts?.validation.badge ?? 0, isLive: stageCounts?.validation.is_live ?? false },
   ]
 
   const isHomeActive     = HOME_VIEWS.includes(activeView)

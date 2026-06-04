@@ -1,6 +1,6 @@
 import { LiveDot } from '../../ui/LiveDot'
 
-type StageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's5-validation'
+type StageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-validation'
 
 export interface StageCardDef {
   view: StageView

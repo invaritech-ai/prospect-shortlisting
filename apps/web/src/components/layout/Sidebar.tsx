@@ -34,14 +34,14 @@ export function Sidebar({
     s1: stageCounts?.scraping.badge ?? 0,
     s2: stageCounts?.ai_review.badge ?? 0,
     s3: stageCounts?.contacts.badge ?? 0,
-    s5: stageCounts?.validation.badge ?? 0,
+    s4: stageCounts?.validation.badge ?? 0,
   }
 
   const stageLive = {
     s1: stageCounts?.scraping.is_live ?? false,
     s2: stageCounts?.ai_review.is_live ?? false,
     s3: stageCounts?.contacts.is_live ?? false,
-    s5: stageCounts?.validation.is_live ?? false,
+    s4: stageCounts?.validation.is_live ?? false,
   }
 
   function nav(view: ActiveView) { return () => setActiveView(view) }
@@ -108,7 +108,7 @@ export function Sidebar({
             <StageNavItem view="s1-scraping"   label="Scraping"         stageColor="var(--s1)" Icon={IconGlobe}  isActive={isActive('s1-scraping')}   count={navCounts.s1} isLive={stageLive.s1} collapsed={collapsed} onClick={nav('s1-scraping')} />
             <StageNavItem view="s2-ai"         label="AI Review"        stageColor="var(--s2)" Icon={IconChart}  isActive={isActive('s2-ai')}         count={navCounts.s2} isLive={stageLive.s2} collapsed={collapsed} onClick={nav('s2-ai')} />
             <StageNavItem view="s3-contacts"   label="Contacts & Email" stageColor="var(--s3)" Icon={IconUsers}  isActive={isActive('s3-contacts')}   count={navCounts.s3} isLive={stageLive.s3} collapsed={collapsed} onClick={nav('s3-contacts')} />
-            <StageNavItem view="s5-validation" label="Validation"       stageColor="var(--s5)" Icon={IconCheck}  isActive={isActive('s5-validation')} count={navCounts.s5} isLive={stageLive.s5} collapsed={collapsed} onClick={nav('s5-validation')} />
+            <StageNavItem view="s4-validation" label="Validation"       stageColor="var(--s5)" Icon={IconCheck}  isActive={isActive('s4-validation')} count={navCounts.s4} isLive={stageLive.s4} collapsed={collapsed} onClick={nav('s4-validation')} />
           </NavSection>
 
           <NavSection label="Tools" collapsed={collapsed}>

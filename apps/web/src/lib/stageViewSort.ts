@@ -23,7 +23,7 @@ function isStageStartedForDefaultSort(view: ActiveView, stats: StatsResponse | n
       return stageHasWork(stats.analysis)
     case 's3-contacts':
       return stageHasWork(stats.contact_fetch)
-    case 's5-validation':
+    case 's4-validation':
       return stageHasWork(stats.validation)
     default:
       return false
@@ -54,8 +54,8 @@ export function defaultDiscoveredSort(stats: StatsResponse | null): { sortBy: st
   return started ? { sortBy: 'last_seen_at', sortDir: 'desc' } : { sortBy: 'domain', sortDir: 'asc' }
 }
 
-/** S5 ProspectContact list (DB-backed). Domain until validation started, then MRU. */
+/** S4 validation contact list (DB-backed). Domain until validation started, then MRU. */
 export function defaultValidationContactSort(stats: StatsResponse | null): { sortBy: string; sortDir: 'asc' | 'desc' } {
-  const started = isStageStartedForDefaultSort('s5-validation', stats)
+  const started = isStageStartedForDefaultSort('s4-validation', stats)
   return started ? { sortBy: 'updated_at', sortDir: 'desc' } : { sortBy: 'domain', sortDir: 'asc' }
 }

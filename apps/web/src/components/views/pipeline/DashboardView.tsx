@@ -1,7 +1,7 @@
 import type { IntegrationHealthItem } from '../../../lib/types'
 import { ServicesHealth } from '../dashboard/ServicesHealth'
 
-type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's5-validation'
+type PipelineStageView = 's1-scraping' | 's2-ai' | 's3-contacts' | 's4-validation'
 
 interface DashboardViewProps {
   servicesHealth: IntegrationHealthItem[] | null
@@ -25,7 +25,7 @@ const STAGE_LINKS: Array<{
   { view: 's1-scraping',  stageNum: 'S1', label: 'Scraping',   color: 'var(--s1)', bg: 'var(--s1-bg)',  description: 'Scrape company websites' },
   { view: 's2-ai',        stageNum: 'S2', label: 'AI Review',  color: 'var(--s2)', bg: 'var(--s2-bg)',  description: 'Classify companies with AI' },
   { view: 's3-contacts',  stageNum: 'S3', label: 'Contacts',   color: 'var(--s3)', bg: 'var(--s3-bg)',  description: 'Discover decision-maker contacts' },
-  { view: 's5-validation',stageNum: 'S4', label: 'Validation', color: 'var(--s5)', bg: 'var(--s5-bg)',  description: 'Validate email addresses' },
+  { view: 's4-validation',stageNum: 'S4', label: 'Email Verification', color: 'var(--s5)', bg: 'var(--s5-bg)',  description: 'Validate email addresses' },
 ]
 
 export function DashboardView({

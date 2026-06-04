@@ -255,6 +255,88 @@ export type EmailFetchCompanyIds = {
   offset: number
 }
 
+export type EmailVerificationStatus = 'pending' | 'checking' | 'stale' | 'valid' | 'undeliverable' | 'catch_all' | 'unknown' | 'failed'
+
+export type EmailVerificationCounts = {
+  all: number
+  pending: number
+  checking: number
+  stale: number
+  valid: number
+  undeliverable: number
+  catch_all: number
+  unknown: number
+  failed: number
+}
+
+export type EmailVerificationContactRow = {
+  contact_id: string
+  campaign_id: string
+  domain_id: string
+  domain: string
+  first_name: string
+  last_name: string
+  title: string | null
+  linkedin_url: string | null
+  selected_email: string
+  status: EmailVerificationStatus
+  verified_at: string | null
+  updated_at: string
+  action_label: string | null
+}
+
+export type EmailVerificationContactList = {
+  total: number
+  limit: number
+  offset: number
+  counts: EmailVerificationCounts
+  items: EmailVerificationContactRow[]
+}
+
+export type EmailVerificationContactIds = {
+  ids: string[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type EmailVerificationPreviewRequest = {
+  campaign_id: string
+  contact_ids: string[]
+}
+
+export type EmailVerificationPreviewRead = {
+  campaign_id: string
+  selected_count: number
+  eligible_count: number
+  cached_count: number
+  paid_validation_count: number
+  skipped_count: number
+  skipped_reasons: Record<string, number>
+  max_batch_size: number
+  warnings: string[]
+}
+
+export type EmailVerificationBatchCreate = {
+  campaign_id: string
+  contact_ids: string[]
+}
+
+export type EmailVerificationBatchRead = {
+  id: string
+  campaign_id: string
+  state: string
+  selected_count: number
+  queued_count: number
+  verified_count: number
+  valid_count: number
+  invalid_count: number
+  skipped_count: number
+  result_summary: Record<string, unknown> | null
+  created_at: string
+  finished_at: string | null
+}
+
 export type ContactRead = {
   id: string
   campaign_id: string
@@ -376,8 +458,13 @@ export type ValidationStageCounts = {
   badge: number
   total: number
   pending: number
+  checking: number
   running: number
+  stale: number
   valid: number
+  undeliverable: number
+  catch_all: number
+  failed: number
   invalid: number
   unknown: number
   is_live: boolean

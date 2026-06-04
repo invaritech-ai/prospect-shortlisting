@@ -26,6 +26,13 @@ import type {
   EmailFetchCriteriaSaveRequest,
   EmailFetchPreviewRead,
   EmailFetchPreviewRequest,
+  EmailVerificationBatchCreate,
+  EmailVerificationBatchRead,
+  EmailVerificationContactIds,
+  EmailVerificationContactList,
+  EmailVerificationPreviewRead,
+  EmailVerificationPreviewRequest,
+  EmailVerificationStatus,
   FetchedPersonList,
   IntegrationHealthItem,
   IntegrationProviderId,
@@ -407,6 +414,97 @@ export async function getEmailFetchBatch(batchId: string): Promise<EmailFetchBat
 
 export async function getActiveEmailFetchBatch(campaignId: string): Promise<EmailFetchBatchRead | null> {
   return request<EmailFetchBatchRead | null>(`/v1/email-fetch/batches/active?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+// ── S4 Email Verification ───────────────────────────────────────────────────
+
+export async function listEmailVerificationContacts(
+  campaignId: string,
+  {
+    status,
+    letter,
+    search,
+    limit = 50,
+    offset = 0,
+  }: {
+    status?: 'all' | EmailVerificationStatus
+    letter?: string
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<EmailVerificationContactList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (status) params.set('status', status)
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<EmailVerificationContactList>(`/v1/email-verification/contacts?${params.toString()}`)
+}
+
+export async function listEmailVerificationContactIds(
+  campaignId: string,
+  {
+    status,
+    letter,
+    search,
+    actionableOnly = false,
+    limit = 200,
+    offset = 0,
+  }: {
+    status?: 'all' | EmailVerificationStatus
+    letter?: string
+    search?: string
+    actionableOnly?: boolean
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<EmailVerificationContactIds> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (status) params.set('status', status)
+  if (letter) params.set('letter', letter)
+  if (search?.trim()) params.set('search', search.trim())
+  if (actionableOnly) params.set('actionable_only', 'true')
+  return request<EmailVerificationContactIds>(`/v1/email-verification/contact-ids?${params.toString()}`)
+}
+
+export async function getEmailVerificationLetterCounts(
+  campaignId: string,
+  {
+    status,
+    search,
+  }: {
+    status?: 'all' | EmailVerificationStatus
+    search?: string
+  } = {},
+): Promise<DomainLetterCounts> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (status) params.set('status', status)
+  if (search?.trim()) params.set('search', search.trim())
+  return request<DomainLetterCounts>(`/v1/email-verification/letter-counts?${params.toString()}`)
+}
+
+export async function previewEmailVerification(body: EmailVerificationPreviewRequest): Promise<EmailVerificationPreviewRead> {
+  return request<EmailVerificationPreviewRead>('/v1/email-verification/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function createEmailVerificationBatch(body: EmailVerificationBatchCreate): Promise<EmailVerificationBatchRead> {
+  return request<EmailVerificationBatchRead>('/v1/email-verification/batches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getEmailVerificationBatch(batchId: string): Promise<EmailVerificationBatchRead> {
+  return request<EmailVerificationBatchRead>(`/v1/email-verification/batches/${encodeURIComponent(batchId)}`)
+}
+
+export async function getActiveEmailVerificationBatch(campaignId: string): Promise<EmailVerificationBatchRead | null> {
+  return request<EmailVerificationBatchRead | null>(`/v1/email-verification/batches/active?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
 export async function listContacts(

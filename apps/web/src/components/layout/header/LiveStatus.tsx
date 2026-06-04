@@ -13,7 +13,7 @@ const STAGE_MAP: Record<string, { key: StageKey; label: string; color: string }>
   's1-scraping':   { key: 'scraping',   label: 'Scraping',   color: 'var(--s1)' },
   's2-ai':         { key: 'ai_review',  label: 'AI Review',  color: 'var(--s2)' },
   's3-contacts':   { key: 'contacts',   label: 'Contacts',   color: 'var(--s3)' },
-  's5-validation': { key: 'validation', label: 'Validation', color: 'var(--s5)' },
+  's4-validation': { key: 'validation', label: 'Validation', color: 'var(--s5)' },
 }
 
 function liveParts(stageCounts: CampaignStageCounts, key: StageKey): string[] {

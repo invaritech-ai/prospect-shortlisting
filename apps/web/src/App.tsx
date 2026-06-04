@@ -675,8 +675,7 @@ function App() {
             onContactCountsChange={mergeContactCountsIntoStageCounts}
           />
         )}
-        {selectedCampaignId && activeView === 's4-reveal'       && <ComingSoon label="S4 · Reveal" />}
-        {selectedCampaignId && activeView === 's5-validation'   && <ValidationView stats={null} />}
+        {selectedCampaignId && activeView === 's4-validation'   && <ValidationView stats={null} />}
         {selectedCampaignId && activeView === 'operations'      && <ComingSoon label="Operations Log" />}
 
       </AppShell>

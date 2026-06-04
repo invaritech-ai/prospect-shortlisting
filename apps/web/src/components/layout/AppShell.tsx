@@ -15,7 +15,7 @@ const STAGE_COLOR: Partial<Record<ActiveView, string>> = {
   's1-scraping':   'var(--s1)',
   's2-ai':         'var(--s2)',
   's3-contacts':   'var(--s3)',
-  's5-validation': 'var(--s5)',
+  's4-validation': 'var(--s5)',
 }
 
 const VIEW_META: Record<ActiveView, { label: string; Icon: React.FC<{ size?: number; className?: string }> }> = {
@@ -28,8 +28,7 @@ const VIEW_META: Record<ActiveView, { label: string; Icon: React.FC<{ size?: num
   's1-scraping':   { label: 'Scraping',          Icon: IconGlobe    },
   's2-ai':         { label: 'AI Review',         Icon: IconChart    },
   's3-contacts':   { label: 'Contacts & Email',  Icon: IconUsers    },
-  's4-reveal':     { label: 'Retry Reveals',     Icon: IconUsers    },
-  's5-validation': { label: 'Validation',        Icon: IconCheck    },
+  's4-validation': { label: 'Validation',        Icon: IconCheck    },
   'queue-history': { label: 'Queue History',     Icon: IconHistory  },
 }
 
