@@ -3,6 +3,7 @@
 # Usage: ./scripts/run_worker.sh scrape 2
 #        ./scripts/run_worker.sh ai_decision 2
 #        ./scripts/run_worker.sh contact_fetch 1
+#        ./scripts/run_worker.sh validation 1
 set -euo pipefail
 
 QUEUE="${1:-scrape}"
@@ -10,7 +11,7 @@ if [ "${2+x}" ]; then
     CONCURRENCY="$2"
 else
     case "$QUEUE" in
-        contact_fetch) CONCURRENCY="1" ;;
+        contact_fetch|validation) CONCURRENCY="1" ;;
         *) CONCURRENCY="2" ;;
     esac
 fi

@@ -349,6 +349,36 @@ class EmailVerificationService:
         session.refresh(batch)
         return batch
 
+    def get_batch(self, *, session: Session, batch_id: UUID) -> VerificationBatch:
+        batch = session.get(VerificationBatch, batch_id)
+        if batch is None:
+            raise EmailVerificationServiceError(
+                "batch_not_found",
+                "Verification batch not found.",
+            )
+        return batch
+
+    def get_active_batch(
+        self,
+        *,
+        session: Session,
+        campaign_id: UUID,
+    ) -> VerificationBatch | None:
+        self._ensure_campaign(session=session, campaign_id=campaign_id)
+        batches = session.exec(
+            select(VerificationBatch)
+            .where(
+                col(VerificationBatch.campaign_id) == campaign_id,
+                col(VerificationBatch.state).in_(["queued", "running"]),
+            )
+            .order_by(col(VerificationBatch.created_at).desc())
+            .limit(10)
+        ).all()
+        for batch in batches:
+            if self._batch_has_active_contacts(session=session, batch=batch):
+                return batch
+        return None
+
     def run_batch(
         self,
         *,
@@ -571,6 +601,31 @@ class EmailVerificationService:
             return UUID(str(snapshot.get("contact_id")))
         except (TypeError, ValueError):
             return None
+
+    def _batch_has_active_contacts(self, *, session: Session, batch: VerificationBatch) -> bool:
+        snapshot_emails_by_id: dict[UUID, str] = {}
+        for snapshot in batch.selected_contact_snapshots_json or []:
+            contact_id = self._snapshot_contact_id(snapshot)
+            normalized_email = normalize_email(str(snapshot.get("email") or ""))
+            if contact_id is not None and normalized_email:
+                snapshot_emails_by_id[contact_id] = normalized_email
+
+        query = select(Contact).where(
+            col(Contact.campaign_id) == batch.campaign_id,
+            col(Contact.verification_batch_id) == batch.id,
+            col(Contact.verification_applied).is_(False),
+        )
+        if snapshot_emails_by_id:
+            query = query.where(col(Contact.id).in_(list(snapshot_emails_by_id)))
+
+        contacts = session.exec(query.limit(MAX_EMAILS_PER_BATCH)).all()
+        if not snapshot_emails_by_id:
+            return bool(contacts)
+
+        return any(
+            normalize_email(contact.selected_email) == snapshot_emails_by_id.get(contact.id)
+            for contact in contacts
+        )
 
     def _fresh_caches_by_email(
         self,

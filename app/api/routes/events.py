@@ -70,12 +70,17 @@ _RESOLVE_SQL: dict[str, str] = {
         "SELECT campaign_id::text FROM email_fetch_batches "
         "WHERE id = :jid"
     ),
+    "verification_batch": (
+        "SELECT campaign_id::text FROM verification_batches "
+        "WHERE id = :jid"
+    ),
 }
 
 _STAGE_LABEL: dict[str, str] = {
     "crawl": "s1",
     "analysis": "s2",
     "email_fetch_batch": "s3",
+    "verification_batch": "s4",
 }
 
 
@@ -104,7 +109,7 @@ def _format_sse(data: dict) -> bytes:
 
 def _batch_event_payload(payload: dict, *, stage: str, event_type: str) -> dict:
     batch_id = payload.get("batch_id") or payload.get("job_id")
-    return {
+    out = {
         "stage": stage,
         "event_type": event_type,
         "batch_id": batch_id,
@@ -117,6 +122,16 @@ def _batch_event_payload(payload: dict, *, stage: str, event_type: str) -> dict:
         "queued_count": payload.get("queued_count"),
         "finished_at": payload.get("finished_at"),
     }
+    for key in (
+        "selected_count",
+        "verified_count",
+        "valid_count",
+        "invalid_count",
+        "skipped_count",
+    ):
+        if key in payload:
+            out[key] = payload.get(key)
+    return out
 
 
 @router.get("/campaigns/{campaign_id}/events/stream")
@@ -148,13 +163,13 @@ async def stream_campaign_events(
                     continue
 
                 # batch events carry campaign_id directly — no DB join needed
-                if job_type in {"scrape_batch", "email_fetch_batch"}:
+                if job_type in {"scrape_batch", "email_fetch_batch", "verification_batch"}:
                     if str(payload.get("campaign_id") or "") != target_campaign:
                         continue
                     yield _format_sse(
                         _batch_event_payload(
                             payload,
-                            stage="s3" if job_type == "email_fetch_batch" else "s1",
+                            stage=_STAGE_LABEL.get(job_type, job_type),
                             event_type=job_type,
                         )
                     )

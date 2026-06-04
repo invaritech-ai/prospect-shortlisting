@@ -95,6 +95,30 @@ services:
             - "1"
         restart: unless-stopped
 
+    worker-validation:
+        image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
+        env_file:
+            - .env
+        environment:
+            PS_WORKER_PROCESS: "1"
+            PS_WORKER_CONCURRENCY: "1"
+        depends_on:
+            api:
+                condition: service_healthy
+        command:
+            - "uv"
+            - "run"
+            - "python"
+            - "-m"
+            - "procrastinate"
+            - "--app=app.queue.app"
+            - "worker"
+            - "-q"
+            - "validation"
+            - "-c"
+            - "1"
+        restart: unless-stopped
+
     # Operator UI (Vite). Pair with docker-compose.local.yml so the browser can
     # reach the API via the loopback-only host mapping on :8001.
     # Start with: docker compose -f docker-compose.yml -f docker-compose.local.yml --profile ui up -d

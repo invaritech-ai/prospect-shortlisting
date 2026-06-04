@@ -69,6 +69,7 @@ _DEFAULT_IMPORT_PATHS = [
     "app.jobs.scrape",
     "app.jobs.ai_decision",
     "app.jobs.email_fetch",
+    "app.jobs.validation",
 ]
 
 # Optional override for full task registration when all modules are healthy.

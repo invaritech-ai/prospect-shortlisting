@@ -9,6 +9,7 @@ from app.api.routes.analysis import router as analysis_router
 from app.api.routes.campaigns import router as campaigns_router
 from app.api.routes.contacts import router as contacts_router
 from app.api.routes.email_fetch import router as email_fetch_router
+from app.api.routes.email_verification import router as email_verification_router
 from app.api.routes.events import router as events_router
 from app.api.routes.companies import router as companies_router
 from app.api.routes.pipeline_runs import router as pipeline_runs_router
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(campaigns_router)
     app.include_router(contacts_router)
     app.include_router(email_fetch_router)
+    app.include_router(email_verification_router)
     app.include_router(companies_router)
     app.include_router(events_router)
     app.include_router(pipeline_runs_router)
