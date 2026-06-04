@@ -199,6 +199,58 @@ def test_status_bucket_maps_zerobounce_results(db_session: Session) -> None:
     assert contact_verification_bucket(failed, now=now) == "failed"
 
 
+def test_export_valid_emails_only_includes_fresh_current_valid_contacts(db_session: Session) -> None:
+    campaign = _campaign(db_session)
+    domain = _domain(db_session, campaign.id)
+    valid = _contact(db_session, campaign, domain, "Ada@Example.com")
+    stale = _contact(db_session, campaign, domain, "stale@example.com")
+    changed = _contact(db_session, campaign, domain, "changed@example.com")
+    undeliverable = _contact(db_session, campaign, domain, "bad@example.com")
+    pending = _contact(db_session, campaign, domain, "pending@example.com")
+
+    now = utcnow()
+    for contact in [valid, stale, changed, undeliverable]:
+        contact.verified_email_snapshot = contact.selected_email
+        contact.verification_applied = True
+        contact.verified_at = now - timedelta(days=1)
+
+    valid.first_name = "Ada"
+    valid.last_name = "Lovelace"
+    valid.title = "Marketing Director"
+    valid.linkedin_url = "https://linkedin.com/in/ada"
+    valid.verification_status = "valid"
+
+    stale.verification_status = "valid"
+    stale.verified_at = now - timedelta(days=31)
+
+    changed.verification_status = "valid"
+    changed.verified_email_snapshot = "old@example.com"
+
+    undeliverable.verification_status = "invalid"
+
+    db_session.add_all([valid, stale, changed, undeliverable, pending])
+    db_session.commit()
+
+    from app.services.email_verification_service import EmailVerificationService
+
+    rows = EmailVerificationService().list_fresh_valid_email_exports(
+        session=db_session,
+        campaign_id=campaign.id,
+    )
+
+    assert rows == [
+        {
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "title": "Marketing Director",
+            "company_domain": "example.com",
+            "email": "ada@example.com",
+            "linkedin_url": "https://linkedin.com/in/ada",
+            "verified_at": valid.verified_at,
+        }
+    ]
+
+
 def test_status_bucket_failed_with_batch_id_returns_failed(db_session: Session) -> None:
     campaign = _campaign(db_session)
     domain = _domain(db_session, campaign.id)

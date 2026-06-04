@@ -212,6 +212,37 @@ class EmailVerificationService:
             counts[letter_bucket] = counts.get(letter_bucket, 0) + 1
         return counts
 
+    def list_fresh_valid_email_exports(
+        self,
+        *,
+        session: Session,
+        campaign_id: UUID,
+    ) -> list[dict[str, Any]]:
+        self._ensure_campaign(session=session, campaign_id=campaign_id)
+        now = utcnow()
+        rows = self._contact_domain_rows(
+            session=session,
+            campaign_id=campaign_id,
+            search=None,
+            letter=None,
+        )
+        exports: list[dict[str, Any]] = []
+        for contact, domain in rows:
+            if contact_verification_bucket(contact, now=now) != "valid":
+                continue
+            exports.append(
+                {
+                    "first_name": contact.first_name,
+                    "last_name": contact.last_name,
+                    "title": contact.title,
+                    "company_domain": domain.domain,
+                    "email": normalize_email(contact.selected_email),
+                    "linkedin_url": contact.linkedin_url,
+                    "verified_at": contact.verified_at,
+                }
+            )
+        return exports
+
     def preview(
         self,
         *,

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import csv
+import io
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import Session
 
 from app.api.schemas.email_verification import (
@@ -21,6 +24,16 @@ from app.services.email_verification_service import (
 )
 
 router = APIRouter(prefix="/v1/email-verification", tags=["email-verification"])
+
+VALID_EMAIL_EXPORT_COLUMNS = (
+    "first_name",
+    "last_name",
+    "title",
+    "company_domain",
+    "email",
+    "linkedin_url",
+    "verified_at",
+)
 
 
 def _service() -> EmailVerificationService:
@@ -47,6 +60,14 @@ def _http_error(exc: EmailVerificationServiceError) -> HTTPException:
         status_code=status_by_code.get(exc.code, status.HTTP_400_BAD_REQUEST),
         detail={"code": exc.code, "message": exc.message},
     )
+
+
+def _csv_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 @router.get("/contacts", response_model=EmailVerificationContactList)
@@ -144,6 +165,36 @@ def get_email_verification_letter_counts(
     except EmailVerificationServiceError as exc:
         raise _http_error(exc) from exc
     return LetterCountsResponse(counts=counts)
+
+
+@router.get("/exports/valid.csv")
+def export_valid_email_verification_contacts(
+    campaign_id: UUID = Query(...),
+    session: Session = Depends(get_session),
+) -> Response:
+    try:
+        rows = _service().list_fresh_valid_email_exports(
+            session=session,
+            campaign_id=campaign_id,
+        )
+    except EmailVerificationServiceError as exc:
+        raise _http_error(exc) from exc
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(VALID_EMAIL_EXPORT_COLUMNS))
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({column: _csv_value(row.get(column)) for column in VALID_EMAIL_EXPORT_COLUMNS})
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="valid-emails-{campaign_id}.csv"'
+            ),
+        },
+    )
 
 
 @router.post("/preview", response_model=EmailVerificationPreviewRead)

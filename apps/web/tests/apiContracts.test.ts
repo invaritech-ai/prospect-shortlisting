@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   createEmailFetchBatch,
   createEmailVerificationBatch,
+  downloadFreshValidEmailCsv,
   getActiveEmailFetchBatch,
   getActiveEmailVerificationBatch,
   getAiReviewLabelCounts,
@@ -27,12 +28,14 @@ import {
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   ;(globalThis as { fetch: typeof fetch }).fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const body = handler(String(input), init)
+    const text = typeof body === 'string' ? body : JSON.stringify(body)
     return {
       ok: true,
       status: 200,
       headers: new Headers({ 'content-type': 'application/json' }),
       json: async () => body,
-      text: async () => JSON.stringify(body),
+      text: async () => text,
+      blob: async () => new Blob([text], { type: 'text/csv' }),
     } as Response
   }) as typeof fetch
 }
@@ -296,4 +299,51 @@ test('email verification helper APIs use S4 support endpoints', async () => {
   assert.match(requested[1], /search=gamma/)
   assert.match(requested[2], /\/v1\/email-verification\/batches\/batch-1$/)
   assert.match(requested[3], /\/v1\/email-verification\/batches\/active\?campaign_id=camp-1$/)
+})
+
+test('email verification export downloads fresh valid CSV from S4 endpoint', async () => {
+  const requested: string[] = []
+  const credentials: Array<RequestCredentials | undefined> = []
+  mockFetch((url, init) => {
+    requested.push(url)
+    credentials.push(init?.credentials)
+    return 'first_name,last_name,title,company_domain,email,linkedin_url,verified_at\nAda,Lovelace,Marketing Director,example.com,ada@example.com,https://linkedin.com/in/ada,2026-06-04T00:00:00Z\n'
+  })
+
+  const clicked: Array<{ href: string; download: string }> = []
+  const revoked: string[] = []
+  const previousDocument = (globalThis as { document?: Document }).document
+  const previousCreateObjectUrl = URL.createObjectURL
+  const previousRevokeObjectUrl = URL.revokeObjectURL
+  ;(globalThis as { document?: Document }).document = {
+    body: {
+      appendChild: () => undefined,
+    },
+    createElement: () => ({
+      href: '',
+      download: '',
+      style: {},
+      click() {
+        clicked.push({ href: this.href, download: this.download })
+      },
+      remove() {
+        return undefined
+      },
+    }),
+  } as unknown as Document
+  URL.createObjectURL = () => 'blob:s4-valid-export'
+  URL.revokeObjectURL = (url: string) => { revoked.push(url) }
+
+  try {
+    await downloadFreshValidEmailCsv('camp-1')
+  } finally {
+    ;(globalThis as { document?: Document }).document = previousDocument
+    URL.createObjectURL = previousCreateObjectUrl
+    URL.revokeObjectURL = previousRevokeObjectUrl
+  }
+
+  assert.match(requested[0], /\/v1\/email-verification\/exports\/valid\.csv\?campaign_id=camp-1$/)
+  assert.equal(credentials[0], 'include')
+  assert.deepEqual(clicked, [{ href: 'blob:s4-valid-export', download: 'valid-emails-camp-1.csv' }])
+  assert.deepEqual(revoked, ['blob:s4-valid-export'])
 })

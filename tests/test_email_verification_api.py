@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -10,6 +11,7 @@ from app.api.schemas.email_verification import (
     EmailVerificationPreviewRequest,
 )
 from app.models import Campaign, Contact, UploadedDomain, VerificationBatch
+from app.models.base import utcnow
 
 
 @pytest.fixture()
@@ -71,6 +73,33 @@ def test_preview_endpoint_returns_paid_count(db_session: Session) -> None:
 
     assert out.eligible_count == 1
     assert out.paid_validation_count == 1
+
+
+def test_export_valid_emails_endpoint_returns_csv_attachment(db_session: Session) -> None:
+    from app.api.routes import email_verification
+
+    campaign, _domain, contact = _seed(db_session)
+    contact.first_name = "Ada"
+    contact.last_name = "Lovelace"
+    contact.title = "Marketing Director"
+    contact.linkedin_url = "https://linkedin.com/in/ada"
+    contact.verification_status = "valid"
+    contact.verification_applied = True
+    contact.verified_email_snapshot = contact.selected_email
+    contact.verified_at = utcnow() - timedelta(days=1)
+    db_session.add(contact)
+    db_session.commit()
+
+    response = email_verification.export_valid_email_verification_contacts(
+        campaign_id=campaign.id,
+        session=db_session,
+    )
+
+    assert response.media_type == "text/csv"
+    assert "attachment" in response.headers["Content-Disposition"]
+    csv_text = response.body.decode("utf-8")
+    assert "first_name,last_name,title,company_domain,email,linkedin_url,verified_at" in csv_text
+    assert "Ada,Lovelace,Marketing Director,example.com,ada@example.com,https://linkedin.com/in/ada," in csv_text
 
 
 @pytest.mark.asyncio

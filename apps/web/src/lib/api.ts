@@ -125,6 +125,57 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Blob; filename: string | null }> {
+  const token = apiSessionConfig.getAccessToken?.() ?? null
+  const headers = new Headers(init?.headers)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(buildApiUrl(path), {
+    ...init,
+    headers,
+    credentials: init?.credentials ?? 'include',
+  })
+  if (!response.ok) {
+    if (response.status === 401) apiSessionConfig.onUnauthorized?.()
+    const contentType = response.headers.get('content-type') ?? ''
+    const body = contentType.includes('application/json') ? await response.json() : await response.text()
+    const detail =
+      typeof body === 'object' && body !== null && 'detail' in body
+        ? (body as { detail: unknown }).detail
+        : body
+    throw new ApiError(response.status, detail)
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('content-disposition')),
+  }
+}
+
+function filenameFromContentDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null
+  const encoded = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (encoded?.[1]) return decodeURIComponent(encoded[1])
+  const plain = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return plain?.[1] ?? null
+}
+
+function triggerBrowserDownload(blob: Blob, filename: string): void {
+  if (typeof document === 'undefined') {
+    throw new Error('File downloads require a browser environment.')
+  }
+  const url = URL.createObjectURL(blob)
+  try {
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {
@@ -505,6 +556,12 @@ export async function getEmailVerificationBatch(batchId: string): Promise<EmailV
 
 export async function getActiveEmailVerificationBatch(campaignId: string): Promise<EmailVerificationBatchRead | null> {
   return request<EmailVerificationBatchRead | null>(`/v1/email-verification/batches/active?campaign_id=${encodeURIComponent(campaignId)}`)
+}
+
+export async function downloadFreshValidEmailCsv(campaignId: string): Promise<void> {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  const { blob, filename } = await requestBlob(`/v1/email-verification/exports/valid.csv?${params.toString()}`)
+  triggerBrowserDownload(blob, filename ?? `valid-emails-${campaignId}.csv`)
 }
 
 export async function listContacts(

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createEmailVerificationBatch,
+  downloadFreshValidEmailCsv,
   getActiveEmailVerificationBatch,
   getEmailVerificationLetterCounts,
   listEmailVerificationContactIds,
@@ -24,6 +25,7 @@ import { ValidationTable } from './ValidationTable'
 import { ValidationCards } from './ValidationCards'
 import { EmailVerificationPreviewDialog } from './EmailVerificationPreviewDialog'
 import { Loader2 } from 'lucide-react'
+import { IconDownload } from '../../ui/icons'
 
 type FilterValue = 'all' | EmailVerificationStatus
 
@@ -79,6 +81,7 @@ export function ValidationView({
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [isConfirming, setIsConfirming] = useState(false)
+  const [isDownloading, setIsDownloading] = useState(false)
   const [activeBatch, setActiveBatch] = useState<EmailVerificationBatchRead | null>(null)
   const rowsRequestGate = useMemo(() => createQueryRequestGate(), [])
   const letterCountsRequestGate = useMemo(() => createQueryRequestGate(), [])
@@ -437,6 +440,19 @@ export function ValidationView({
     }
   }
 
+  async function downloadValidEmails() {
+    if (counts.valid === 0 || isDownloading) return
+    setError('')
+    setIsDownloading(true)
+    try {
+      await downloadFreshValidEmailCsv(campaignId)
+    } catch (err) {
+      setError(parseApiError(err))
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
   const bulkActions = selected.size > 0
     ? [{ label: selectedActionableIds.length > 0 ? `Validate ${selectedActionableIds.length}` : 'Validate selected', onClick: startSelectedPreview }]
     : []
@@ -460,6 +476,34 @@ export function ValidationView({
             onClick: () => { setFilter('failed'); resetViewControls() },
           } : undefined}
         />
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="oc-btn oc-btn-secondary oc-btn-sm"
+            disabled={counts.valid === 0 || isDownloading}
+            onClick={() => { void downloadValidEmails() }}
+            title="Download all fresh valid emails in this campaign"
+            style={{
+              opacity: counts.valid === 0 || isDownloading ? 0.55 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.375rem',
+            }}
+          >
+            {isDownloading ? (
+              <Loader2 size={13} style={{ animation: 'spin 0.7s linear infinite' }} />
+            ) : (
+              <IconDownload size={13} />
+            )}
+            Download valid emails
+            {counts.valid > 0 && (
+              <span style={{ color: 'var(--oc-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+                {counts.valid.toLocaleString()}
+              </span>
+            )}
+          </button>
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
           <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--oc-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
