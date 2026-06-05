@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import type { DomainRead, ScrapeBatchRead, DomainLetterCounts, ScrapeJobStatusRead } from '../../../lib/types'
+import type { TableSortState } from '../../../lib/tableSort'
 import {
   buildApiUrl,
   getDomainLetterCounts,
@@ -8,6 +9,7 @@ import {
   getScrapeJobStatus,
   listDomains,
 } from '../../../lib/api'
+import { nextTableSort } from '../../../lib/tableSort'
 import { parseApiError }         from '../../../lib/utils'
 import { StageViewHeader }       from '../shared/StageViewHeader'
 import { ScrapingToolbar }        from './ScrapingToolbar'
@@ -25,6 +27,7 @@ const POLL_STATUS_BG_MS = 20000
 const POLL_HEAVY_BG_MS = 30000
 
 const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
+const DESC_SORT_FIELDS = new Set(['updated'])
 
 function DomainSkeleton() {
   return (
@@ -58,6 +61,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [letterFilter, setLetterFilter] = useState<string>('all')
   const [search, setSearch]             = useState('')
+  const [sort, setSort]                 = useState<TableSortState>({ sortBy: '', sortDir: 'asc' })
   // Explicit checked domain IDs (visible-page selections)
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set())
   // "Select all matching" filter criteria (server-side selection)
@@ -111,6 +115,8 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
         scrapeStatus: statusFilter !== 'all' ? statusFilter : undefined,
         letter: letterFilter !== 'all' ? letterFilter : undefined,
         search: search.trim() ? search.trim() : undefined,
+        sortBy: sort.sortBy || undefined,
+        sortDir: sort.sortBy ? sort.sortDir : undefined,
       })
       setDomains(result.items)
       setDomainTotal(result.total)
@@ -119,7 +125,7 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
     } finally {
       setLoading(false)
     }
-  }, [campaignId, statusFilter, letterFilter, search])
+  }, [campaignId, statusFilter, letterFilter, search, sort.sortBy, sort.sortDir])
 
   const loadLetterCounts = useCallback(async () => {
     try {
@@ -174,16 +180,24 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
     }
   }, [activeBatch, loadDomains, loadLetterCounts, page])
 
-  // Initial load
   useEffect(() => {
-    void loadDomains(0)
+    void loadDomains(page)
+  }, [loadDomains, page])
+
+  useEffect(() => {
     void loadLetterCounts()
+  }, [loadLetterCounts])
+
+  useEffect(() => {
     void loadActiveBatch()
+  }, [loadActiveBatch])
+
+  useEffect(() => {
     setPage(0)
     setSelectedIds(new Set())
     setFilterSelection(null)
     setActiveStatus(null)
-  }, [loadDomains, loadLetterCounts, loadActiveBatch])
+  }, [campaignId, statusFilter, letterFilter, search])
 
   // ── Visibility tracking ──────────────────────────────────────────────────
   useEffect(() => {
@@ -328,7 +342,15 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
 
   function goToPage(p: number) {
     setPage(p)
-    void loadDomains(p)
+  }
+
+  function handleSort(field: string) {
+    setSort((current) => nextTableSort(
+      current,
+      field,
+      DESC_SORT_FIELDS.has(field) ? 'desc' : 'asc',
+    ))
+    setPage(0)
   }
 
   // ── Selection helpers ────────────────────────────────────────────────────
@@ -586,6 +608,9 @@ export function ScrapingView({ campaignId, sseUrl, onActiveBatchChange }: Scrapi
                 onToggleSelectAll={toggleSelectAll}
                 onScrapeOne={(d) => void handleScrape(undefined, [d.id])}
                 onViewContent={setViewingDomain}
+                sortBy={sort.sortBy}
+                sortDir={sort.sortDir}
+                onSort={handleSort}
                 isScrapeDisabled={isScrapeLocked}
                 hasActiveFilter={statusFilter !== 'all' || letterFilter !== 'all' || !!search}
                 onClearFilter={() => { setStatusFilter('all'); setLetterFilter('all'); setSearch('') }}

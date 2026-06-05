@@ -264,6 +264,8 @@ class EmailFetchService:
         status: str = "all",
         search: str | None = None,
         letter: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> EmailFetchCompanyListView:
@@ -278,8 +280,15 @@ class EmailFetchService:
         if status and status != "all":
             filtered_q = filtered_q.where(base_sq.c.status == status)
         total = self._company_total_for_status(counts, status)
+        filtered_q = self._apply_company_sort(
+            filtered_q,
+            summary_sq=base_sq,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            dialect_name=session.get_bind().dialect.name,
+        )
         page_rows = session.execute(
-            filtered_q.order_by(base_sq.c.domain.asc()).offset(offset).limit(limit)
+            filtered_q.offset(offset).limit(limit)
         ).mappings().all()
         return EmailFetchCompanyListView(
             total=total,
@@ -1171,6 +1180,46 @@ class EmailFetchService:
         if status == "no_match":
             return counts.no_match
         return 0
+
+    def _apply_company_sort(
+        self,
+        query,
+        *,
+        summary_sq,
+        sort_by: str | None,
+        sort_dir: str | None,
+        dialect_name: str,
+    ):
+        normalized = (sort_by or "").strip().lower()
+        descending = (sort_dir or "").strip().lower() == "desc"
+        order_expr = None
+        if normalized == "domain":
+            order_expr = summary_sq.c.domain
+        elif normalized == "status":
+            order_expr = summary_sq.c.status
+        elif normalized == "fetched":
+            order_expr = summary_sq.c.fetched_people_found
+        elif normalized == "contacts":
+            order_expr = summary_sq.c.contacts_found
+        elif normalized == "emails":
+            order_expr = summary_sq.c.emails_found
+        elif normalized == "updated":
+            fallback = summary_sq.c.domain_created_at
+            updated_args = [
+                func.coalesce(summary_sq.c.contacts_updated_at, fallback),
+                func.coalesce(summary_sq.c.fetched_updated_at, fallback),
+                func.coalesce(summary_sq.c.fetch_updated_at, fallback),
+                fallback,
+            ]
+            order_expr = (
+                func.max(*updated_args)
+                if dialect_name == "sqlite"
+                else func.greatest(*updated_args)
+            )
+        if order_expr is None:
+            return query.order_by(summary_sq.c.domain.asc())
+        ordered = order_expr.desc() if descending else order_expr.asc()
+        return query.order_by(ordered, summary_sq.c.domain.asc())
 
     def _company_row_from_summary(self, row) -> EmailFetchCompanyRowView:
         contacts_updated_at = row["contacts_updated_at"]

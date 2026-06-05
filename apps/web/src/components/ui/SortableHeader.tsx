@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+
 interface SortableHeaderProps {
   label: string
   field: string
@@ -5,14 +7,16 @@ interface SortableHeaderProps {
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void
   className?: string
+  style?: CSSProperties
   disabled?: boolean
 }
 
-export function SortableHeader({ label, field, sortBy, sortDir, onSort, className = '', disabled = false }: SortableHeaderProps) {
+export function SortableHeader({ label, field, sortBy, sortDir, onSort, className = '', style, disabled = false }: SortableHeaderProps) {
   const active = sortBy === field
   return (
     <th
       className={`p-3 text-left font-semibold select-none whitespace-nowrap ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${className}`}
+      style={style}
       onClick={() => { if (!disabled) onSort(field) }}
     >
       <span className="inline-flex items-center gap-1">

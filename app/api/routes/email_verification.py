@@ -76,6 +76,8 @@ def list_email_verification_contacts(
     status: str = Query(default="all"),
     search: str | None = Query(default=None),
     letter: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_dir: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
@@ -86,6 +88,10 @@ def list_email_verification_contacts(
         search = None
     if not isinstance(letter, str):
         letter = None
+    if not isinstance(sort_by, str):
+        sort_by = None
+    if not isinstance(sort_dir, str):
+        sort_dir = None
     if not isinstance(limit, int):
         limit = 50
     if not isinstance(offset, int):
@@ -97,6 +103,8 @@ def list_email_verification_contacts(
             status=status,
             search=search,
             letter=letter,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
             limit=limit,
             offset=offset,
         )

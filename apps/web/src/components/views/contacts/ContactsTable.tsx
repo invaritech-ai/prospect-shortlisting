@@ -1,5 +1,6 @@
 import type { EmailFetchCompanyRow } from '../../../lib/types'
 import { ContactStatusBadge } from './ContactStatusBadge'
+import { SortableHeader } from '../../ui/SortableHeader'
 import { ExternalLink, RefreshCw, Users } from 'lucide-react'
 
 function relTime(iso: string): string {
@@ -17,12 +18,15 @@ interface ContactsTableProps {
   onFetch: (id: string) => void
   onRefetch: (id: string) => void
   onViewContacts: (row: EmailFetchCompanyRow) => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
   fetchDisabled?: boolean
   hasActiveFilter?: boolean
   onClearFilter?: () => void
 }
 
-export function ContactsTable({ rows, selected, onToggleSelect, onToggleSelectAll, onFetch, onRefetch, onViewContacts, fetchDisabled = false, hasActiveFilter, onClearFilter }: ContactsTableProps) {
+export function ContactsTable({ rows, selected, onToggleSelect, onToggleSelectAll, onFetch, onRefetch, onViewContacts, sortBy, sortDir, onSort, fetchDisabled = false, hasActiveFilter, onClearFilter }: ContactsTableProps) {
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.domain_id))
 
   return (
@@ -34,12 +38,12 @@ export function ContactsTable({ rows, selected, onToggleSelect, onToggleSelectAl
               <th style={{ width: '2.5rem', paddingLeft: '1rem' }}>
                 <input type="checkbox" checked={allSelected} onChange={onToggleSelectAll} style={{ accentColor: 'var(--s3)' }} />
               </th>
-              <th>Domain</th>
-              <th style={{ width: '110px' }}>Status</th>
-              <th style={{ width: '80px', textAlign: 'center' }}>Fetched</th>
-              <th style={{ width: '80px', textAlign: 'center' }}>Contacts</th>
-              <th style={{ width: '72px', textAlign: 'center' }}>Emails</th>
-              <th style={{ width: '80px' }}>Updated</th>
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '110px' }} />
+              <SortableHeader label="Fetched" field="fetched" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '80px', textAlign: 'center' }} />
+              <SortableHeader label="Contacts" field="contacts" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '80px', textAlign: 'center' }} />
+              <SortableHeader label="Emails" field="emails" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '72px', textAlign: 'center' }} />
+              <SortableHeader label="Updated" field="updated" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '80px' }} />
               <th style={{ width: '210px' }} />
             </tr>
           </thead>

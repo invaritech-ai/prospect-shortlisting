@@ -39,10 +39,10 @@ def _apply_letter_filter(q, letter: str | None):
         return q
     if letter == "#":
         return q.where(
-            ~func.upper(func.left(col(UploadedDomain.domain), 1)).between("A", "Z")
+            ~func.upper(func.substr(col(UploadedDomain.domain), 1, 1)).between("A", "Z")
         )
     return q.where(
-        func.upper(func.left(col(UploadedDomain.domain), 1)) == letter.upper()
+        func.upper(func.substr(col(UploadedDomain.domain), 1, 1)) == letter.upper()
     )
 
 
@@ -53,10 +53,13 @@ def _build_domains_response(
     base_q,
     limit: int,
     offset: int,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
 ) -> DomainList:
     total = session.exec(select(func.count()).select_from(base_q.subquery())).one()
+    sorted_q = _apply_domain_sort(base_q, campaign_id=campaign_id, sort_by=sort_by, sort_dir=sort_dir)
     items = session.exec(
-        base_q.order_by(col(UploadedDomain.domain).asc()).limit(limit).offset(offset)
+        sorted_q.limit(limit).offset(offset)
     ).all()
     domain_ids = [d.id for d in items]
     latest_by_domain: dict[UUID, tuple[UUID, str | None, object, str | None, bool | None, str | None]] = {}
@@ -118,6 +121,36 @@ def _build_domains_response(
     )
 
 
+def _sort_desc(sort_dir: str | None) -> bool:
+    return (sort_dir or "").strip().lower() == "desc"
+
+
+def _ordered(expr, *, descending: bool):
+    return expr.desc() if descending else expr.asc()
+
+
+def _apply_domain_sort(q, *, campaign_id: UUID, sort_by: str | None, sort_dir: str | None):
+    descending = _sort_desc(sort_dir)
+    normalized = (sort_by or "").strip().lower()
+    if normalized == "domain":
+        return q.order_by(_ordered(col(UploadedDomain.domain), descending=descending), col(UploadedDomain.id).asc())
+    if normalized == "status":
+        status_expr = func.coalesce(col(UploadedDomain.scrape_status), "pending")
+        return q.order_by(_ordered(status_expr, descending=descending), col(UploadedDomain.domain).asc())
+    if normalized == "updated":
+        latest_scrape_updated_at = (
+            select(func.max(col(ScrapeResult.updated_at)))
+            .where(
+                col(ScrapeResult.campaign_id) == campaign_id,
+                col(ScrapeResult.domain_id) == col(UploadedDomain.id),
+            )
+            .scalar_subquery()
+        )
+        updated_expr = func.coalesce(latest_scrape_updated_at, col(UploadedDomain.created_at))
+        return q.order_by(_ordered(updated_expr, descending=descending), col(UploadedDomain.domain).asc())
+    return q.order_by(col(UploadedDomain.domain).asc())
+
+
 @router.get("/companies", response_model=DomainList)
 def list_domains(
     campaign_id: UUID = Query(...),
@@ -125,12 +158,21 @@ def list_domains(
     scrape_status: str | None = Query(default=None),
     letter: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_dir: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> DomainList:
     started = time.perf_counter()
     base_q = select(UploadedDomain).where(col(UploadedDomain.campaign_id) == campaign_id)
+
+    if not isinstance(upload_id, UUID):
+        upload_id = None
+    if not isinstance(sort_by, str):
+        sort_by = None
+    if not isinstance(sort_dir, str):
+        sort_dir = None
 
     if upload_id is not None:
         base_q = base_q.where(col(UploadedDomain.upload_id) == upload_id)
@@ -147,6 +189,8 @@ def list_domains(
         base_q=base_q,
         limit=limit,
         offset=offset,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
     )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     logger.info(
@@ -220,7 +264,7 @@ def get_letter_counts(
 
     # Count per first letter — build a direct aggregate query (no subquery wrapping,
     # which would cause the column reference to escape the subquery scope).
-    letter_expr = func.upper(func.left(col(UploadedDomain.domain), 1))
+    letter_expr = func.upper(func.substr(col(UploadedDomain.domain), 1, 1))
     count_q = select(letter_expr, func.count(UploadedDomain.id)).where(
         col(UploadedDomain.campaign_id) == campaign_id
     )

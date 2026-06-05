@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,10 +33,10 @@ def _apply_letter_filter(q, letter: str | None):
         return q
     if letter == "#":
         return q.where(
-            ~func.upper(func.left(col(UploadedDomain.domain), 1)).between("A", "Z")
+            ~func.upper(func.substr(col(UploadedDomain.domain), 1, 1)).between("A", "Z")
         )
     return q.where(
-        func.upper(func.left(col(UploadedDomain.domain), 1)) == letter.upper()
+        func.upper(func.substr(col(UploadedDomain.domain), 1, 1)) == letter.upper()
     )
 
 
@@ -130,6 +131,7 @@ def _ai_review_domain_row_from_result(row) -> AiReviewDomainRow:
     ) = row
     effective_label = manual_label or predicted_label
     activity_at = manually_reviewed_at or classification_created_at or domain.created_at
+    pages_reviewed = _evidence_page_count(evidence_json)
     return AiReviewDomainRow(
         domain_id=domain.id,
         campaign_id=domain.campaign_id,
@@ -148,8 +150,68 @@ def _ai_review_domain_row_from_result(row) -> AiReviewDomainRow:
         manually_reviewed_at=manually_reviewed_at,
         effective_label=effective_label,
         effective_confidence=confidence,
+        pages_reviewed=pages_reviewed,
         activity_at=activity_at,
     )
+
+
+def _evidence_page_count(evidence_json: dict | None) -> int:
+    if not isinstance(evidence_json, dict):
+        return 0
+    evidence = evidence_json.get("evidence")
+    if isinstance(evidence, list):
+        return len(evidence)
+    pages = evidence_json.get("pages")
+    if isinstance(pages, list):
+        return len(pages)
+    return 0
+
+
+def _sort_desc(sort_dir: str | None) -> bool:
+    return (sort_dir or "").strip().lower() == "desc"
+
+
+def _sort_ai_review_items(
+    items: list[AiReviewDomainRow],
+    *,
+    sort_by: str | None,
+    sort_dir: str | None,
+) -> list[AiReviewDomainRow]:
+    normalized = (sort_by or "").strip().lower()
+    descending = _sort_desc(sort_dir)
+    if normalized == "domain":
+        return sorted(items, key=lambda item: (item.domain or "").lower(), reverse=descending)
+    if normalized == "verdict":
+        return sorted(items, key=lambda item: (item.effective_label or "").lower(), reverse=descending)
+    if normalized == "confidence":
+        return sorted(items, key=lambda item: item.effective_confidence or Decimal("0"), reverse=descending)
+    if normalized == "pages":
+        return sorted(items, key=lambda item: item.pages_reviewed, reverse=descending)
+    if normalized == "reviewed":
+        return sorted(items, key=lambda item: item.activity_at, reverse=descending)
+    return items
+
+
+def _apply_ai_review_sql_sort(q, *, effective_label_expr, sort_by: str | None, sort_dir: str | None):
+    normalized = (sort_by or "").strip().lower()
+    descending = _sort_desc(sort_dir)
+    order_expr = None
+    if normalized == "domain":
+        order_expr = col(UploadedDomain.domain)
+    elif normalized == "verdict":
+        order_expr = func.coalesce(effective_label_expr, "")
+    elif normalized == "confidence":
+        order_expr = func.coalesce(col(ClassificationResult.confidence), Decimal("0"))
+    elif normalized == "reviewed":
+        order_expr = func.coalesce(
+            col(ClassificationResult.manually_reviewed_at),
+            col(ClassificationResult.created_at),
+            col(UploadedDomain.created_at),
+        )
+    if order_expr is None:
+        return q.order_by(col(UploadedDomain.domain).asc())
+    ordered = order_expr.desc() if descending else order_expr.asc()
+    return q.order_by(ordered, col(UploadedDomain.domain).asc())
 
 
 def _job_read(batch: ClassificationBatch) -> AiReviewJobRead:
@@ -512,25 +574,56 @@ def list_ai_review_domains(
     letter: str | None = Query(default=None),
     label: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    sort_by: str | None = Query(default=None),
+    sort_dir: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> AiReviewDomainList:
+    if not isinstance(letter, str):
+        letter = None
+    if not isinstance(label, str):
+        label = None
+    if not isinstance(search, str):
+        search = None
+    if not isinstance(sort_by, str):
+        sort_by = None
+    if not isinstance(sort_dir, str):
+        sort_dir = None
+
     base_q, effective_label_expr = _classification_joined_query(campaign_id)
     base_q = _apply_letter_filter(base_q, letter)
     base_q = _apply_search_filter(base_q, search)
     base_q = _apply_label_filter(base_q, effective_label_expr, label)
 
     total = session.exec(select(func.count()).select_from(base_q.subquery())).one()
-    rows = session.exec(
-        base_q.order_by(col(UploadedDomain.domain).asc()).limit(limit).offset(offset)
-    ).all()
+    normalized_sort = (sort_by or "").strip().lower()
+    if normalized_sort != "pages":
+        rows = session.exec(
+            _apply_ai_review_sql_sort(
+                base_q,
+                effective_label_expr=effective_label_expr,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+            )
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return AiReviewDomainList(
+            total=total,
+            limit=limit,
+            offset=offset,
+            items=[_ai_review_domain_row_from_result(row) for row in rows],
+        )
 
+    rows = session.exec(base_q.order_by(col(UploadedDomain.domain).asc())).all()
     items = [_ai_review_domain_row_from_result(row) for row in rows]
+    items = _sort_ai_review_items(items, sort_by=sort_by, sort_dir=sort_dir)
+    page_items = items[offset : offset + limit]
 
     return AiReviewDomainList(
         total=total,
         limit=limit,
         offset=offset,
-        items=items,
+        items=page_items,
     )

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import case, func, update
+from sqlalchemy import and_, case, func, update
 from sqlmodel import Session, col, select
 
 from app.api.schemas.campaign import (
@@ -16,9 +17,12 @@ from app.api.schemas.campaign import (
 )
 from app.api.schemas.pipeline_run import PipelineCostSummaryRead
 from app.db.session import get_session
+from app.models.classification import ClassificationResult
+from app.models.contacts import Contact
 from app.models.core import Campaign, Upload, UploadedDomain
 from app.models.base import utcnow
 from app.services.campaign_stage_counts import build_campaign_stage_counts
+from app.services.email_verification_service import VERIFICATION_STALE_AFTER_DAYS
 
 router = APIRouter(prefix="/v1", tags=["campaigns"])
 
@@ -30,14 +34,87 @@ def _domain_stats_subquery():
             col(UploadedDomain.campaign_id).label("campaign_id"),
             func.count().label("company_count"),
             func.count(col(UploadedDomain.scrape_status)).label("scrape_count"),
-            func.count(col(UploadedDomain.decision_status)).label("classified_count"),
-            func.sum(
-                case((func.lower(col(UploadedDomain.decision_status)) == "possible", 1), else_=0)
-            ).label("possible_count"),
             func.count(col(UploadedDomain.fetch_status)).label("contact_count"),
         )
         .where(col(UploadedDomain.campaign_id).is_not(None))
         .group_by(col(UploadedDomain.campaign_id))
+        .subquery()
+    )
+
+
+def _classification_stats_subquery():
+    latest_ts_sq = (
+        select(
+            col(ClassificationResult.campaign_id).label("campaign_id"),
+            col(ClassificationResult.domain_id).label("domain_id"),
+            func.max(col(ClassificationResult.created_at)).label("latest_created_at"),
+        )
+        .group_by(col(ClassificationResult.campaign_id), col(ClassificationResult.domain_id))
+        .subquery()
+    )
+    effective_label = func.lower(
+        func.coalesce(
+            col(ClassificationResult.manual_label),
+            col(ClassificationResult.predicted_label),
+        )
+    )
+    return (
+        select(
+            col(UploadedDomain.campaign_id).label("campaign_id"),
+            func.coalesce(
+                func.sum(case((effective_label.in_(["unknown", "crap"]), 1), else_=0)),
+                0,
+            ).label("classified_count"),
+            func.coalesce(
+                func.sum(case((effective_label == "possible", 1), else_=0)),
+                0,
+            ).label("possible_count"),
+        )
+        .outerjoin(
+            latest_ts_sq,
+            and_(
+                col(UploadedDomain.campaign_id) == latest_ts_sq.c.campaign_id,
+                col(UploadedDomain.id) == latest_ts_sq.c.domain_id,
+            ),
+        )
+        .outerjoin(
+            ClassificationResult,
+            and_(
+                col(ClassificationResult.campaign_id) == latest_ts_sq.c.campaign_id,
+                col(ClassificationResult.domain_id) == latest_ts_sq.c.domain_id,
+                col(ClassificationResult.created_at) == latest_ts_sq.c.latest_created_at,
+            ),
+        )
+        .where(
+            col(UploadedDomain.campaign_id).is_not(None),
+            col(UploadedDomain.scrape_status) == "succeeded",
+        )
+        .group_by(col(UploadedDomain.campaign_id))
+        .subquery()
+    )
+
+
+def _valid_email_stats_subquery():
+    cutoff = utcnow() - timedelta(days=VERIFICATION_STALE_AFTER_DAYS)
+    selected_email = func.lower(func.trim(col(Contact.selected_email)))
+    verified_snapshot = func.lower(func.trim(col(Contact.verified_email_snapshot)))
+    verification_status = func.lower(func.trim(col(Contact.verification_status)))
+    return (
+        select(
+            col(Contact.campaign_id).label("campaign_id"),
+            func.count(col(Contact.id)).label("valid_email_count"),
+        )
+        .where(
+            col(Contact.selected_email).is_not(None),
+            func.trim(col(Contact.selected_email)) != "",
+            col(Contact.verified_email_snapshot).is_not(None),
+            selected_email == verified_snapshot,
+            col(Contact.verification_applied).is_(True),
+            verification_status.in_(["valid", "deliverable"]),
+            col(Contact.verified_at).is_not(None),
+            col(Contact.verified_at) >= cutoff,
+        )
+        .group_by(col(Contact.campaign_id))
         .subquery()
     )
 
@@ -51,6 +128,7 @@ def _as_campaign_read(
     classified_count: int = 0,
     possible_count: int = 0,
     contact_count: int = 0,
+    valid_email_count: int = 0,
 ) -> CampaignRead:
     return CampaignRead(
         id=campaign.id,
@@ -62,6 +140,7 @@ def _as_campaign_read(
         classified_count=classified_count,
         possible_count=possible_count,
         contact_count=contact_count,
+        valid_email_count=valid_email_count,
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,
     )
@@ -72,7 +151,22 @@ def _get_campaign_counts(session: Session, campaign_id: UUID) -> dict:
         select(func.count()).select_from(Upload).where(col(Upload.campaign_id) == campaign_id)
     ).one()
     sq = _domain_stats_subquery()
-    row = session.execute(select(sq).where(sq.c.campaign_id == campaign_id)).first()
+    classification_sq = _classification_stats_subquery()
+    valid_sq = _valid_email_stats_subquery()
+    row = session.execute(
+        select(
+            sq.c.company_count,
+            sq.c.scrape_count,
+            sq.c.contact_count,
+            func.coalesce(classification_sq.c.classified_count, 0).label("classified_count"),
+            func.coalesce(classification_sq.c.possible_count, 0).label("possible_count"),
+            func.coalesce(valid_sq.c.valid_email_count, 0).label("valid_email_count"),
+        )
+        .select_from(sq)
+        .outerjoin(classification_sq, classification_sq.c.campaign_id == sq.c.campaign_id)
+        .outerjoin(valid_sq, valid_sq.c.campaign_id == sq.c.campaign_id)
+        .where(sq.c.campaign_id == campaign_id)
+    ).first()
     if row:
         return dict(
             upload_count=int(upload_count),
@@ -81,9 +175,10 @@ def _get_campaign_counts(session: Session, campaign_id: UUID) -> dict:
             classified_count=int(row.classified_count),
             possible_count=int(row.possible_count or 0),
             contact_count=int(row.contact_count),
+            valid_email_count=int(row.valid_email_count or 0),
         )
     return dict(upload_count=int(upload_count), company_count=0, scrape_count=0,
-                classified_count=0, possible_count=0, contact_count=0)
+                classified_count=0, possible_count=0, contact_count=0, valid_email_count=0)
 
 
 @router.post("/campaigns", response_model=CampaignRead, status_code=status.HTTP_201_CREATED)
@@ -116,6 +211,8 @@ def list_campaigns(
     offset: int = Query(default=0, ge=0),
 ) -> CampaignList:
     domain_stats = _domain_stats_subquery()
+    classification_stats = _classification_stats_subquery()
+    valid_email_stats = _valid_email_stats_subquery()
     upload_counts = (
         select(
             col(Upload.campaign_id).label("campaign_id"),
@@ -132,12 +229,15 @@ def list_campaigns(
             func.coalesce(upload_counts.c.upload_count, 0).label("upload_count"),
             func.coalesce(domain_stats.c.company_count, 0).label("company_count"),
             func.coalesce(domain_stats.c.scrape_count, 0).label("scrape_count"),
-            func.coalesce(domain_stats.c.classified_count, 0).label("classified_count"),
-            func.coalesce(domain_stats.c.possible_count, 0).label("possible_count"),
+            func.coalesce(classification_stats.c.classified_count, 0).label("classified_count"),
+            func.coalesce(classification_stats.c.possible_count, 0).label("possible_count"),
             func.coalesce(domain_stats.c.contact_count, 0).label("contact_count"),
+            func.coalesce(valid_email_stats.c.valid_email_count, 0).label("valid_email_count"),
         )
         .outerjoin(upload_counts, upload_counts.c.campaign_id == col(Campaign.id))
         .outerjoin(domain_stats, domain_stats.c.campaign_id == col(Campaign.id))
+        .outerjoin(classification_stats, classification_stats.c.campaign_id == col(Campaign.id))
+        .outerjoin(valid_email_stats, valid_email_stats.c.campaign_id == col(Campaign.id))
         .order_by(col(Campaign.updated_at).desc(), col(Campaign.created_at).desc())
     )
     rows = list(session.exec(statement.offset(offset).limit(limit + 1)))
@@ -158,8 +258,9 @@ def list_campaigns(
                 classified_count=int(classified_count),
                 possible_count=int(possible_count or 0),
                 contact_count=int(contact_count),
+                valid_email_count=int(valid_email_count),
             )
-            for campaign, upload_count, company_count, scrape_count, classified_count, possible_count, contact_count in page_rows
+            for campaign, upload_count, company_count, scrape_count, classified_count, possible_count, contact_count, valid_email_count in page_rows
         ],
     )
 

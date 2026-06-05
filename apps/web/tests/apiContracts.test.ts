@@ -19,6 +19,7 @@ import {
   listEmailFetchCompanies,
   listEmailVerificationContactIds,
   listEmailVerificationContacts,
+  listFullPipelineCompanies,
   previewEmailFetch,
   previewEmailVerification,
   testIntegrationProvider,
@@ -105,6 +106,8 @@ test('listDomains serializes current company filters', async () => {
     scrapeStatus: 'soft-failures',
     letter: 'A',
     search: ' acme ',
+    sortBy: 'updated',
+    sortDir: 'desc',
     limit: 25,
     offset: 50,
   })
@@ -115,8 +118,30 @@ test('listDomains serializes current company filters', async () => {
   assert.match(requested, /scrape_status=soft-failures/)
   assert.match(requested, /letter=A/)
   assert.match(requested, /search=acme/)
+  assert.match(requested, /sort_by=updated/)
+  assert.match(requested, /sort_dir=desc/)
   assert.match(requested, /limit=25/)
   assert.match(requested, /offset=50/)
+})
+
+test('listFullPipelineCompanies serializes read-only pipeline filters', async () => {
+  let requested = ''
+  mockFetch((url) => {
+    requested = url
+    return { total: 0, limit: 50, offset: 100, items: [] }
+  })
+
+  await listFullPipelineCompanies('camp-1', {
+    search: ' acme ',
+    limit: 50,
+    offset: 100,
+  })
+
+  assert.match(requested, /\/v1\/full-pipeline\/companies\?/)
+  assert.match(requested, /campaign_id=camp-1/)
+  assert.match(requested, /search=acme/)
+  assert.match(requested, /limit=50/)
+  assert.match(requested, /offset=100/)
 })
 
 test('AI review APIs serialize label and search filters', async () => {
@@ -126,7 +151,7 @@ test('AI review APIs serialize label and search filters', async () => {
     return { total: 0, limit: 50, offset: 0, items: [] }
   })
 
-  await listAiReviewDomains('camp-1', { label: 'possible', letter: 'B', search: ' beta ' })
+  await listAiReviewDomains('camp-1', { label: 'possible', letter: 'B', search: ' beta ', sortBy: 'pages', sortDir: 'desc' })
   await getAiReviewLabelCounts('camp-1', { letter: 'C', search: ' gamma ' })
 
   assert.match(requested[0], /\/v1\/ai-review\/domains\?/)
@@ -134,6 +159,8 @@ test('AI review APIs serialize label and search filters', async () => {
   assert.match(requested[0], /label=possible/)
   assert.match(requested[0], /letter=B/)
   assert.match(requested[0], /search=beta/)
+  assert.match(requested[0], /sort_by=pages/)
+  assert.match(requested[0], /sort_dir=desc/)
   assert.match(requested[1], /\/v1\/ai-review\/label-counts\?/)
   assert.match(requested[1], /letter=C/)
   assert.match(requested[1], /search=gamma/)
@@ -146,7 +173,7 @@ test('email fetch APIs use the S3 namespace and query params', async () => {
     return { total: 0, limit: 200, offset: 0, counts: {}, items: [] }
   })
 
-  await listEmailFetchCompanies('camp-1', { status: 'pending', letter: 'D', search: ' delta ', limit: 100, offset: 20 })
+  await listEmailFetchCompanies('camp-1', { status: 'pending', letter: 'D', search: ' delta ', sortBy: 'contacts', sortDir: 'desc', limit: 100, offset: 20 })
   await listEmailFetchCompanyIds('camp-1', { status: 'failed', letter: 'E', search: ' echo ', fetchableOnly: true })
   await getEmailFetchLetterCounts('camp-1', { status: 'done', search: ' foxtrot ' })
   await getActiveEmailFetchBatch('camp-1')
@@ -156,6 +183,8 @@ test('email fetch APIs use the S3 namespace and query params', async () => {
   assert.match(requested[0], /status=pending/)
   assert.match(requested[0], /letter=D/)
   assert.match(requested[0], /search=delta/)
+  assert.match(requested[0], /sort_by=contacts/)
+  assert.match(requested[0], /sort_dir=desc/)
   assert.match(requested[0], /limit=100/)
   assert.match(requested[0], /offset=20/)
   assert.match(requested[1], /\/v1\/email-fetch\/company-ids\?/)
@@ -216,6 +245,8 @@ test('email verification APIs use the S4 namespace and query params', async () =
     status: 'pending',
     letter: 'A',
     search: ' ada ',
+    sortBy: 'verified',
+    sortDir: 'desc',
     limit: 50,
     offset: 0,
   })
@@ -225,6 +256,8 @@ test('email verification APIs use the S4 namespace and query params', async () =
   assert.match(requested[0], /status=pending/)
   assert.match(requested[0], /letter=A/)
   assert.match(requested[0], /search=ada/)
+  assert.match(requested[0], /sort_by=verified/)
+  assert.match(requested[0], /sort_dir=desc/)
   assert.match(requested[0], /limit=50/)
   assert.match(requested[0], /offset=0/)
 })

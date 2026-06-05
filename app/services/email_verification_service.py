@@ -116,6 +116,8 @@ class EmailVerificationService:
         status: str = "all",
         search: str | None = None,
         letter: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> EmailVerificationContactList:
@@ -133,6 +135,11 @@ class EmailVerificationService:
             bucket = contact_verification_bucket(contact, now=now)
             if self._status_matches(bucket, status):
                 filtered.append((contact, domain, bucket))
+        filtered = self._sort_contact_rows(
+            filtered,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+        )
         total = len(filtered)
         capped_limit = max(1, limit)
         safe_offset = max(0, offset)
@@ -937,6 +944,69 @@ class EmailVerificationService:
         if not status or status == "all":
             return True
         return bucket == status
+
+    def _sort_contact_rows(
+        self,
+        rows: list[tuple[Contact, UploadedDomain, str]],
+        *,
+        sort_by: str | None,
+        sort_dir: str | None,
+    ) -> list[tuple[Contact, UploadedDomain, str]]:
+        normalized = (sort_by or "").strip().lower()
+        descending = (sort_dir or "").strip().lower() == "desc"
+        if normalized == "contact":
+            return sorted(
+                rows,
+                key=lambda row: (
+                    (row[0].last_name or "").lower(),
+                    (row[0].first_name or "").lower(),
+                    str(row[0].id),
+                ),
+                reverse=descending,
+            )
+        if normalized == "company":
+            return sorted(
+                rows,
+                key=lambda row: ((row[1].domain or "").lower(), str(row[0].id)),
+                reverse=descending,
+            )
+        if normalized == "email":
+            return sorted(
+                rows,
+                key=lambda row: (normalize_email(row[0].selected_email), str(row[0].id)),
+                reverse=descending,
+            )
+        if normalized == "status":
+            return sorted(
+                rows,
+                key=lambda row: (row[2], (row[1].domain or "").lower(), str(row[0].id)),
+                reverse=descending,
+            )
+        if normalized == "verified":
+            return self._sort_contact_rows_by_verified(rows, descending=descending)
+        return rows
+
+    def _sort_contact_rows_by_verified(
+        self,
+        rows: list[tuple[Contact, UploadedDomain, str]],
+        *,
+        descending: bool,
+    ) -> list[tuple[Contact, UploadedDomain, str]]:
+        def timestamp(contact: Contact) -> float:
+            if contact.verified_at is None:
+                return 0.0
+            return coerce_utc_datetime(contact.verified_at).timestamp()
+
+        if descending:
+            return sorted(
+                rows,
+                key=lambda row: (row[0].verified_at is not None, timestamp(row[0]), str(row[0].id)),
+                reverse=True,
+            )
+        return sorted(
+            rows,
+            key=lambda row: (row[0].verified_at is None, timestamp(row[0]), str(row[0].id)),
+        )
 
     def _contact_row(
         self,

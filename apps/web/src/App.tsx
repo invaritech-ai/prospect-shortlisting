@@ -677,7 +677,9 @@ function App() {
           />
         )}
 
-        {selectedCampaignId && activeView === 'full-pipeline'   && <FullPipelineView />}
+        {selectedCampaignId && activeView === 'full-pipeline'   && (
+          <FullPipelineView campaignId={selectedCampaignId} stageCounts={stageCounts} />
+        )}
         {selectedCampaignId && activeView === 's2-ai'           && (
           <AIReviewView
             stats={shellStats}

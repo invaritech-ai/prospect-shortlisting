@@ -1,4 +1,5 @@
 import type { EmailVerificationContactRow } from '../../../lib/types'
+import { SortableHeader } from '../../ui/SortableHeader'
 import { ValidationStatusBadge } from './ValidationStatusBadge'
 
 function contactName(row: EmailVerificationContactRow): string {
@@ -16,6 +17,9 @@ interface ValidationTableProps {
   onToggleSelect: (id: string) => void
   onToggleSelectAll: () => void
   onValidate: (id: string) => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
   validateDisabled?: boolean
 }
 
@@ -25,6 +29,9 @@ export function ValidationTable({
   onToggleSelect,
   onToggleSelectAll,
   onValidate,
+  sortBy,
+  sortDir,
+  onSort,
   validateDisabled = false,
 }: ValidationTableProps) {
   const allSelected = rows.length > 0 && rows.every((row) => selected.has(row.contact_id))
@@ -38,11 +45,11 @@ export function ValidationTable({
               <th style={{ width: '2.5rem', paddingLeft: '1rem' }}>
                 <input type="checkbox" checked={allSelected} onChange={onToggleSelectAll} style={{ accentColor: 'var(--s5)' }} />
               </th>
-              <th>Contact</th>
-              <th>Company</th>
-              <th>Email</th>
-              <th style={{ width: '150px' }}>Status</th>
-              <th style={{ width: '120px' }}>Verified</th>
+              <SortableHeader label="Contact" field="contact" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Company" field="company" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Email" field="email" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '150px' }} />
+              <SortableHeader label="Verified" field="verified" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '120px' }} />
               <th style={{ width: '120px' }}>Action</th>
             </tr>
           </thead>

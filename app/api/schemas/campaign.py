@@ -28,6 +28,7 @@ class CampaignRead(UTCReadModel):
     classified_count: int = 0
     possible_count: int = 0
     contact_count: int = 0
+    valid_email_count: int = 0
     created_at: datetime
     updated_at: datetime
 

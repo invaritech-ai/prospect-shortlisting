@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { MOCK_AI_ROWS, MOCK_AI_STATS, MOCK_STATS } from '../../../lib/useAppData'
 import type { AIVerdict, MockAIRow } from '../../../lib/useAppData'
+import type { TableSortState } from '../../../lib/tableSort'
 import type { AiReviewJobRead, AiReviewJobStatusRead, AiReviewLabelCounts, DomainLetterCounts, StatsResponse } from '../../../lib/types'
 import { createAiReviewJob, getActiveAiReviewJob, getAiReviewJobStatus, getAiReviewLabelCounts, getAiReviewLetterCounts, listAiReviewDomains } from '../../../lib/api'
+import { nextTableSort } from '../../../lib/tableSort'
 import { parseApiError } from '../../../lib/utils'
 import { StageViewHeader }    from '../shared/StageViewHeader'
 import { AIReviewToolbar }    from './AIReviewToolbar'
@@ -15,6 +17,7 @@ type VerdictFilter = 'all' | AIVerdict
 type AIReviewFilter = VerdictFilter | 'unclassified'
 const PAGE_SIZE = 50
 const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
+const DESC_SORT_FIELDS = new Set(['confidence', 'pages', 'reviewed'])
 
 interface AIReviewViewProps {
   stats?: StatsResponse | null
@@ -32,6 +35,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
   const [letterFilter, setLetterFilter] = useState<string>('all')
   const [letterCounts, setLetterCounts] = useState<DomainLetterCounts | null>(null)
   const [labelCounts, setLabelCounts] = useState<AiReviewLabelCounts | null>(null)
+  const [sort, setSort] = useState<TableSortState>({ sortBy: '', sortDir: 'asc' })
   const allDomainTotal = letterCounts
     ? Object.values(letterCounts.counts).reduce((sum, count) => sum + count, 0)
     : domainTotal
@@ -76,6 +80,8 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
           letter: letterFilter !== 'all' ? letterFilter : undefined,
           label: filter !== 'all' ? filter.toLowerCase() : undefined,
           search: search.trim() ? search.trim() : undefined,
+          sortBy: sort.sortBy || undefined,
+          sortDir: sort.sortBy ? sort.sortDir : undefined,
         })
         if (cancelled) return
         const mapped: MockAIRow[] = data.items.map((item) => ({
@@ -85,9 +91,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
           verdict: toVerdict(item.effective_label),
           confidence: Math.round((item.effective_confidence ?? 0) * 100),
           reasoning: reasoningPreview(item.reasoning_json),
-          pagesReviewed: Array.isArray(item.evidence_json?.evidence)
-            ? item.evidence_json.evidence.length
-            : Array.isArray(item.evidence_json?.pages) ? item.evidence_json.pages.length : 0,
+          pagesReviewed: item.pages_reviewed,
           updatedAt: item.activity_at,
         }))
         setRows(mapped)
@@ -105,7 +109,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
     return () => {
       cancelled = true
     }
-  }, [campaignId, filter, letterFilter, page, refreshNonce, search])
+  }, [campaignId, filter, letterFilter, page, refreshNonce, search, sort.sortBy, sort.sortDir])
 
   useEffect(() => {
     let cancelled = false
@@ -261,6 +265,15 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
     if (!allMatchingSelected) {
       setSelected(new Set())
     }
+  }
+
+  function handleSort(field: string) {
+    setSort((current) => nextTableSort(
+      current,
+      field,
+      DESC_SORT_FIELDS.has(field) ? 'desc' : 'asc',
+    ))
+    setPage(0)
   }
 
   function selectAllMatching() {
@@ -425,6 +438,9 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
                 onToggleAll={toggleSelectAll}
                 onLabelChange={handleLabelChange}
                 onViewReasoning={setReasoningRow}
+                sortBy={sort.sortBy}
+                sortDir={sort.sortDir}
+                onSort={handleSort}
               />
             </div>
             <div className="md:hidden">

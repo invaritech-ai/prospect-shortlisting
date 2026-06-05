@@ -18,9 +18,11 @@ import type {
   EmailFetchMode,
   EmailFetchPreviewRead,
 } from '../../../lib/types'
+import type { TableSortState } from '../../../lib/tableSort'
 import { createQueryRequestGate } from '../../../lib/requestGate'
 import { useCampaignEventStream } from '../../../lib/useCampaignEventStream'
 import { parseApiError } from '../../../lib/utils'
+import { nextTableSort } from '../../../lib/tableSort'
 import { StageViewHeader }        from '../shared/StageViewHeader'
 import { StageToolbar }           from '../shared/StageToolbar'
 import { ContactsTable }          from './ContactsTable'
@@ -39,6 +41,7 @@ const POLL_HEAVY_ACTIVE_MS = 10000
 const POLL_STATUS_BG_MS = 20000
 const POLL_HEAVY_BG_MS = 30000
 const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
+const DESC_SORT_FIELDS = new Set(['fetched', 'contacts', 'emails', 'updated'])
 
 const EMPTY_COUNTS: EmailFetchCompanyCounts = {
   all: 0,
@@ -76,6 +79,7 @@ export function ContactsView({
   const [filter, setFilter] = useState<FilterValue>('all')
   const [letterFilter, setLetterFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<TableSortState>({ sortBy: '', sortDir: 'asc' })
   const [rows, setRows] = useState<EmailFetchCompanyRow[]>([])
   const [companyTotal, setCompanyTotal] = useState(0)
   const [page, setPage] = useState(0)
@@ -125,7 +129,9 @@ export function ContactsView({
     letterFilter,
     page,
     search: normalizedSearch,
-  }), [campaignId, filter, letterFilter, normalizedSearch, page])
+    sortBy: sort.sortBy,
+    sortDir: sort.sortDir,
+  }), [campaignId, filter, letterFilter, normalizedSearch, page, sort.sortBy, sort.sortDir])
   const rowsQueryKeyRef = useRef(rowsQueryKey)
   rowsQueryKeyRef.current = rowsQueryKey
   const letterCountsQueryKey = useMemo(() => JSON.stringify({
@@ -182,6 +188,8 @@ export function ContactsView({
         status: filter,
         search,
         letter: letterFilter !== 'all' ? letterFilter : undefined,
+        sortBy: sort.sortBy || undefined,
+        sortDir: sort.sortBy ? sort.sortDir : undefined,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
       })
@@ -203,7 +211,7 @@ export function ContactsView({
       setIsRefreshing(false)
       setIsLoading(false)
     }
-  }, [campaignId, filter, isGlobalCountScope, letterFilter, onContactCountsChange, page, rowsQueryKey, rowsRequestGate, search])
+  }, [campaignId, filter, isGlobalCountScope, letterFilter, onContactCountsChange, page, rowsQueryKey, rowsRequestGate, search, sort.sortBy, sort.sortDir])
 
   const loadLetterCounts = useCallback(async () => {
     const requestToken = letterCountsRequestGate.start(letterCountsQueryKey)
@@ -402,6 +410,15 @@ export function ContactsView({
       setSelected(new Set())
       setMatchingSelectionTotal(0)
     }
+  }
+
+  function handleSort(field: string) {
+    setSort((current) => nextTableSort(
+      current,
+      field,
+      DESC_SORT_FIELDS.has(field) ? 'desc' : 'asc',
+    ))
+    setPage(0)
   }
 
   async function resolveFetchableIds({
@@ -638,6 +655,9 @@ export function ContactsView({
                 onFetch={(id) => startPreview([id])}
                 onRefetch={(id) => startPreview([id], 'refetch')}
                 onViewContacts={setViewingRow}
+                sortBy={sort.sortBy}
+                sortDir={sort.sortDir}
+                onSort={handleSort}
                 fetchDisabled={fetchDisabled}
                 hasActiveFilter={filter !== 'all' || letterFilter !== 'all' || Boolean(search.trim())}
                 onClearFilter={() => {

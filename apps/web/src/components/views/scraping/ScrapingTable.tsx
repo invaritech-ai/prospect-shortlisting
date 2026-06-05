@@ -1,6 +1,7 @@
 import type { DomainRead } from '../../../lib/types'
 import { ScrapeStatusBadge } from '../shared/ScrapeStatusBadge'
 import { IconExternalLink, IconEye } from '../../ui/icons'
+import { SortableHeader } from '../../ui/SortableHeader'
 
 function relTime(iso: string): string {
   const d = Math.floor((Date.now() - new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).getTime()) / 60_000)
@@ -26,6 +27,9 @@ interface ScrapingTableProps {
   onToggleSelectAll: () => void
   onScrapeOne: (d: DomainRead) => void
   onViewContent: (d: DomainRead) => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
   isScrapeDisabled?: boolean
   hasActiveFilter?: boolean
   onClearFilter?: () => void
@@ -33,7 +37,7 @@ interface ScrapingTableProps {
 
 export function ScrapingTable({
   rows, selected, onToggleSelect, onToggleSelectAll,
-  onScrapeOne, onViewContent, isScrapeDisabled = false, hasActiveFilter, onClearFilter,
+  onScrapeOne, onViewContent, sortBy, sortDir, onSort, isScrapeDisabled = false, hasActiveFilter, onClearFilter,
 }: ScrapingTableProps) {
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id))
 
@@ -52,9 +56,9 @@ export function ScrapingTable({
                   aria-label="Select all"
                 />
               </th>
-              <th>Domain</th>
-              <th style={{ width: '110px' }}>Status</th>
-              <th style={{ width: '90px' }}>Updated</th>
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Status" field="status" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '110px' }} />
+              <SortableHeader label="Updated" field="updated" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '90px' }} />
               <th style={{ width: '120px' }} />
             </tr>
           </thead>

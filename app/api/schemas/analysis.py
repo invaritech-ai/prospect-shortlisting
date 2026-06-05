@@ -29,6 +29,7 @@ class AiReviewDomainRow(UTCReadModel):
     manually_reviewed_at: datetime | None
     effective_label: str | None
     effective_confidence: Decimal | None
+    pages_reviewed: int = 0
     activity_at: datetime
 
 

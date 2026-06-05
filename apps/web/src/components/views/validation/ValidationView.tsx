@@ -16,9 +16,11 @@ import type {
   EmailVerificationPreviewRead,
   EmailVerificationStatus,
 } from '../../../lib/types'
+import type { TableSortState } from '../../../lib/tableSort'
 import { createQueryRequestGate } from '../../../lib/requestGate'
 import { useCampaignEventStream } from '../../../lib/useCampaignEventStream'
 import { parseApiError } from '../../../lib/utils'
+import { nextTableSort } from '../../../lib/tableSort'
 import { StageViewHeader } from '../shared/StageViewHeader'
 import { StageToolbar } from '../shared/StageToolbar'
 import { ValidationTable } from './ValidationTable'
@@ -37,6 +39,7 @@ const POLL_STATUS_BG_MS = 20000
 const POLL_HEAVY_BG_MS = 30000
 const LETTERS = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
 const NO_SELECTED_ACTIONABLE_MESSAGE = 'No selected emails need validation. Fresh results can be revalidated after 30 days.'
+const DESC_SORT_FIELDS = new Set(['verified'])
 
 const EMPTY_COUNTS: EmailVerificationCounts = {
   all: 0,
@@ -64,6 +67,7 @@ export function ValidationView({
   const [filter, setFilter] = useState<FilterValue>('all')
   const [letterFilter, setLetterFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<TableSortState>({ sortBy: '', sortDir: 'asc' })
   const [rows, setRows] = useState<EmailVerificationContactRow[]>([])
   const [contactTotal, setContactTotal] = useState(0)
   const [page, setPage] = useState(0)
@@ -96,7 +100,9 @@ export function ValidationView({
     letterFilter,
     page,
     search: normalizedSearch,
-  }), [campaignId, filter, letterFilter, normalizedSearch, page])
+    sortBy: sort.sortBy,
+    sortDir: sort.sortDir,
+  }), [campaignId, filter, letterFilter, normalizedSearch, page, sort.sortBy, sort.sortDir])
   const rowsQueryKeyRef = useRef(rowsQueryKey)
   rowsQueryKeyRef.current = rowsQueryKey
   const letterCountsQueryKey = useMemo(() => JSON.stringify({
@@ -142,6 +148,8 @@ export function ValidationView({
         status: filter,
         search,
         letter: letterFilter !== 'all' ? letterFilter : undefined,
+        sortBy: sort.sortBy || undefined,
+        sortDir: sort.sortBy ? sort.sortDir : undefined,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
       })
@@ -160,7 +168,7 @@ export function ValidationView({
       setIsRefreshing(false)
       setIsLoading(false)
     }
-  }, [campaignId, filter, letterFilter, page, rowsQueryKey, rowsRequestGate, search])
+  }, [campaignId, filter, letterFilter, page, rowsQueryKey, rowsRequestGate, search, sort.sortBy, sort.sortDir])
 
   const loadLetterCounts = useCallback(async () => {
     const requestToken = letterCountsRequestGate.start(letterCountsQueryKey)
@@ -362,6 +370,15 @@ export function ValidationView({
       setSelected(new Set())
       setMatchingSelectionTotal(0)
     }
+  }
+
+  function handleSort(field: string) {
+    setSort((current) => nextTableSort(
+      current,
+      field,
+      DESC_SORT_FIELDS.has(field) ? 'desc' : 'asc',
+    ))
+    setPage(0)
   }
 
   async function resolveActionableIds(limit = MAX_VERIFICATION_BATCH_SIZE): Promise<{ ids: string[]; total: number }> {
@@ -623,6 +640,9 @@ export function ValidationView({
                 onToggleSelect={toggleSelect}
                 onToggleSelectAll={toggleSelectAll}
                 onValidate={(id) => startPreview([id])}
+                sortBy={sort.sortBy}
+                sortDir={sort.sortDir}
+                onSort={handleSort}
                 validateDisabled={busy}
               />
             </div>

@@ -46,6 +46,39 @@ export type DomainList = {
   items: DomainRead[]
 }
 
+export type FullPipelineCompanyRow = {
+  domain_id: string
+  campaign_id: string
+  raw_url: string
+  normalized_url: string
+  domain: string
+  scrape_status: string | null
+  decision_status: string | null
+  fetch_status: string | null
+  verify_status: string | null
+  created_at: string
+  latest_scrape_updated_at: string | null
+  latest_scrape_error_code: string | null
+  latest_scrape_failure_class: string | null
+  latest_scrape_retryable: boolean | null
+  latest_scrape_final_url: string | null
+  classification_state: string | null
+  effective_label: string | null
+  contacts_found: number
+  emails_found: number
+  email_contact_count: number
+  valid_email_count: number
+  latest_contact_updated_at: string | null
+  last_activity: string
+}
+
+export type FullPipelineCompanyList = {
+  total: number
+  limit: number
+  offset: number
+  items: FullPipelineCompanyRow[]
+}
+
 export type AiReviewDomainRow = {
   domain_id: string
   campaign_id: string
@@ -64,6 +97,7 @@ export type AiReviewDomainRow = {
   manually_reviewed_at: string | null
   effective_label: string | null
   effective_confidence: number | null
+  pages_reviewed: number
   activity_at: string
 }
 
@@ -404,6 +438,7 @@ export type CampaignRead = {
   classified_count: number
   possible_count: number
   contact_count: number
+  valid_email_count: number
   created_at: string
   updated_at: string
 }

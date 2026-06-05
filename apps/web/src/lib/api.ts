@@ -34,6 +34,7 @@ import type {
   EmailVerificationPreviewRequest,
   EmailVerificationStatus,
   FetchedPersonList,
+  FullPipelineCompanyList,
   IntegrationHealthItem,
   IntegrationProviderId,
   IntegrationProviderStatus,
@@ -246,6 +247,8 @@ export async function listDomains(
     scrapeStatus,
     letter,
     search,
+    sortBy,
+    sortDir,
     limit = 50,
     offset = 0,
   }: {
@@ -254,6 +257,8 @@ export async function listDomains(
     letter?: string
     label?: string
     search?: string
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
     limit?: number
     offset?: number
   } = {},
@@ -263,7 +268,26 @@ export async function listDomains(
   if (scrapeStatus) params.set('scrape_status', scrapeStatus)
   if (letter) params.set('letter', letter)
   if (search?.trim()) params.set('search', search.trim())
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
   return request<DomainList>(`/v1/companies?${params.toString()}`)
+}
+
+export async function listFullPipelineCompanies(
+  campaignId: string,
+  {
+    search,
+    limit = 50,
+    offset = 0,
+  }: {
+    search?: string
+    limit?: number
+    offset?: number
+  } = {},
+): Promise<FullPipelineCompanyList> {
+  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  if (search?.trim()) params.set('search', search.trim())
+  return request<FullPipelineCompanyList>(`/v1/full-pipeline/companies?${params.toString()}`)
 }
 
 export async function listAiDecidableDomains(
@@ -295,12 +319,16 @@ export async function listAiReviewDomains(
     letter,
     label,
     search,
+    sortBy,
+    sortDir,
     limit = 50,
     offset = 0,
   }: {
     letter?: string
     label?: string
     search?: string
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
     limit?: number
     offset?: number
   } = {},
@@ -309,6 +337,8 @@ export async function listAiReviewDomains(
   if (letter) params.set('letter', letter)
   if (label) params.set('label', label)
   if (search?.trim()) params.set('search', search.trim())
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
   return request<AiReviewDomainList>(`/v1/ai-review/domains?${params.toString()}`)
 }
 
@@ -384,12 +414,16 @@ export async function listEmailFetchCompanies(
     status,
     letter,
     search,
+    sortBy,
+    sortDir,
     limit = 200,
     offset = 0,
   }: {
     status?: 'all' | EmailFetchCompanyStatus
     letter?: string
     search?: string
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
     limit?: number
     offset?: number
   } = {},
@@ -398,6 +432,8 @@ export async function listEmailFetchCompanies(
   if (status) params.set('status', status)
   if (letter) params.set('letter', letter)
   if (search?.trim()) params.set('search', search.trim())
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
   return request<EmailFetchCompanyList>(`/v1/email-fetch/companies?${params.toString()}`)
 }
 
@@ -475,12 +511,16 @@ export async function listEmailVerificationContacts(
     status,
     letter,
     search,
+    sortBy,
+    sortDir,
     limit = 50,
     offset = 0,
   }: {
     status?: 'all' | EmailVerificationStatus
     letter?: string
     search?: string
+    sortBy?: string
+    sortDir?: 'asc' | 'desc'
     limit?: number
     offset?: number
   } = {},
@@ -489,6 +529,8 @@ export async function listEmailVerificationContacts(
   if (status) params.set('status', status)
   if (letter) params.set('letter', letter)
   if (search?.trim()) params.set('search', search.trim())
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
   return request<EmailVerificationContactList>(`/v1/email-verification/contacts?${params.toString()}`)
 }
 

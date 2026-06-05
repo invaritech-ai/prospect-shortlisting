@@ -2,6 +2,7 @@ import type { MockAIRow, AIVerdict } from '../../../lib/useAppData'
 import { VerdictBadge } from './VerdictBadge'
 import { QuickLabelPicker } from './QuickLabelPicker'
 import { IconExternalLink } from '../../ui/icons'
+import { SortableHeader } from '../../ui/SortableHeader'
 import { Maximize2 } from 'lucide-react'
 
 function relTime(iso: string): string {
@@ -19,11 +20,14 @@ interface AIReviewTableProps {
   onToggleAll: () => void
   onLabelChange: (id: string, verdict: AIVerdict) => void
   onViewReasoning: (row: MockAIRow) => void
+  sortBy: string
+  sortDir: 'asc' | 'desc'
+  onSort: (field: string) => void
   hasActiveFilter?: boolean
   onClearFilter?: () => void
 }
 
-export function AIReviewTable({ rows, selectedIds, onToggleRow, onToggleAll, onLabelChange, onViewReasoning, hasActiveFilter, onClearFilter }: AIReviewTableProps) {
+export function AIReviewTable({ rows, selectedIds, onToggleRow, onToggleAll, onLabelChange, onViewReasoning, sortBy, sortDir, onSort, hasActiveFilter, onClearFilter }: AIReviewTableProps) {
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.id))
 
   return (
@@ -35,12 +39,12 @@ export function AIReviewTable({ rows, selectedIds, onToggleRow, onToggleAll, onL
               <th style={{ width: '2.5rem', paddingLeft: '1rem' }}>
                 <input type="checkbox" checked={allSelected} onChange={onToggleAll} style={{ accentColor: 'var(--s2)' }} />
               </th>
-              <th>Domain</th>
-              <th style={{ width: '100px' }}>Verdict</th>
-              <th style={{ width: '76px' }}>Confidence</th>
-              <th style={{ width: '48px', textAlign: 'center' }}>Pages</th>
+              <SortableHeader label="Domain" field="domain" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Verdict" field="verdict" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '100px' }} />
+              <SortableHeader label="Confidence" field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '76px' }} />
+              <SortableHeader label="Pages" field="pages" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '48px', textAlign: 'center' }} />
               <th>Reasoning</th>
-              <th style={{ width: '80px' }}>Reviewed</th>
+              <SortableHeader label="Reviewed" field="reviewed" sortBy={sortBy} sortDir={sortDir} onSort={onSort} style={{ width: '80px' }} />
               <th style={{ width: '200px' }}>Override</th>
             </tr>
           </thead>

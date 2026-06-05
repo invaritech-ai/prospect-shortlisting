@@ -14,7 +14,7 @@ function summaryFromCampaign(c: CampaignRead): CampaignPipelineSummary {
     classified: c.classified_count,
     possible: c.possible_count,
     contactsFound: c.contact_count,
-    validEmails: 0,
+    validEmails: c.valid_email_count,
     lastActivity: c.updated_at,
   }
 }
