@@ -1,14 +1,12 @@
 # Repository mental model: Prospect_shortlisting
 
-> **Staleness notice (2026-05-13).** This doc still describes the **old** architecture in parts. Two things to keep in mind:
-> 1. **Queue runtime:** the worker layer migrated from **Celery + Redis** to **Procrastinate** (PostgreSQL LISTEN/NOTIFY). The Celery/Redis/Beat boxes in the architecture diagram and the `app/celery_app.py` / `app/tasks/` references below are historical. Current truth is `app/queue.py` and `app/jobs/`.
-> 2. **Pipeline stages:** the pipeline is now **S1–S5**, not S1–S4. S3 (`ContactFetchJob`) absorbed the former S4 email-reveal step — the same job now fetches contacts, filters by title rules, and reveals emails inline. The legacy `ContactRevealJob` table still exists but is never written. S5 = ZeroBounce validation (`ContactVerifyJob`).
+> **Staleness notice (2026-06-05).** This doc still describes the **old** data model in parts. Current queue truth is `app/queue.py` plus `app/jobs/`: Procrastinate uses PostgreSQL LISTEN/NOTIFY, with no Redis broker. Current pipeline truth is S1 scraping, S2 AI review, S3 contacts/email fetch, S4 ZeroBounce validation, and S5 future outreach/export work.
 >
 > For an authoritative architecture map use `README.md` and `CLAUDE.md`.
 
 ## What problem it solves
 
-Operators ingest batches of company websites (from spreadsheet uploads), **crawl** key pages (home / about / product), **classify** each company with configurable prompts and models (via OpenRouter), **review** results in a UI (thumbs, manual labels, exports), and **enrich** with prospect contacts (Snov + optional ZeroBounce). The system is built for **async scale**: long-running scrapes and LLM calls run out-of-band on Celery; state lives in **PostgreSQL** (SQLModel/Alembic).
+Operators ingest batches of company websites (from spreadsheet uploads), **crawl** key pages (home / about / product), **classify** each company with configurable prompts and models (via OpenRouter), **review** results in a UI (thumbs, manual labels, exports), and **enrich** with prospect contacts. The system is built for **async scale**: long-running scrapes, LLM calls, contact fetching, and email validation run out-of-band on Procrastinate workers; state and queue jobs live in **PostgreSQL** (SQLModel/Alembic).
 
 ## High-level architecture
 
@@ -23,23 +21,22 @@ flowchart LR
   subgraph api [FastAPI app/main.py]
     Routes[v1 routes]
   end
-  subgraph workers [Celery]
+  subgraph workers [Procrastinate workers]
     scrapeQ[scrape queue]
-    analysisQ[analysis queue]
-    contactsQ[contacts queue]
-    beatQ[beat queue]
+    analysisQ[ai_decision queue]
+    contactsQ[contact_fetch queue]
+    validationQ[validation queue]
   end
   ui --> Routes
   Routes --> PG[(PostgreSQL)]
-  Routes --> Redis[(Redis broker)]
-  Redis --> workers
+  Routes --> workers
   workers --> PG
 ```
 
 - **Backend**: [app/main.py](../app/main.py) — FastAPI app, CORS, `/v1/health/live` and `/v1/health/ready`, routers for uploads, companies, scrape jobs/actions, runs, analysis, prompts, contacts, stats, queue admin.
-- **Workers**: [app/celery_app.py](../app/celery_app.py) — Redis broker, separate queues (`scrape`, `analysis`, `contacts`, `beat`), late ack, visibility timeout tuned for long scrapes, Beat every 10m for stuck-job reconciliation.
+- **Workers**: [app/queue.py](../app/queue.py) — Procrastinate app with queue-specific workers for `scrape`, `ai_decision`, `contact_fetch`, and `validation`.
 - **Frontend**: [apps/web](../apps/web) — Vite + React; [apps/web/src/App.tsx](../apps/web/src/App.tsx) orchestrates pipeline stage views, full pipeline, dashboard, campaigns, operations log, queue history, settings, and panels (markdown preview, prompts, analysis detail, company review, scrape diagnostics).
-- **Config**: [app/core/config.py](../app/core/config.py) — `PS_*` env vars: DB, Redis, OpenRouter keys, Browserless CDP URL, Snov, ZeroBounce, timeouts/models.
+- **Config**: [app/core/config.py](../app/core/config.py) — `PS_*` env vars: DB, CORS, OpenRouter keys, provider credentials, encryption key, scrape timeouts, and model settings.
 
 ## Core data pipeline (domain model)
 
@@ -72,7 +69,7 @@ Design intent for contacts is documented in [docs/plans/2026-03-20-contact-pipel
 - **OpenRouter** (OpenAI-compatible client) for classification and markdown-related model calls.
 - **Playwright / Scrapling / curl-cffi / Browserforge** for fetching; optional **Browserless** remote Chrome.
 - **Snov.io** and **ZeroBounce** for contact discovery and email status ([docs/snov-api-reference.md](snov-api-reference.md), [docs/zerobounce-api-reference.md](zerobounce-api-reference.md)).
-- **Docker Compose** ([docker-compose.yml](../docker-compose.yml)) runs API + worker; Redis and DB are expected externally per [README.md](../README.md).
+- **Docker Compose** ([docker-compose.yml](../docker-compose.yml)) runs the backend API plus queue-specific Procrastinate workers. Postgres is expected externally per [README.md](../README.md); Redis is not used.
 
 ## How to use this model when changing code
 

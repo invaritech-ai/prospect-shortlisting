@@ -18,6 +18,12 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
+# The backend image is shared by API and workers in docker-compose.yml.
+# Install browser binaries/deps here so worker-scrape has its local Scrapling /
+# Playwright fallback available in production.
+RUN uv run playwright install --with-deps chromium \
+    && uv run patchright install chromium
+
 COPY . .
 
 EXPOSE 8000

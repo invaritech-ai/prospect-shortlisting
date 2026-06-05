@@ -18,6 +18,7 @@ Named queues used by the current local pipeline:
 | `scrape` | `worker-scrape` | 2 | Local browser resources |
 | `ai_decision` | `worker-ai` | 2 | OpenRouter RPM |
 | `contact_fetch` | `worker-provider` | 1 | Apollo / Snov req/min |
+| `validation` | `worker-validation` | 1 | ZeroBounce req/sec |
 
 ---
 
@@ -34,11 +35,11 @@ Named queues used by the current local pipeline:
 ```bash
 cp .env.example .env
 # Required keys in .env:
-# DATABASE_URL=postgresql://prospect:prospect@localhost:5432/prospect
-# OPENROUTER_API_KEY=...
-# SNOV_CLIENT_ID / SNOV_CLIENT_SECRET
-# APOLLO_API_KEY
-# ZEROBOUNCE_API_KEY
+# PS_DATABASE_URL=postgresql+psycopg://prospect:prospect@localhost:5432/prospect
+# PS_OPENROUTER_API_KEY=...
+# PS_SNOV_CLIENT_ID / PS_SNOV_CLIENT_SECRET
+# PS_APOLLO_API_KEY
+# PS_ZEROBOUNCE_API_KEY
 ```
 
 ### 2. Install dependencies
@@ -91,6 +92,11 @@ Use the restart wrapper so a transient DB blip doesn't leave the worker permanen
 ./scripts/run_worker.sh contact_fetch 1
 ```
 
+**S4 — Email Verification:**
+```bash
+./scripts/run_worker.sh validation 1
+```
+
 `run_worker.sh` is a thin `while true` loop that restarts the process after a 5 s delay on any exit. In production the same role is played by Docker's `restart: unless-stopped` policy.
 
 The scrape worker uses static fetches first, then curl_cffi impersonation, then local Scrapling browser fallback. The browser fallback is local-only; `PS_BROWSERLESS_URL` is not used by the scraper.
@@ -111,63 +117,63 @@ curl -s -X POST http://localhost:8000/v1/scrape-jobs \
 curl -s http://localhost:8000/v1/scrape-jobs/<id> | jq '.state, .terminal_state'
 
 # Check Procrastinate's own table
-psql $DATABASE_URL -c \
+psql "$PS_DATABASE_URL" -c \
   "SELECT id, task_name, queue, status, attempts FROM procrastinate_jobs ORDER BY id DESC LIMIT 5"
 ```
 
 ---
 
-## Running with Docker (full stack)
+## Docker / Coolify deployment
 
-No local Python or Node needed. Everything runs in containers.
+Frontend and backend are deployed separately.
 
-### 1. Environment
+### Backend compose
 
-```bash
-cp .env.example .env
-# Set the same keys as above. DATABASE_URL is managed by docker-compose;
-# leave it unset or set to: postgresql://prospect:prospect@postgres:5432/prospect
-```
-
-### 2. Start all services
-
-```bash
-docker compose up --build -d
-```
-
-This starts:
+Use the root [docker-compose.yml](docker-compose.yml) for the backend app in
+Coolify. It starts:
 
 | Service | Role |
 |---|---|
-| `postgres` | Database (port 5432, internal only) |
-| `api` | FastAPI on port 8000. Runs `alembic upgrade head` and `procrastinate schema --apply` on startup. |
+| `api` | FastAPI on port 8000. Runs Alembic and Procrastinate schema setup before uvicorn. |
 | `worker-scrape` | Procrastinate worker, queue=`scrape`, concurrency=2 |
 | `worker-ai` | Procrastinate worker, queue=`ai_decision`, concurrency=2 |
 | `worker-provider` | Procrastinate worker, queue=`contact_fetch`, concurrency=1 |
+| `worker-validation` | Procrastinate worker, queue=`validation`, concurrency=1 |
 
-### 3. Check health
+Postgres is external to this compose file. In Coolify, attach a managed
+Postgres resource or provide a Postgres URL yourself. There is no Redis broker;
+Procrastinate uses Postgres LISTEN/NOTIFY.
 
-```bash
-docker compose ps
-curl -s http://localhost:8000/v1/health/live
-```
-
-### 4. View worker logs
+Backend env:
 
 ```bash
-docker compose logs -f worker-scrape
-docker compose logs -f worker-ai
-docker compose logs -f worker-provider
+PS_DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:PORT/DBNAME
+PS_CORS_ALLOW_ORIGINS=https://your-frontend-domain.example
+PS_SETTINGS_ENCRYPTION_KEY=...
+PS_OPENROUTER_API_KEY=...
+PS_SNOV_CLIENT_ID=...
+PS_SNOV_CLIENT_SECRET=...
+PS_APOLLO_API_KEY=...
+PS_ZEROBOUNCE_API_KEY=...
 ```
 
-### 5. Frontend (optional, development only)
+Local backend container smoke test:
 
 ```bash
-docker compose --profile ui up -d web
-# → http://localhost:5173
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+curl -s http://127.0.0.1:8001/v1/health/live
 ```
 
-Or run the frontend on the host directly (`npm run dev`) pointing at `http://localhost:8000`.
+### Frontend image
+
+Deploy the frontend as a separate Coolify Dockerfile app:
+
+- Dockerfile: `apps/web/Dockerfile`
+- Build context: `apps/web`
+- Build arg: `VITE_API_BASE_URL=https://your-backend-domain.example`
+
+If the frontend and backend are behind the same reverse proxy origin, leave
+`VITE_API_BASE_URL` empty so browser calls use relative `/v1/...` URLs.
 
 ---
 
@@ -197,9 +203,11 @@ uv run pytest tests/test_procrastinate_queue_architecture.py -q
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `OPENROUTER_API_KEY` | Yes | AI classification (S2) |
-| `SNOV_CLIENT_ID` / `SNOV_CLIENT_SECRET` | For S3/S4 | Contact discovery + email reveal |
-| `APOLLO_API_KEY` | For S3 | Contact discovery |
-| `ZEROBOUNCE_API_KEY` | For S5 | Email validation |
+| `PS_DATABASE_URL` | Yes | PostgreSQL connection string |
+| `PS_CORS_ALLOW_ORIGINS` | Yes in production | Comma-separated frontend origins allowed to call the API |
+| `PS_SETTINGS_ENCRYPTION_KEY` | Recommended | Fernet key for encrypted DB-backed integration settings |
+| `PS_OPENROUTER_API_KEY` | Yes | AI classification (S2) |
+| `PS_SNOV_CLIENT_ID` / `PS_SNOV_CLIENT_SECRET` | For S3 | Contact discovery fallback |
+| `PS_APOLLO_API_KEY` | For S3 | Contact discovery primary provider |
+| `PS_ZEROBOUNCE_API_KEY` | For S4 | Email validation |
 | `PS_WORKER_PROCESS` | Workers only | Set to `1` to switch SQLAlchemy to NullPool (set automatically by `run_worker.sh`) |

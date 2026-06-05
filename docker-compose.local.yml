@@ -4,7 +4,10 @@
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 #
 # Logs:
-#   docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f worker
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f worker-scrape
+#
+# Frontend local dev runs separately:
+#   cd apps/web && npm run dev
 
 services:
   api:
