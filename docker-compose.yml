@@ -31,23 +31,12 @@ services:
         image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
         env_file:
             - .env
-        environment:
-            PS_WORKER_PROCESS: "1"
-            PS_WORKER_CONCURRENCY: "2"
         depends_on:
             api:
                 condition: service_healthy
         command:
-            - "uv"
-            - "run"
-            - "python"
-            - "-m"
-            - "procrastinate"
-            - "--app=app.queue.app"
-            - "worker"
-            - "-q"
+            - "./scripts/run_worker.sh"
             - "scrape"
-            - "-c"
             - "2"
         restart: unless-stopped
 
@@ -55,23 +44,12 @@ services:
         image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
         env_file:
             - .env
-        environment:
-            PS_WORKER_PROCESS: "1"
-            PS_WORKER_CONCURRENCY: "2"
         depends_on:
             api:
                 condition: service_healthy
         command:
-            - "uv"
-            - "run"
-            - "python"
-            - "-m"
-            - "procrastinate"
-            - "--app=app.queue.app"
-            - "worker"
-            - "-q"
+            - "./scripts/run_worker.sh"
             - "ai_decision"
-            - "-c"
             - "2"
         restart: unless-stopped
 
@@ -79,23 +57,12 @@ services:
         image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
         env_file:
             - .env
-        environment:
-            PS_WORKER_PROCESS: "1"
-            PS_WORKER_CONCURRENCY: "1"
         depends_on:
             api:
                 condition: service_healthy
         command:
-            - "uv"
-            - "run"
-            - "python"
-            - "-m"
-            - "procrastinate"
-            - "--app=app.queue.app"
-            - "worker"
-            - "-q"
+            - "./scripts/run_worker.sh"
             - "contact_fetch"
-            - "-c"
             - "1"
         restart: unless-stopped
 
@@ -103,22 +70,11 @@ services:
         image: prospect-shortlisting-backend:${IMAGE_TAG:-latest}
         env_file:
             - .env
-        environment:
-            PS_WORKER_PROCESS: "1"
-            PS_WORKER_CONCURRENCY: "1"
         depends_on:
             api:
                 condition: service_healthy
         command:
-            - "uv"
-            - "run"
-            - "python"
-            - "-m"
-            - "procrastinate"
-            - "--app=app.queue.app"
-            - "worker"
-            - "-q"
+            - "./scripts/run_worker.sh"
             - "validation"
-            - "-c"
             - "1"
         restart: unless-stopped

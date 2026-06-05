@@ -97,7 +97,7 @@ Use the restart wrapper so a transient DB blip doesn't leave the worker permanen
 ./scripts/run_worker.sh validation 1
 ```
 
-`run_worker.sh` is a thin `while true` loop that restarts the process after a 5 s delay on any exit. In production the same role is played by Docker's `restart: unless-stopped` policy.
+`run_worker.sh` is a thin `while true` loop that restarts the process after a 5 s delay on any exit. The backend compose runs the same wrapper in each worker container; Docker's `restart: unless-stopped` only covers container-level failures.
 
 The scrape worker uses static fetches first, then curl_cffi impersonation, then local Scrapling browser fallback. The browser fallback is local-only; `PS_BROWSERLESS_URL` is not used by the scraper.
 
@@ -135,10 +135,10 @@ Coolify. It starts:
 | Service | Role |
 |---|---|
 | `api` | FastAPI on port 8000. Runs Alembic and Procrastinate schema setup before uvicorn. |
-| `worker-scrape` | Procrastinate worker, queue=`scrape`, concurrency=2 |
-| `worker-ai` | Procrastinate worker, queue=`ai_decision`, concurrency=2 |
-| `worker-provider` | Procrastinate worker, queue=`contact_fetch`, concurrency=1 |
-| `worker-validation` | Procrastinate worker, queue=`validation`, concurrency=1 |
+| `worker-scrape` | `./scripts/run_worker.sh scrape 2` |
+| `worker-ai` | `./scripts/run_worker.sh ai_decision 2` |
+| `worker-provider` | `./scripts/run_worker.sh contact_fetch 1` |
+| `worker-validation` | `./scripts/run_worker.sh validation 1` |
 
 Postgres is external to this compose file. In Coolify, attach a managed
 Postgres resource or provide a Postgres URL yourself. There is no Redis broker;
