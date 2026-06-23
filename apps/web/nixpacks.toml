@@ -18,7 +18,7 @@ NODE_VERSION = "22.12.1"
 nixPkgs = ["nodejs_22"]
 
 [phases.install]
-cmds = ["npm ci"]
+cmds = ["corepack enable && pnpm install --frozen-lockfile"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["pnpm build"]

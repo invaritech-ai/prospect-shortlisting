@@ -6,8 +6,8 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
 # Install dependencies first to maximise layer caching across code changes.
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 
 # Copy the rest of the web source and build the production bundle.
 COPY . .
@@ -17,7 +17,7 @@ COPY . .
 ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
-RUN npm run build
+RUN pnpm build
 
 
 # ─── Serve stage ─────────────────────────────────────────────────────────────

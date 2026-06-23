@@ -22,7 +22,7 @@ const TOOLS_ITEMS: SheetItem[] = [
 const HOME_VIEWS:     ActiveView[] = ['dashboard', 'campaigns']
 const PIPELINE_VIEWS: ActiveView[] = ['s1-scraping', 's2-ai', 's3-contacts', 's4-validation']
 const TOOLS_VIEWS:    ActiveView[] = ['full-pipeline']
-const CONFIG_VIEWS:   ActiveView[] = ['settings', 'operations', 'queue-history']
+const CONFIG_VIEWS:   ActiveView[] = ['settings', 'operations']
 
 type OpenSheet = 'home' | 'pipeline' | 'tools' | null
 

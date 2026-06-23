@@ -11,15 +11,9 @@ function testPath(path: string): string {
   return fileURLToPath(new URL(path, import.meta.url))
 }
 
-test('obsolete validation mocks are removed from mock data exports', () => {
-  const mockData = readSource('src/lib/mockData.ts')
-  const appData = readSource('src/lib/useAppData.ts')
-
-  for (const source of [mockData, appData]) {
-    assert.doesNotMatch(source, /\bMOCK_VALIDATION_ROWS\b/)
-    assert.doesNotMatch(source, /\bMOCK_VALIDATION_STATS\b/)
-    assert.doesNotMatch(source, /\bMockValidationRow\b/)
-  }
+test('production mock-data fallback modules are removed', () => {
+  assert.equal(existsSync(testPath('../src/lib/mockData.ts')), false)
+  assert.equal(existsSync(testPath('../src/lib/useAppData.ts')), false)
 })
 
 test('obsolete validation and reveal frontend types are removed', () => {
@@ -48,12 +42,8 @@ test('pipeline mapping no longer exposes standalone verification filters', () =>
   assert.doesNotMatch(pipelineMappings, /\bS4VerifFilter\b/)
 })
 
-test('queue history uses S4 as the validation queue stage', () => {
-  const queueHistory = readSource('src/components/views/QueueHistoryView.tsx')
-
-  assert.match(queueHistory, /type StageFilter = 'all' \| 's1' \| 's2' \| 's3' \| 's4'/)
-  assert.match(queueHistory, /s4:\s*'S4 · Verify'/)
-  assert.doesNotMatch(queueHistory, /s5:\s*'S4/)
+test('queue history UI is removed until the backend exists', () => {
+  assert.equal(existsSync(testPath('../src/components/views/QueueHistoryView.tsx')), false)
 })
 
 test('standalone reveal view test is deleted and validation comment is current', () => {

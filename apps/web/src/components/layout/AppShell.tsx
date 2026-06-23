@@ -8,7 +8,7 @@ import { MobileHeader }   from './header/MobileHeader'
 import { DesktopHeader }  from './header/DesktopHeader'
 import {
   IconBuilding, IconGlobe, IconChart, IconPulse,
-  IconUsers, IconTimeline, IconSliders, IconCheck, IconCog, IconHistory, IconUpload,
+  IconUsers, IconTimeline, IconSliders, IconCheck, IconCog, IconUpload,
 } from '../ui/icons'
 
 const STAGE_COLOR: Partial<Record<ActiveView, string>> = {
@@ -29,7 +29,6 @@ const VIEW_META: Record<ActiveView, { label: string; Icon: React.FC<{ size?: num
   's2-ai':         { label: 'AI Review',         Icon: IconChart    },
   's3-contacts':   { label: 'Contacts & Email',  Icon: IconUsers    },
   's4-validation': { label: 'Validation',        Icon: IconCheck    },
-  'queue-history': { label: 'Queue History',     Icon: IconHistory  },
 }
 
 const SIDEBAR_COLLAPSED_KEY = 'ps:sidebar-collapsed'

@@ -46,7 +46,6 @@ import { ValidationView } from './components/views/validation/ValidationView'
 import { CampaignsView }  from './components/views/campaigns/CampaignsView'
 import { ImportView }     from './components/views/import/ImportView'
 import { SettingsView }   from './components/views/settings/SettingsView'
-import { QueueHistoryView } from './components/views/QueueHistoryView'
 import { LoginView }      from './components/views/auth/LoginView'
 
 // UI
@@ -596,7 +595,7 @@ function App() {
     return <LoginView isSubmitting={isSigningIn} error={authError} onLogin={handleLogin} />
   }
 
-  const requiresCampaignScope = activeView !== 'dashboard' && activeView !== 'campaigns' && activeView !== 'uploads' && activeView !== 'settings' && activeView !== 'queue-history'
+  const requiresCampaignScope = activeView !== 'dashboard' && activeView !== 'campaigns' && activeView !== 'uploads' && activeView !== 'settings'
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -661,10 +660,6 @@ function App() {
         )}
 
         {activeView === 'settings' && <SettingsView />}
-
-        {activeView === 'queue-history' && (
-          <QueueHistoryView campaignId={selectedCampaignId} />
-        )}
 
         {selectedCampaignId && activeView === 's1-scraping' && (
           <ScrapingView

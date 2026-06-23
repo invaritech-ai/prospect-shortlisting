@@ -1,4 +1,4 @@
-import type { AIVerdict } from '../../../lib/useAppData'
+import type { AIVerdict } from '../../../lib/types'
 
 const VERDICT_CONFIG: Record<AIVerdict, { label: string; color: string; bg: string }> = {
   Unclassified: { label: 'Unclassified', color: 'var(--oc-muted)', bg: 'var(--oc-bg)' },

@@ -1,4 +1,4 @@
-import type { MockAIRow, AIVerdict } from '../../../lib/useAppData'
+import type { AIReviewRow, AIVerdict } from '../../../lib/types'
 import { VerdictBadge } from './VerdictBadge'
 import { QuickLabelPicker } from './QuickLabelPicker'
 import { Maximize2 } from 'lucide-react'
@@ -12,11 +12,11 @@ function relTime(iso: string): string {
 }
 
 interface AIReviewCardsProps {
-  rows: MockAIRow[]
+  rows: AIReviewRow[]
   selectedIds: Set<string>
   onToggleRow: (id: string) => void
   onLabelChange: (id: string, verdict: AIVerdict) => void
-  onViewReasoning: (row: MockAIRow) => void
+  onViewReasoning: (row: AIReviewRow) => void
 }
 
 export function AIReviewCards({ rows, selectedIds, onToggleRow, onLabelChange, onViewReasoning }: AIReviewCardsProps) {

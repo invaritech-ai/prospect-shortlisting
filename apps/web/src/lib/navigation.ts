@@ -9,7 +9,6 @@ export type ActiveView =
   | 's2-ai'
   | 's3-contacts'
   | 's4-validation'
-  | 'queue-history'
 
 interface AppRouteState {
   view: ActiveView
@@ -29,7 +28,6 @@ const ACTIVE_VIEW_VALUES: ActiveView[] = [
   's2-ai',
   's3-contacts',
   's4-validation',
-  'queue-history',
 ]
 
 function isActiveView(value: string | null): value is ActiveView {

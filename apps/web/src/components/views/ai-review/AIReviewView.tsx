@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MOCK_AI_ROWS, MOCK_AI_STATS, MOCK_STATS } from '../../../lib/useAppData'
-import type { AIVerdict, MockAIRow } from '../../../lib/useAppData'
 import type { TableSortState } from '../../../lib/tableSort'
-import type { AiReviewJobRead, AiReviewJobStatusRead, AiReviewLabelCounts, DomainLetterCounts, StatsResponse } from '../../../lib/types'
+import type { AIReviewRow, AIVerdict, AiReviewJobRead, AiReviewJobStatusRead, AiReviewLabelCounts, DomainLetterCounts, StatsResponse } from '../../../lib/types'
 import { createAiReviewJob, getActiveAiReviewJob, getAiReviewJobStatus, getAiReviewLabelCounts, getAiReviewLetterCounts, listAiReviewDomains } from '../../../lib/api'
 import { nextTableSort } from '../../../lib/tableSort'
 import { parseApiError } from '../../../lib/utils'
@@ -27,9 +25,9 @@ interface AIReviewViewProps {
 }
 
 export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, onUnclassifiedCountChange }: AIReviewViewProps) {
-  const stats = rawStats ?? MOCK_STATS
+  const stats = rawStats
 
-  const [rows, setRows]             = useState<MockAIRow[]>(MOCK_AI_ROWS)
+  const [rows, setRows]             = useState<AIReviewRow[]>([])
   const [domainTotal, setDomainTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [letterFilter, setLetterFilter] = useState<string>('all')
@@ -43,7 +41,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
   const [search, setSearch]         = useState('')
   const [selected, setSelected]     = useState<Set<string>>(new Set())
   const [allMatchingSelected, setAllMatchingSelected] = useState(false)
-  const [reasoningRow, setReasoningRow] = useState<MockAIRow | null>(null)
+  const [reasoningRow, setReasoningRow] = useState<AIReviewRow | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [creatingJob, setCreatingJob] = useState(false)
@@ -84,7 +82,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
           sortDir: sort.sortBy ? sort.sortDir : undefined,
         })
         if (cancelled) return
-        const mapped: MockAIRow[] = data.items.map((item) => ({
+        const mapped: AIReviewRow[] = data.items.map((item) => ({
           id: item.domain_id,
           domain: item.domain,
           url: item.normalized_url || item.raw_url,
@@ -207,10 +205,10 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
   }, [activeJob])
 
   const aiStats = [
-    { label: 'possible', value: labelCounts?.possible ?? rows.filter((r) => r.verdict === 'Possible').length, color: 'var(--s2)', live: Boolean(activeJob) || (stats.analysis?.running ?? 0) > 0 },
+    { label: 'possible', value: labelCounts?.possible ?? rows.filter((r) => r.verdict === 'Possible').length, color: 'var(--s2)', live: Boolean(activeJob) || (stats?.analysis?.running ?? 0) > 0 },
     { label: 'unknown',  value: labelCounts?.unknown ?? rows.filter((r) => r.verdict === 'Unknown').length,  color: 'var(--oc-warn-text)' },
     { label: 'crap',     value: labelCounts?.crap ?? rows.filter((r) => r.verdict === 'Crap').length,     color: 'var(--oc-fail-text)' },
-    { label: 'unclassified', value: labelCounts?.unclassified ?? stats.analysis?.queued ?? MOCK_AI_STATS.running },
+    { label: 'unclassified', value: labelCounts?.unclassified ?? stats?.analysis?.queued ?? 0 },
   ]
 
   const visibleRows = useMemo(() => rows, [rows])
@@ -257,7 +255,7 @@ export function AIReviewView({ stats: rawStats, campaignId, onActiveJobChange, o
           : (labelCounts?.crap ?? 0)
   const activeDone = activeJobStatus ? activeJobStatus.succeeded + activeJobStatus.failed : 0
   const activeSelected = activeJobStatus?.selected ?? activeJob?.selected_domain_count ?? 0
-  const etaSecs = stats.analysis?.eta_seconds ?? null
+  const etaSecs = stats?.analysis?.eta_seconds ?? null
   const totalPages = Math.ceil(domainTotal / PAGE_SIZE)
 
   function goToPage(nextPage: number) {

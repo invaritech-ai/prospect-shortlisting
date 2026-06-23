@@ -3,7 +3,6 @@
 B2B prospect shortlisting tool. Scrapes company websites, classifies them with AI, discovers and reveals contact emails, and validates them — all driven by a PostgreSQL-backed async queue (Procrastinate).
 
 Architecture overview: [docs/repository-mental-model.md](docs/repository-mental-model.md)
-State vocabulary spec: [docs/superpowers/plans/2026-04-29-state-vocabulary-spec.md](docs/superpowers/plans/2026-04-29-state-vocabulary-spec.md)
 
 ---
 
@@ -27,7 +26,7 @@ Named queues used by the current local pipeline:
 ### Prerequisites
 
 - Python 3.12+ with `uv`
-- Node 22+
+- Node 22+ with `pnpm`
 - PostgreSQL 16 running locally (or via Docker)
 
 ### 1. Environment
@@ -46,7 +45,7 @@ cp .env.example .env
 
 ```bash
 uv sync
-cd apps/web && npm ci && cd ../..
+cd apps/web && pnpm install && cd ../..
 ```
 
 ### 3. Apply DB migrations
@@ -69,7 +68,7 @@ Health check: `curl http://localhost:8000/v1/health/live`
 ### 5. Start the frontend
 
 ```bash
-cd apps/web && npm run dev
+cd apps/web && pnpm dev
 # → http://localhost:5173
 ```
 

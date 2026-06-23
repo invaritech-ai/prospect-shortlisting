@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { MockAIRow } from '../../../lib/useAppData'
-import type { AiReviewDomainAnalysis } from '../../../lib/types'
+import type { AIReviewRow, AiReviewDomainAnalysis } from '../../../lib/types'
 import { getAiReviewDomainAnalysis } from '../../../lib/api'
 import { Drawer } from '../../ui/Drawer'
 import { VerdictBadge } from './VerdictBadge'
 
 interface AIReasoningDrawerProps {
-  row: MockAIRow | null
+  row: AIReviewRow | null
   campaignId: string
   onClose: () => void
 }
@@ -58,7 +57,7 @@ function toPercent(value: number | null | undefined): number {
   return Math.round(value * 100)
 }
 
-function toVerdictLabel(value: string | null | undefined): MockAIRow['verdict'] {
+function toVerdictLabel(value: string | null | undefined): AIReviewRow['verdict'] {
   const normalized = (value ?? '').trim().toLowerCase()
   if (!normalized) return 'Unclassified'
   if (normalized === 'possible') return 'Possible'

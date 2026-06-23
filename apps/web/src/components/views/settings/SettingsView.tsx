@@ -4,7 +4,6 @@ import {
   testIntegrationProvider,
   updateIntegrationProvider,
 } from '../../../lib/api'
-import { MOCK_INTEGRATIONS_STATUS } from '../../../lib/useAppData'
 import type {
   IntegrationFieldStatus,
   IntegrationProviderId,
@@ -85,20 +84,23 @@ function sourcePill(fs: IntegrationFieldStatus | undefined) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function SettingsView() {
-  const [status, setStatus]         = useState<IntegrationsStatusResponse | null>(MOCK_INTEGRATIONS_STATUS)
+  const [status, setStatus]         = useState<IntegrationsStatusResponse | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [loadError, setLoadError]   = useState('')
   const [editors, setEditors]       = useState<Record<IntegrationProviderId, EditorState>>(emptyEditors)
 
-  const load = async (_mode: 'initial' | 'refresh' = 'initial') => {
+  const load = async () => {
     setIsRefreshing(true)
     setLoadError('')
     try { setStatus(await getIntegrationSettings()) }
-    catch { setStatus(MOCK_INTEGRATIONS_STATUS) }
+    catch {
+      setStatus(null)
+      setLoadError('Could not load integration settings.')
+    }
     finally { setIsRefreshing(false) }
   }
 
-  useEffect(() => { void load('initial') }, [])
+  useEffect(() => { void load() }, [])
 
   const providers = useMemo(() =>
     PROVIDERS.map((def) => ({ def, providerStatus: status?.providers.find((p) => p.provider === def.provider) })),
@@ -167,7 +169,7 @@ export function SettingsView() {
           )}
           <button
             type="button"
-            onClick={() => void load('refresh')}
+            onClick={() => void load()}
             disabled={isRefreshing}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.375rem',
@@ -184,7 +186,7 @@ export function SettingsView() {
       </div>
 
       {/* Alerts */}
-      {!status?.store_available && (
+      {status && !status.store_available && (
         <div style={{ padding: '0.875rem 1rem', borderRadius: '0.75rem', border: '1.5px solid var(--oc-warn-bg)', background: 'var(--oc-warn-bg)', fontSize: '0.875rem', color: 'var(--oc-warn-text)' }}>
           DB-backed secrets are disabled until <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>PS_SETTINGS_ENCRYPTION_KEY</code> is configured on the backend. Env fallback values can still be tested.
         </div>

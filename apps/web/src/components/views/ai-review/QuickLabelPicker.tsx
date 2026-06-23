@@ -1,4 +1,4 @@
-import type { AIVerdict } from '../../../lib/useAppData'
+import type { AIVerdict } from '../../../lib/types'
 
 const OPTIONS: { verdict: AIVerdict; color: string; bg: string; label: string }[] = [
   { verdict: 'Possible', color: 'var(--s2-text)', bg: 'var(--s2-bg)',        label: 'Possible' },

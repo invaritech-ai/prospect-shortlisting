@@ -31,13 +31,13 @@ uv run mypy app                                      # type check
 
 Tests require Postgres — set `PS_TEST_DATABASE_URL` (or `TEST_DATABASE_URL`) to a disposable DB. There is no SQLite fallback.
 
-Frontend (`apps/web`, Node 22+):
+Frontend (`apps/web`, Node 22+; pnpm only):
 
 ```bash
-cd apps/web && npm ci
-npm run dev          # Vite on :5173, expects API at :8000
-npm run build        # tsc -b && vite build
-npm run lint
+cd apps/web && pnpm install
+pnpm dev          # Vite on :5173, expects API at :8000
+pnpm build        # tsc -b && vite build
+pnpm lint
 ```
 
 Docker stack: `docker compose up --build -d` (postgres, api, worker-scrape, worker-ai, worker-provider). API container runs `alembic upgrade head` and `procrastinate schema --apply` on startup.
@@ -66,10 +66,10 @@ The scraper does **not** use `PS_BROWSERLESS_URL`; the browser fallback is local
 - `app/api/schemas/` — Pydantic request/response models.
 - `app/services/` — orchestration & business logic (this is where work happens; routes call services).
 - `app/jobs/` — Procrastinate task definitions; jobs call services, not the other way around.
-- `app/models/` — SQLModel tables. Domain model is `app/models/pipeline.py`; scrape-specific tables in `app/models/scrape.py`; settings/secrets in `app/models/settings.py`.
+- `app/models/` — SQLModel tables split by domain: base helpers, core upload/campaign/domain tables, scrape tables, classification tables, contacts tables, settings/secrets.
 - `app/db/`, `app/core/config.py` — DB session and `PS_*` env settings.
 
-### Domain model (key tables, `app/models/pipeline.py`)
+### Domain model (key tables)
 
 `Upload` → `Company` → `CrawlJob`/`CrawlArtifact` → `AnalysisJob`/`ClassificationResult` → `ContactFetchJob` → `DiscoveredContact`/`ProspectContact`. `JobEvent` is the cross-cutting audit log. `AnalysisJob` and `ContactFetchJob` use `lock_token` + `lock_expires_at` for idempotent worker claims; `ClassificationResult.input_hash` is the cache key for skip-if-unchanged. Predicted labels enum: `Possible`, `Crap`, `Unknown`.
 
@@ -77,7 +77,7 @@ Campaign-scoped data flows: contacts are filtered by active status and freshness
 
 ### Frontend
 
-`apps/web/src/App.tsx` is the orchestrator for stage views (S1–S4 panels), CampaignsView, OperationsLogView, QueueHistoryView, DashboardView. API client and types live in `apps/web/src/lib/api.ts` and `types.ts` — when changing a backend route, update both. Production deploy is **Dockerfile-based** (`apps/web/Dockerfile` → nginx); the `nixpacks.toml` is kept only for reference and must not be used (broke prod 2026-04-19 due to missing cache-header control). `index.html` is `no-store`; `/assets/*` is immutable.
+`apps/web/src/App.tsx` is the orchestrator for stage views (S1–S4 panels), CampaignsView, DashboardView, uploads, settings, and auth. API client and types live in `apps/web/src/lib/api.ts` and `types.ts` — when changing a backend route, update both. Production deploy is **Dockerfile-based** (`apps/web/Dockerfile` → nginx); the `nixpacks.toml` is kept only for reference and must not be used (broke prod 2026-04-19 due to missing cache-header control). `index.html` is `no-store`; `/assets/*` is immutable.
 
 ### Environment
 

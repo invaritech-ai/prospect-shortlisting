@@ -1,12 +1,11 @@
-import type { AIVerdict, MockAIRow } from '../../../lib/useAppData'
-import type { AiReviewLabelCounts } from '../../../lib/types'
+import type { AIReviewRow, AIVerdict, AiReviewLabelCounts } from '../../../lib/types'
 import { StageToolbar } from '../shared/StageToolbar'
 
 type VerdictFilter = 'all' | AIVerdict
 type AIReviewFilter = VerdictFilter | 'unclassified'
 
 interface AIReviewToolbarProps {
-  rows: MockAIRow[]
+  rows: AIReviewRow[]
   counts?: AiReviewLabelCounts | null
   filter: AIReviewFilter
   search: string

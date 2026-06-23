@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import type { CampaignRead } from '../../../lib/types'
-import type { CampaignPipelineSummary } from '../../../lib/useAppData'
+import type { CampaignPipelineSummary, CampaignRead } from '../../../lib/types'
 import { CampaignCard }  from './CampaignCard'
 import { EmptyState }    from './EmptyState'
 import { CampaignPanel } from '../../panels/CampaignPanel'

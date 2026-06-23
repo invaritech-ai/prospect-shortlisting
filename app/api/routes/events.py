@@ -8,9 +8,7 @@ LISTEN/NOTIFY connection that fans out to per-client async queues),
 so N connected clients share one DB connection — no polling, no
 extra writes.
 
-This route is purely additive: existing polling endpoints
-(`/v1/queue-history`, stage panels) are unchanged and remain the
-source of truth on initial load.
+Stage panels remain the source of truth on initial load.
 """
 from __future__ import annotations
 

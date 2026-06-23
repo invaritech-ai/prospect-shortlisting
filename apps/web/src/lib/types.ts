@@ -118,6 +118,19 @@ export type AiReviewLabelCounts = {
   crap: number
 }
 
+export type AIVerdict = 'Unclassified' | 'Possible' | 'Unknown' | 'Crap'
+
+export type AIReviewRow = {
+  id: string
+  domain: string
+  url: string
+  verdict: AIVerdict
+  confidence: number
+  reasoning: string
+  pagesReviewed: number
+  updatedAt: string
+}
+
 export type AiReviewJobCreate = {
   campaign_id: string
   domain_ids?: string[]
@@ -512,6 +525,25 @@ export type CampaignStageCounts = {
   ai_review: AiReviewStageCounts
   contacts: ContactsStageCounts
   validation: ValidationStageCounts
+}
+
+export type CampaignPipelineSummary = {
+  total: number
+  notScraped: number
+  scraped: number
+  classified: number
+  possible: number
+  contactsFound: number
+  validEmails: number
+  lastActivity: string
+}
+
+export type FunnelSummary = {
+  uploaded: number
+  scraped: number
+  possible: number
+  contactsFound: number
+  validEmails: number
 }
 
 export type CampaignCreate = {
@@ -1247,20 +1279,4 @@ export type IntegrationHealthItem = {
   credits_remaining: number | null
   error_code: string
   message: string
-}
-
-export type QueueHistoryItem = {
-  id: string
-  stage: 's1' | 's2' | 's3' | 's4'
-  company_domain: string | null
-  state: string
-  created_at: string
-  started_at: string | null
-  finished_at: string | null
-  error_code: string | null
-}
-
-export type QueueHistoryResponse = {
-  items: QueueHistoryItem[]
-  total: number
 }

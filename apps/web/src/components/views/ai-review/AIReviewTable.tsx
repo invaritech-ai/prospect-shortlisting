@@ -1,4 +1,4 @@
-import type { MockAIRow, AIVerdict } from '../../../lib/useAppData'
+import type { AIReviewRow, AIVerdict } from '../../../lib/types'
 import { VerdictBadge } from './VerdictBadge'
 import { QuickLabelPicker } from './QuickLabelPicker'
 import { IconExternalLink } from '../../ui/icons'
@@ -14,12 +14,12 @@ function relTime(iso: string): string {
 }
 
 interface AIReviewTableProps {
-  rows: MockAIRow[]
+  rows: AIReviewRow[]
   selectedIds: Set<string>
   onToggleRow: (id: string) => void
   onToggleAll: () => void
   onLabelChange: (id: string, verdict: AIVerdict) => void
-  onViewReasoning: (row: MockAIRow) => void
+  onViewReasoning: (row: AIReviewRow) => void
   sortBy: string
   sortDir: 'asc' | 'desc'
   onSort: (field: string) => void

@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Column, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models.pipeline import utc_datetime_field, utcnow
+from app.models.base import utc_datetime_field, utcnow
 
 
 class IntegrationProvider(StrEnum):

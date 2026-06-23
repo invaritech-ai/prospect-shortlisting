@@ -1,8 +1,6 @@
 # Repository mental model: Prospect_shortlisting
 
-> **Staleness notice (2026-06-05).** This doc still describes the **old** data model in parts. Current queue truth is `app/queue.py` plus `app/jobs/`: Procrastinate uses PostgreSQL LISTEN/NOTIFY, with no Redis broker. Current pipeline truth is S1 scraping, S2 AI review, S3 contacts/email fetch, S4 ZeroBounce validation, and S5 future outreach/export work.
->
-> For an authoritative architecture map use `README.md` and `CLAUDE.md`.
+> Current queue truth is `app/queue.py` plus `app/jobs/`: Procrastinate uses PostgreSQL LISTEN/NOTIFY, with no Redis broker.
 
 ## What problem it solves
 
@@ -13,10 +11,10 @@ Operators ingest batches of company websites (from spreadsheet uploads), **crawl
 ```mermaid
 flowchart LR
   subgraph ui [apps/web React SPA]
-    Pipeline[pipeline stage views S1–S5 — S3 covers contact discovery + inline email reveal]
+    Pipeline[pipeline stage views S1–S4]
     Campaigns[CampaignsView]
-    Ops[OperationsLogView / QueueHistoryView]
     Dash[DashboardView]
+    Settings[SettingsView]
   end
   subgraph api [FastAPI app/main.py]
     Routes[v1 routes]
@@ -33,36 +31,32 @@ flowchart LR
   workers --> PG
 ```
 
-- **Backend**: [app/main.py](../app/main.py) — FastAPI app, CORS, `/v1/health/live` and `/v1/health/ready`, routers for uploads, companies, scrape jobs/actions, runs, analysis, prompts, contacts, stats, queue admin.
+- **Backend**: [app/main.py](../app/main.py) — FastAPI app, CORS, `/v1/health/live` and `/v1/health/ready`, routers for uploads, companies, scrape jobs/actions, analysis, prompts, contacts, stats, settings, and stage APIs.
 - **Workers**: [app/queue.py](../app/queue.py) — Procrastinate app with queue-specific workers for `scrape`, `ai_decision`, `contact_fetch`, and `validation`.
-- **Frontend**: [apps/web](../apps/web) — Vite + React; [apps/web/src/App.tsx](../apps/web/src/App.tsx) orchestrates pipeline stage views, full pipeline, dashboard, campaigns, operations log, queue history, settings, and panels (markdown preview, prompts, analysis detail, company review, scrape diagnostics).
+- **Frontend**: [apps/web](../apps/web) — Vite + React; [apps/web/src/App.tsx](../apps/web/src/App.tsx) orchestrates pipeline stage views, full pipeline, dashboard, campaigns, uploads, settings, and auth.
 - **Config**: [app/core/config.py](../app/core/config.py) — `PS_*` env vars: DB, CORS, OpenRouter keys, provider credentials, encryption key, scrape timeouts, and model settings.
 
 ## Core data pipeline (domain model)
 
-Canonical schema lives in [app/models/pipeline.py](../app/models/pipeline.py):
+Canonical SQLModel tables live under [app/models/](../app/models/):
 
 | Stage | Tables / concepts |
 |--------|-------------------|
-| Ingest | `Upload` (file metadata, validation), `Company` (per URL, normalized domain, FK upload) |
-| Crawl | `CrawlJob` (state machine per company), `CrawlArtifact` (fetched page URLs, HTTP status, URIs for markdown/screenshots/OCR) |
-| Analyze | `Prompt`, `Run` (batch: upload + prompt + model pair + progress counters), `AnalysisJob` (per company; **lock_token** / **lock_expires_at** for idempotent workers), `ClassificationResult` (label, confidence, reasoning, **input_hash** for cache skips) |
-| Human loop | `CompanyFeedback` (thumbs, comment, manual_label) |
-| Contacts | `ContactFetchJob`, `DiscoveredContact` (provider-native candidates; `provider_person_id` is opaque and non-empty), `ProspectContact` (Snov raw + ZeroBounce raw), `TitleMatchRule` (include/exclude keyword sets) |
-| Ops | `JobEvent` (audit trail across job types) |
+| Ingest | `Campaign`, `Upload`, `UploadedDomain` in `app/models/core.py` |
+| Crawl | `ScrapeBatch`, `ScrapeResult`, `ScrapeSettings` in `app/models/scrape.py` |
+| Analyze | `DecisionSettings`, `ClassificationBatch`, `ClassificationResult` in `app/models/classification.py` |
+| Contacts | `RoleFetchCriteria`, `EmailFetchBatch`, `VerificationBatch`, `Contact`, `FetchedPerson` in `app/models/contacts.py` |
+| Settings | `IntegrationSecret` in `app/models/settings.py` |
 
-**Predicted labels**: `Possible`, `Crap`, `Unknown` (enum `PredictedLabel` in `app/models/pipeline.py`).
-
-Design intent for contacts is documented in [docs/plans/2026-03-20-contact-pipeline-design.md](plans/2026-03-20-contact-pipeline-design.md) (feedback done; Snov/ZeroBounce; future email campaigns).
+**Predicted labels**: `possible`, `crap`, `unknown` at the API/UI boundary, displayed as `Possible`, `Crap`, `Unknown`.
 
 ## Important implementation folders
 
 - **API routes**: [app/api/routes/](../app/api/routes/) — thin HTTP layer; business logic tends to live in services.
 - **Services** (orchestration): e.g. [app/services/scrape_service.py](../app/services/scrape_service.py), [app/services/analysis_service.py](../app/services/analysis_service.py), [app/services/contact_service.py](../app/services/contact_service.py), [app/services/upload_service.py](../app/services/upload_service.py), [app/services/llm_client.py](../app/services/llm_client.py), [app/services/fetch_service.py](../app/services/fetch_service.py) (static vs stealth/browserless per [docs/browserless-api-reference.md](browserless-api-reference.md)).
-- **Tasks**: [app/tasks/scrape.py](../app/tasks/scrape.py), [app/tasks/analysis.py](../app/tasks/analysis.py), [app/tasks/contacts.py](../app/tasks/contacts.py), [app/tasks/beat.py](../app/tasks/beat.py).
+- **Jobs**: [app/jobs/](../app/jobs/) — Procrastinate task definitions for scrape, AI decision, contact fetch, email fetch/reveal, validation, and health.
 - **Migrations**: [alembic/versions/](../alembic/versions/).
 - **Tests**: [tests/](../tests/) — idempotency, Celery, beat reconciler, recovery, scrape create, markdown, etc.
-- **Design notes**: [docs/plans/](plans/) — reliability, scrape throughput, operator upload, refactoring, etc.
 
 ## External dependencies (mental checklist)
 

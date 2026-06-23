@@ -31,7 +31,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.logging import log_event
 from app.models import IntegrationSecret
-from app.models.pipeline import utcnow
+from app.models.base import utcnow
 
 logger = logging.getLogger(__name__)
 

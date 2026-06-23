@@ -23,6 +23,9 @@ data
 .worktrees/
 .playwright-cli
 output
+celerybeat-schedule.db
+logs/*.log
+.pnpm-store/
 
 
 .fallow/
