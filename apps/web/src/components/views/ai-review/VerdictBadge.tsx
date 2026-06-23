@@ -28,18 +28,3 @@ export function VerdictBadge({ verdict, size = 'md' }: VerdictBadgeProps) {
     </span>
   )
 }
-
-export function VerdictDot({ verdict }: { verdict: AIVerdict }) {
-  const colors: Record<AIVerdict, string> = {
-    Unclassified: 'var(--oc-muted)',
-    Possible: 'var(--s2)',
-    Unknown:  'var(--oc-warn-text)',
-    Crap:     'var(--oc-fail-text)',
-  }
-  return (
-    <span style={{
-      display: 'inline-block', width: '8px', height: '8px',
-      borderRadius: '9999px', backgroundColor: colors[verdict], flexShrink: 0,
-    }} />
-  )
-}

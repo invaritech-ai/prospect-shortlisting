@@ -1,14 +1,8 @@
 import type { EmailFetchCompanyRow } from '../../../lib/types'
 import { ContactStatusBadge } from './ContactStatusBadge'
 import { SortableHeader } from '../../ui/SortableHeader'
+import { formatRelativeTime as relTime } from '../shared/relativeTime'
 import { ExternalLink, RefreshCw, Users } from 'lucide-react'
-
-function relTime(iso: string): string {
-  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
-  if (d < 1) return 'just now'
-  if (d < 60) return `${d}m ago`
-  return `${Math.floor(d / 60)}h ago`
-}
 
 interface ContactsTableProps {
   rows: EmailFetchCompanyRow[]

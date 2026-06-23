@@ -16,7 +16,6 @@ import type {
   DecisionSettingsUpdate,
   DomainList,
   DomainLetterCounts,
-  DomainScrapeCounts,
   EmailFetchBatchCreate,
   EmailFetchBatchRead,
   EmailFetchCompanyIds,
@@ -43,13 +42,11 @@ import type {
   IntegrationsStatusResponse,
   PipelineCostSummaryRead,
   ScrapeBatchCreate,
-  ScrapeBatchList,
   ScrapeBatchRead,
   ScrapeJobStatusRead,
   ScrapeResultRead,
   ScrapeSettingsList,
   ScrapeSettingsRead,
-  ScrapeSettingsUpdate,
   UploadCreateResult,
   UploadList,
 } from './types'
@@ -81,6 +78,21 @@ interface AuthLoginResponse {
   user: AuthUserRead
   access_token?: string | null
   token_type?: string | null
+}
+
+type SortDir = 'asc' | 'desc'
+type ListQueryOptions<TStatus extends string = string> = {
+  status?: 'all' | TStatus
+  letter?: string
+  search?: string
+  sortBy?: string
+  sortDir?: SortDir
+  limit?: number
+  offset?: number
+}
+type IdListQueryOptions<TStatus extends string = string> = Omit<ListQueryOptions<TStatus>, 'sortBy' | 'sortDir'> & {
+  fetchableOnly?: boolean
+  actionableOnly?: boolean
 }
 
 let apiSessionConfig: ApiSessionConfig = {}
@@ -125,6 +137,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+function jsonRequest<T>(path: string, method: 'POST' | 'PUT', body: unknown): Promise<T> {
+  return request<T>(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Blob; filename: string | null }> {
   const token = apiSessionConfig.getAccessToken?.() ?? null
   const headers = new Headers(init?.headers)
@@ -148,6 +168,26 @@ async function requestBlob(path: string, init?: RequestInit): Promise<{ blob: Bl
     blob: await response.blob(),
     filename: filenameFromContentDisposition(response.headers.get('content-disposition')),
   }
+}
+
+function campaignParams(campaignId: string, limit?: number, offset?: number): URLSearchParams {
+  const params = new URLSearchParams({ campaign_id: campaignId })
+  if (limit !== undefined) params.set('limit', String(limit))
+  if (offset !== undefined) params.set('offset', String(offset))
+  return params
+}
+
+function setTrimmedParam(params: URLSearchParams, key: string, value?: string): void {
+  const trimmed = value?.trim()
+  if (trimmed) params.set(key, trimmed)
+}
+
+function applyListQueryParams(params: URLSearchParams, options: ListQueryOptions): void {
+  if (options.status) params.set('status', options.status)
+  if (options.letter) params.set('letter', options.letter)
+  setTrimmedParam(params, 'search', options.search)
+  if (options.sortBy) params.set('sort_by', options.sortBy)
+  if (options.sortDir) params.set('sort_dir', options.sortDir)
 }
 
 function filenameFromContentDisposition(contentDisposition: string | null): string | null {
@@ -179,11 +219,7 @@ function triggerBrowserDownload(blob: Blob, filename: string): void {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function loginWithPassword(email: string, password: string): Promise<AuthLoginResponse> {
-  return request<AuthLoginResponse>('/v1/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  })
+  return jsonRequest<AuthLoginResponse>('/v1/auth/login', 'POST', { email, password })
 }
 
 export async function getCurrentUser(): Promise<AuthUserRead> {
@@ -201,11 +237,7 @@ export async function listCampaigns(limit = 50, offset = 0): Promise<CampaignLis
 }
 
 export async function createCampaign(payload: CampaignCreate): Promise<CampaignRead> {
-  return request<CampaignRead>('/v1/campaigns', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  return jsonRequest<CampaignRead>('/v1/campaigns', 'POST', payload)
 }
 
 export async function deleteCampaign(campaignId: string): Promise<void> {
@@ -230,11 +262,7 @@ export async function uploadFileToCampaign(file: File, campaignId: string): Prom
 }
 
 export async function listUploads(campaignId: string, limit = 50, offset = 0): Promise<UploadList> {
-  return request<UploadList>(`/v1/uploads?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}&offset=${offset}`)
-}
-
-export async function deleteUpload(uploadId: string): Promise<void> {
-  return request<void>(`/v1/uploads/${uploadId}`, { method: 'DELETE' })
+  return request<UploadList>(`/v1/uploads?${campaignParams(campaignId, limit, offset).toString()}`)
 }
 
 // ── Domains ───────────────────────────────────────────────────────────────────
@@ -262,13 +290,10 @@ export async function listDomains(
     offset?: number
   } = {},
 ): Promise<DomainList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  const params = campaignParams(campaignId, limit, offset)
   if (uploadId) params.set('upload_id', uploadId)
   if (scrapeStatus) params.set('scrape_status', scrapeStatus)
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
-  if (sortBy) params.set('sort_by', sortBy)
-  if (sortDir) params.set('sort_dir', sortDir)
+  applyListQueryParams(params, { letter, search, sortBy, sortDir })
   return request<DomainList>(`/v1/companies?${params.toString()}`)
 }
 
@@ -284,32 +309,9 @@ export async function listFullPipelineCompanies(
     offset?: number
   } = {},
 ): Promise<FullPipelineCompanyList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (search?.trim()) params.set('search', search.trim())
+  const params = campaignParams(campaignId, limit, offset)
+  setTrimmedParam(params, 'search', search)
   return request<FullPipelineCompanyList>(`/v1/full-pipeline/companies?${params.toString()}`)
-}
-
-export async function listAiDecidableDomains(
-  campaignId: string,
-  {
-    uploadId,
-    letter,
-    search,
-    limit = 50,
-    offset = 0,
-  }: {
-    uploadId?: string
-    letter?: string
-    search?: string
-    limit?: number
-    offset?: number
-  } = {},
-): Promise<DomainList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (uploadId) params.set('upload_id', uploadId)
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
-  return request<DomainList>(`/v1/domains/ai-decidable?${params.toString()}`)
 }
 
 export async function listAiReviewDomains(
@@ -332,12 +334,9 @@ export async function listAiReviewDomains(
     offset?: number
   } = {},
 ): Promise<AiReviewDomainList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (letter) params.set('letter', letter)
+  const params = campaignParams(campaignId, limit, offset)
   if (label) params.set('label', label)
-  if (search?.trim()) params.set('search', search.trim())
-  if (sortBy) params.set('sort_by', sortBy)
-  if (sortDir) params.set('sort_dir', sortDir)
+  applyListQueryParams(params, { letter, search, sortBy, sortDir })
   return request<AiReviewDomainList>(`/v1/ai-review/domains?${params.toString()}`)
 }
 
@@ -358,18 +357,13 @@ export async function getAiReviewLabelCounts(
   campaignId: string,
   { letter, search }: { letter?: string; search?: string } = {},
 ): Promise<AiReviewLabelCounts> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
+  const params = campaignParams(campaignId)
+  applyListQueryParams(params, { letter, search })
   return request<AiReviewLabelCounts>(`/v1/ai-review/label-counts?${params.toString()}`)
 }
 
 export async function createAiReviewJob(body: AiReviewJobCreate): Promise<AiReviewJobRead> {
-  return request<AiReviewJobRead>('/v1/ai-review/jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  return jsonRequest<AiReviewJobRead>('/v1/ai-review/jobs', 'POST', body)
 }
 
 export async function getActiveAiReviewJob(campaignId: string): Promise<AiReviewJobRead | null> {
@@ -384,13 +378,9 @@ export async function getDomainLetterCounts(
   campaignId: string,
   scrapeStatus?: string,
 ): Promise<DomainLetterCounts> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
+  const params = campaignParams(campaignId)
   if (scrapeStatus) params.set('scrape_status', scrapeStatus)
   return request<DomainLetterCounts>(`/v1/domains/letter-counts?${params.toString()}`)
-}
-
-export async function getDomainScrapeCounts(campaignId: string): Promise<DomainScrapeCounts> {
-  return request<DomainScrapeCounts>(`/v1/domains/scrape-counts?campaign_id=${encodeURIComponent(campaignId)}`)
 }
 
 // ── S3 Email Fetch ───────────────────────────────────────────────────────────
@@ -400,39 +390,16 @@ export async function getEmailFetchCriteria(campaignId: string): Promise<EmailFe
 }
 
 export async function saveEmailFetchCriteria(payload: EmailFetchCriteriaSaveRequest): Promise<EmailFetchCriteriaRead> {
-  return request<EmailFetchCriteriaRead>('/v1/email-fetch/criteria', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  return jsonRequest<EmailFetchCriteriaRead>('/v1/email-fetch/criteria', 'POST', payload)
 }
 
 export async function listEmailFetchCompanies(
   campaignId: string,
-  {
-    status,
-    letter,
-    search,
-    sortBy,
-    sortDir,
-    limit = 200,
-    offset = 0,
-  }: {
-    status?: 'all' | EmailFetchCompanyStatus
-    letter?: string
-    search?: string
-    sortBy?: string
-    sortDir?: 'asc' | 'desc'
-    limit?: number
-    offset?: number
-  } = {},
+  options: ListQueryOptions<EmailFetchCompanyStatus> = {},
 ): Promise<EmailFetchCompanyList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (status) params.set('status', status)
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
-  if (sortBy) params.set('sort_by', sortBy)
-  if (sortDir) params.set('sort_dir', sortDir)
+  const { limit = 200, offset = 0 } = options
+  const params = campaignParams(campaignId, limit, offset)
+  applyListQueryParams(params, options)
   return request<EmailFetchCompanyList>(`/v1/email-fetch/companies?${params.toString()}`)
 }
 
@@ -446,56 +413,28 @@ export async function getEmailFetchLetterCounts(
     search?: string
   } = {},
 ): Promise<DomainLetterCounts> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (status) params.set('status', status)
-  if (search?.trim()) params.set('search', search.trim())
+  const params = campaignParams(campaignId)
+  applyListQueryParams(params, { status, search })
   return request<DomainLetterCounts>(`/v1/email-fetch/letter-counts?${params.toString()}`)
 }
 
 export async function listEmailFetchCompanyIds(
   campaignId: string,
-  {
-    status,
-    letter,
-    search,
-    fetchableOnly = false,
-    limit = 200,
-    offset = 0,
-  }: {
-    status?: 'all' | EmailFetchCompanyStatus
-    letter?: string
-    search?: string
-    fetchableOnly?: boolean
-    limit?: number
-    offset?: number
-  } = {},
+  options: IdListQueryOptions<EmailFetchCompanyStatus> = {},
 ): Promise<EmailFetchCompanyIds> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (status) params.set('status', status)
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
+  const { fetchableOnly = false, limit = 200, offset = 0 } = options
+  const params = campaignParams(campaignId, limit, offset)
+  applyListQueryParams(params, options)
   if (fetchableOnly) params.set('fetchable_only', 'true')
   return request<EmailFetchCompanyIds>(`/v1/email-fetch/company-ids?${params.toString()}`)
 }
 
 export async function previewEmailFetch(body: EmailFetchPreviewRequest): Promise<EmailFetchPreviewRead> {
-  return request<EmailFetchPreviewRead>('/v1/email-fetch/preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  return jsonRequest<EmailFetchPreviewRead>('/v1/email-fetch/preview', 'POST', body)
 }
 
 export async function createEmailFetchBatch(body: EmailFetchBatchCreate): Promise<EmailFetchBatchRead> {
-  return request<EmailFetchBatchRead>('/v1/email-fetch/batches', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-export async function getEmailFetchBatch(batchId: string): Promise<EmailFetchBatchRead> {
-  return request<EmailFetchBatchRead>(`/v1/email-fetch/batches/${encodeURIComponent(batchId)}`)
+  return jsonRequest<EmailFetchBatchRead>('/v1/email-fetch/batches', 'POST', body)
 }
 
 export async function getActiveEmailFetchBatch(campaignId: string): Promise<EmailFetchBatchRead | null> {
@@ -506,55 +445,21 @@ export async function getActiveEmailFetchBatch(campaignId: string): Promise<Emai
 
 export async function listEmailVerificationContacts(
   campaignId: string,
-  {
-    status,
-    letter,
-    search,
-    sortBy,
-    sortDir,
-    limit = 50,
-    offset = 0,
-  }: {
-    status?: 'all' | EmailVerificationStatus
-    letter?: string
-    search?: string
-    sortBy?: string
-    sortDir?: 'asc' | 'desc'
-    limit?: number
-    offset?: number
-  } = {},
+  options: ListQueryOptions<EmailVerificationStatus> = {},
 ): Promise<EmailVerificationContactList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (status) params.set('status', status)
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
-  if (sortBy) params.set('sort_by', sortBy)
-  if (sortDir) params.set('sort_dir', sortDir)
+  const { limit = 50, offset = 0 } = options
+  const params = campaignParams(campaignId, limit, offset)
+  applyListQueryParams(params, options)
   return request<EmailVerificationContactList>(`/v1/email-verification/contacts?${params.toString()}`)
 }
 
 export async function listEmailVerificationContactIds(
   campaignId: string,
-  {
-    status,
-    letter,
-    search,
-    actionableOnly = false,
-    limit = 200,
-    offset = 0,
-  }: {
-    status?: 'all' | EmailVerificationStatus
-    letter?: string
-    search?: string
-    actionableOnly?: boolean
-    limit?: number
-    offset?: number
-  } = {},
+  options: IdListQueryOptions<EmailVerificationStatus> = {},
 ): Promise<EmailVerificationContactIds> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
-  if (status) params.set('status', status)
-  if (letter) params.set('letter', letter)
-  if (search?.trim()) params.set('search', search.trim())
+  const { actionableOnly = false, limit = 200, offset = 0 } = options
+  const params = campaignParams(campaignId, limit, offset)
+  applyListQueryParams(params, options)
   if (actionableOnly) params.set('actionable_only', 'true')
   return request<EmailVerificationContactIds>(`/v1/email-verification/contact-ids?${params.toString()}`)
 }
@@ -569,30 +474,17 @@ export async function getEmailVerificationLetterCounts(
     search?: string
   } = {},
 ): Promise<DomainLetterCounts> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
-  if (status) params.set('status', status)
-  if (search?.trim()) params.set('search', search.trim())
+  const params = campaignParams(campaignId)
+  applyListQueryParams(params, { status, search })
   return request<DomainLetterCounts>(`/v1/email-verification/letter-counts?${params.toString()}`)
 }
 
 export async function previewEmailVerification(body: EmailVerificationPreviewRequest): Promise<EmailVerificationPreviewRead> {
-  return request<EmailVerificationPreviewRead>('/v1/email-verification/preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  return jsonRequest<EmailVerificationPreviewRead>('/v1/email-verification/preview', 'POST', body)
 }
 
 export async function createEmailVerificationBatch(body: EmailVerificationBatchCreate): Promise<EmailVerificationBatchRead> {
-  return request<EmailVerificationBatchRead>('/v1/email-verification/batches', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-export async function getEmailVerificationBatch(batchId: string): Promise<EmailVerificationBatchRead> {
-  return request<EmailVerificationBatchRead>(`/v1/email-verification/batches/${encodeURIComponent(batchId)}`)
+  return jsonRequest<EmailVerificationBatchRead>('/v1/email-verification/batches', 'POST', body)
 }
 
 export async function getActiveEmailVerificationBatch(campaignId: string): Promise<EmailVerificationBatchRead | null> {
@@ -600,7 +492,7 @@ export async function getActiveEmailVerificationBatch(campaignId: string): Promi
 }
 
 export async function downloadFreshValidEmailCsv(campaignId: string): Promise<void> {
-  const params = new URLSearchParams({ campaign_id: campaignId })
+  const params = campaignParams(campaignId)
   const { blob, filename } = await requestBlob(`/v1/email-verification/exports/valid.csv?${params.toString()}`)
   triggerBrowserDownload(blob, filename ?? `valid-emails-${campaignId}.csv`)
 }
@@ -619,7 +511,7 @@ export async function listContacts(
     offset?: number
   } = {},
 ): Promise<ContactList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  const params = campaignParams(campaignId, limit, offset)
   if (domainId) params.set('domain_id', domainId)
   if (typeof hasEmail === 'boolean') params.set('has_email', String(hasEmail))
   return request<ContactList>(`/v1/contacts?${params.toString()}`)
@@ -639,7 +531,7 @@ export async function listFetchedPeople(
     offset?: number
   } = {},
 ): Promise<FetchedPersonList> {
-  const params = new URLSearchParams({ campaign_id: campaignId, limit: String(limit), offset: String(offset) })
+  const params = campaignParams(campaignId, limit, offset)
   if (domainId) params.set('domain_id', domainId)
   if (status) params.set('status', status)
   return request<FetchedPersonList>(`/v1/fetched-people?${params.toString()}`)
@@ -647,32 +539,12 @@ export async function listFetchedPeople(
 
 // ── S1 Scrape Batches ─────────────────────────────────────────────────────────
 
-export async function createScrapeBatch(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
-  return request<ScrapeBatchRead>('/v1/scrape-batches', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
 export async function createScrapeJob(body: ScrapeBatchCreate): Promise<ScrapeBatchRead> {
-  return request<ScrapeBatchRead>('/v1/scrape-jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-export async function listScrapeBatches(campaignId: string, limit = 20): Promise<ScrapeBatchList> {
-  return request<ScrapeBatchList>(`/v1/scrape-batches?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`)
+  return jsonRequest<ScrapeBatchRead>('/v1/scrape-jobs', 'POST', body)
 }
 
 export async function getActiveBatch(campaignId: string): Promise<ScrapeBatchRead | null> {
   return request<ScrapeBatchRead | null>(`/v1/scrape-batches/active?campaign_id=${encodeURIComponent(campaignId)}`)
-}
-
-export async function getScrapeBatch(batchId: string): Promise<ScrapeBatchRead> {
-  return request<ScrapeBatchRead>(`/v1/scrape-batches/${batchId}`)
 }
 
 export async function getScrapeJobStatus(batchId: string): Promise<ScrapeJobStatusRead> {
@@ -681,32 +553,15 @@ export async function getScrapeJobStatus(batchId: string): Promise<ScrapeJobStat
 
 // ── S1 Scrape Settings ────────────────────────────────────────────────────────
 
-export async function getScrapeSettings(campaignId: string): Promise<ScrapeSettingsRead | null> {
-  return request<ScrapeSettingsRead | null>(`/v1/scrape-settings?campaign_id=${encodeURIComponent(campaignId)}`)
-}
-
 export async function listScrapeSettings(campaignId: string, limit = 20): Promise<ScrapeSettingsList> {
-  return request<ScrapeSettingsList>(`/v1/scrape-settings/history?campaign_id=${encodeURIComponent(campaignId)}&limit=${limit}`)
+  return request<ScrapeSettingsList>(`/v1/scrape-settings/history?${campaignParams(campaignId, limit).toString()}`)
 }
 
 export async function saveScrapeSettings(campaignId: string, instructionText: string): Promise<ScrapeSettingsRead> {
-  return request<ScrapeSettingsRead>('/v1/scrape-settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ campaign_id: campaignId, instruction_text: instructionText }),
+  return jsonRequest<ScrapeSettingsRead>('/v1/scrape-settings', 'POST', {
+    campaign_id: campaignId,
+    instruction_text: instructionText,
   })
-}
-
-export async function updateScrapeSettings(settingsId: string, payload: ScrapeSettingsUpdate): Promise<ScrapeSettingsRead> {
-  return request<ScrapeSettingsRead>(`/v1/scrape-settings/${encodeURIComponent(settingsId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deleteScrapeSettings(settingsId: string): Promise<void> {
-  await request<void>(`/v1/scrape-settings/${encodeURIComponent(settingsId)}`, { method: 'DELETE' })
 }
 
 // ── S2 Decision Settings ──────────────────────────────────────────────────────
@@ -715,33 +570,17 @@ export async function listDecisionSettings(
   campaignId: string,
   { limit = 50, offset = 0, isActive }: { limit?: number; offset?: number; isActive?: boolean } = {},
 ): Promise<DecisionSettingsList> {
-  const params = new URLSearchParams({
-    campaign_id: campaignId,
-    limit: String(limit),
-    offset: String(offset),
-  })
+  const params = campaignParams(campaignId, limit, offset)
   if (typeof isActive === 'boolean') params.set('is_active', String(isActive))
   return request<DecisionSettingsList>(`/v1/decision-settings?${params.toString()}`)
 }
 
-export async function getActiveDecisionSettings(campaignId: string): Promise<DecisionSettingsRead | null> {
-  return request<DecisionSettingsRead | null>(`/v1/decision-settings/active?campaign_id=${encodeURIComponent(campaignId)}`)
-}
-
 export async function createDecisionSettings(payload: DecisionSettingsCreate): Promise<DecisionSettingsRead> {
-  return request<DecisionSettingsRead>('/v1/decision-settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  return jsonRequest<DecisionSettingsRead>('/v1/decision-settings', 'POST', payload)
 }
 
 export async function updateDecisionSettings(settingsId: string, payload: DecisionSettingsUpdate): Promise<DecisionSettingsRead> {
-  return request<DecisionSettingsRead>(`/v1/decision-settings/${encodeURIComponent(settingsId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  return jsonRequest<DecisionSettingsRead>(`/v1/decision-settings/${encodeURIComponent(settingsId)}`, 'PUT', payload)
 }
 
 export async function deleteDecisionSettings(settingsId: string): Promise<void> {
@@ -751,7 +590,8 @@ export async function deleteDecisionSettings(settingsId: string): Promise<void> 
 // ── S1 Scrape Results (content drawer) ───────────────────────────────────────
 
 export async function getScrapeResult(domainId: string, campaignId: string): Promise<ScrapeResultRead | null> {
-  const params = new URLSearchParams({ campaign_id: campaignId, domain_id: domainId })
+  const params = campaignParams(campaignId)
+  params.set('domain_id', domainId)
   return request<ScrapeResultRead | null>(`/v1/scrape-results?${params.toString()}`).catch(() => null)
 }
 
@@ -765,11 +605,11 @@ export async function updateIntegrationProvider(
   provider: IntegrationProviderId,
   payload: IntegrationProviderUpdateRequest,
 ): Promise<IntegrationProviderStatus> {
-  return request<IntegrationProviderStatus>(`/v1/settings/integrations/${encodeURIComponent(provider)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  return jsonRequest<IntegrationProviderStatus>(
+    `/v1/settings/integrations/${encodeURIComponent(provider)}`,
+    'PUT',
+    payload,
+  )
 }
 
 export async function testIntegrationProvider(provider: IntegrationProviderId): Promise<IntegrationTestResponse> {
@@ -778,20 +618,4 @@ export async function testIntegrationProvider(provider: IntegrationProviderId): 
 
 export async function getIntegrationsHealth(): Promise<IntegrationHealthItem[]> {
   return request<IntegrationHealthItem[]>('/v1/settings/integrations/health')
-}
-
-// ── Utility ───────────────────────────────────────────────────────────────────
-
-/**
- * Parse a date string as UTC.
- * The API returns TIMESTAMP WITHOUT TIME ZONE values without a 'Z' suffix.
- * Bare ISO strings (no Z / offset) are treated as local time by browsers,
- * so we force UTC by appending 'Z' when no timezone info is present.
- */
-export function parseUTC(dateStr: string): Date {
-  const s =
-    dateStr.endsWith('Z') || dateStr.includes('+') || /[+-]\d{2}:\d{2}$/.test(dateStr)
-      ? dateStr
-      : dateStr + 'Z'
-  return new Date(s)
 }

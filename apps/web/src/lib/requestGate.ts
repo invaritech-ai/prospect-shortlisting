@@ -1,4 +1,4 @@
-export interface QueryRequestToken {
+interface QueryRequestToken {
   key: string
   sequence: number
 }

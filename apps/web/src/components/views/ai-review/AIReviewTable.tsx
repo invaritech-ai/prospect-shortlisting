@@ -3,15 +3,8 @@ import { VerdictBadge } from './VerdictBadge'
 import { QuickLabelPicker } from './QuickLabelPicker'
 import { IconExternalLink } from '../../ui/icons'
 import { SortableHeader } from '../../ui/SortableHeader'
+import { formatRelativeTime as relTime } from '../shared/relativeTime'
 import { Maximize2 } from 'lucide-react'
-
-function relTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60_000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  return `${Math.floor(mins / 60)}h ago`
-}
 
 interface AIReviewTableProps {
   rows: AIReviewRow[]

@@ -1,22 +1,6 @@
 import type { DomainRead } from '../../../lib/types'
 import { ScrapeStatusBadge } from '../shared/ScrapeStatusBadge'
-
-function relTime(iso: string): string {
-  const d = Math.floor((Date.now() - new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).getTime()) / 60_000)
-  if (d < 1) return 'just now'
-  if (d < 60) return `${d}m ago`
-  return `${Math.floor(d / 60)}h ago`
-}
-
-function failureLabel(row: DomainRead): string | null {
-  if ((row.scrape_status ?? 'pending') !== 'failed') return null
-  const cls = row.latest_scrape_failure_class
-  if (cls === 'permanent') return 'Permanent'
-  if (cls === 'transient') return 'Transient'
-  if (cls === 'blocked') return 'Blocked'
-  if (cls === 'no_content') return 'No content'
-  return row.latest_scrape_error_code ?? null
-}
+import { failureLabel, relTime } from './scrapeRowMeta'
 
 interface ScrapingCardsProps {
   rows: DomainRead[]
